@@ -6,6 +6,7 @@ import type { MyBookingRow } from '../supabase/database.types';
 import { canConfirmCompletion, listMyBookings, splitBookings } from '../repositories/bookingRepository';
 import { SupabaseBookingRow } from './Conversations';
 import { isSupabaseConfigured } from '../supabase/client';
+import { PackageDashboard } from '../components/PackageDashboard';
 import { useAppState } from '../state/store';
 import {
   activeMember,
@@ -187,6 +188,8 @@ export default function Home() {
             </div>
           </section>
         ) : null}
+
+        {me.role !== 'companion' && isSupabaseConfigured() && <PackageDashboard />}
 
         {me.role === 'coordinator' && managedMembers(state, me.id).length > 0 && (
           <section className="section-tight" aria-label="People you arrange for">

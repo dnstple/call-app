@@ -11,6 +11,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { isSupabaseMode } from '../config/dataMode';
 import { pushToast } from '../state/store';
 import { PageHeader, Switch } from '../components/ui';
+import { PackageOfferEditor } from '../components/PackageOfferEditor';
 import { RepoError } from '../repositories/profileRepository';
 import * as repo from '../repositories/availabilityRepository';
 import { clearSetupIncomplete } from '../signup/completeSupabase';
@@ -335,6 +336,9 @@ export default function AvailabilityRates() {
         </div>
         <OffersEditor profileId={profileId} offers={offers} rates={rates} methods={active?.profile.mediums ?? []} onChanged={reloadOffers} />
       </section>
+
+      {/* ---------- Packages (Stage 2E3B1) ---------- */}
+      <PackageOfferEditor profileId={profileId} methods={active?.profile.mediums ?? []} />
     </div>
   );
 }

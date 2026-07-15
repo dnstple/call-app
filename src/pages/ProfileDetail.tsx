@@ -38,6 +38,7 @@ import {
 import { BookingWizard, PackagePurchaseDialog } from '../components/BookingWizard';
 import { SupabaseBookingWizard } from '../components/SupabaseBookingWizard';
 import { CardRatingSummary, CompanionReviews } from '../components/CompanionReviews';
+import { PublicPackages } from '../components/PackagePurchaseSupabase';
 import { useAuthSnapshot } from '../state/authBridge';
 import { ReportDialog } from '../components/ConversationRow';
 import { roleLabel } from '../components/Shell';
@@ -273,6 +274,8 @@ export default function ProfileDetail() {
           <p className="faint mt-4">No payment will be taken yet. Payments will be added in a later stage.</p>
         </section>
       )}
+
+      {supabase && user.role === 'companion' && <PublicPackages companion={user} />}
 
       {supabase && user.role === 'companion' && realRules.length > 0 && (
         <section className="section-tight">

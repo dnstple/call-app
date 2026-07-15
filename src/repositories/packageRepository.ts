@@ -156,6 +156,18 @@ export async function getPackageOffers(companionProfileId: string): Promise<Pack
   return (data ?? []) as PackageOfferRow[];
 }
 
+/** Public read: ACTIVE package offers only (archived stay hidden). */
+export async function getPublicPackageOffers(companionProfileId: string): Promise<PackageOfferRow[]> {
+  const { data, error } = await getSupabaseClient()
+    .from('package_offers')
+    .select('*')
+    .eq('companion_profile_id', companionProfileId)
+    .eq('active', true)
+    .order('price_minor');
+  if (error) throw mapPackageError(error);
+  return (data ?? []) as PackageOfferRow[];
+}
+
 export async function createPackageOffer(
   profileId: string,
   input: PackageOfferInput,
