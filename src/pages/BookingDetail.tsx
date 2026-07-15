@@ -29,6 +29,7 @@ import { MEDIUM_LABELS } from '../domain/format';
 import type { BookingHistoryRow, BookingProposalRow, MyBookingRow } from '../supabase/database.types';
 import { EmptyState } from '../components/ui';
 import { SlotPicker, slotDayLabel, slotTimeLabel } from '../components/SupabaseBookingWizard';
+import { CompletionPanel } from '../components/CompletionPanel';
 
 const STATUS_BADGE: Record<string, string> = {
   requested: 'badge-neutral',
@@ -36,6 +37,8 @@ const STATUS_BADGE: Record<string, string> = {
   declined: 'badge-danger',
   change_proposed: 'badge-neutral',
   cancelled: 'badge-danger',
+  completed: 'badge-success',
+  needs_review: 'badge-neutral',
 };
 
 const HISTORY_LABELS: Record<string, string> = {
@@ -44,6 +47,8 @@ const HISTORY_LABELS: Record<string, string> = {
   declined: 'Declined',
   change_proposed: 'A new time was proposed',
   cancelled: 'Cancelled',
+  completed: 'Completed — confirmed by both sides',
+  needs_review: 'Flagged for review',
 };
 
 export default function BookingDetail() {
@@ -132,7 +137,10 @@ export default function BookingDetail() {
     );
   }
 
-  const active = ['requested', 'confirmed', 'change_proposed'].includes(booking.status);
+  const ended = new Date(booking.ends_at).getTime() <= Date.now();
+  // Once a conversation has ended, reschedule/cancel no longer make sense —
+  // the completion panel takes over.
+  const active = ['requested', 'confirmed', 'change_proposed'].includes(booking.status) && !ended;
   const iProposed = proposal?.proposed_by_account_id === auth.userId;
 
   const run = (fn: () => Promise<unknown>) => async () => {
@@ -224,6 +232,9 @@ export default function BookingDetail() {
           </div>
         </section>
       )}
+
+      {/* Completion confirmation (Stage 2E1B) — ended conversations only */}
+      <CompletionPanel booking={booking} onStatusChange={() => void load()} />
 
       {/* Price snapshot — honest payment boundary */}
       <section className="section-tight">

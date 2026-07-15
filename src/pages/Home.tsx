@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Compass, Phone, UserRound } from 'lucide-react';
 import { isSupabaseMode } from '../config/dataMode';
 import type { MyBookingRow } from '../supabase/database.types';
-import { listMyBookings, splitBookings } from '../repositories/bookingRepository';
+import { canConfirmCompletion, listMyBookings, splitBookings } from '../repositories/bookingRepository';
 import { SupabaseBookingRow } from './Conversations';
 import { isSupabaseConfigured } from '../supabase/client';
 import { useAppState } from '../state/store';
@@ -52,9 +52,12 @@ export default function Home() {
       requests: upcoming.filter((b) => b.status === 'requested'),
       proposed: upcoming.filter((b) => b.status === 'change_proposed'),
       confirmed: upcoming.filter((b) => b.status === 'confirmed'),
+      // Ended conversations still waiting for this account's outcome (2E1B).
+      needsConfirmation: mine.filter((b) => canConfirmCompletion(b)),
     };
   }, [realRows, me.role, me.id]);
-  const hasRealActivity = real.requests.length + real.proposed.length + real.confirmed.length > 0;
+  const hasRealActivity =
+    real.requests.length + real.proposed.length + real.confirmed.length + real.needsConfirmation.length > 0;
 
   // The single most important item drives the feature card.
   const needsMyConfirmation = bookings.filter(
@@ -99,6 +102,20 @@ export default function Home() {
         <header className="page-header">
           <h1>{greeting}, {me.firstName}</h1>
         </header>
+
+        {real.needsConfirmation.length > 0 && (
+          <section className="section-tight" aria-label="Waiting for your confirmation">
+            <h2>How did it go?</h2>
+            <p className="muted" style={{ marginTop: 0 }}>
+              These conversations have ended — please confirm what happened.
+            </p>
+            <div className="stack-list">
+              {real.needsConfirmation.map((b) => (
+                <SupabaseBookingRow key={b.id} booking={b} />
+              ))}
+            </div>
+          </section>
+        )}
 
         {real.proposed.length > 0 && (
           <section className="section-tight" aria-label="Awaiting your reply">
