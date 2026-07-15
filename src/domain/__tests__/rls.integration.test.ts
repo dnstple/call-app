@@ -938,4 +938,112 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
     const memberSummary = await e.rpc('get_companion_rating_summary', { p_profile: gManagedMemberId });
     expect(memberSummary.error).not.toBeNull();
   });
+
+  /* ---------------- Stage 2E3A: packages + credit ledger (requires 0008) ---------------- */
+
+  it('2E3A: offer management is companion-editor only, with validation', async () => {
+    // Companion creates a valid package offer…
+    const offer = await f.rpc('create_package_offer', {
+      p_profile: fCompanionId, p_title: '', p_count: 4, p_duration: 30, p_price_minor: 3600,
+    });
+    expect(offer.error).toBeNull();
+    expect(offer.data.title).toContain('4 × 30'); // sensible default title
+
+    // …but invalid inputs and other users are rejected.
+    const badCount = await f.rpc('create_package_offer', {
+      p_profile: fCompanionId, p_title: 'x', p_count: 1, p_duration: 30, p_price_minor: 3600,
+    });
+    expect(String(badCount.error!.message)).toContain('invalid_count');
+    const badDuration = await f.rpc('create_package_offer', {
+      p_profile: fCompanionId, p_title: 'x', p_count: 4, p_duration: 20, p_price_minor: 3600,
+    });
+    expect(badDuration.error).not.toBeNull();
+    const badPrice = await f.rpc('create_package_offer', {
+      p_profile: fCompanionId, p_title: 'x', p_count: 4, p_duration: 30, p_price_minor: 10,
+    });
+    expect(String(badPrice.error!.message)).toContain('invalid_price');
+    const foreign = await e.rpc('create_package_offer', {
+      p_profile: fCompanionId, p_title: 'x', p_count: 4, p_duration: 30, p_price_minor: 3600,
+    });
+    expect(foreign.error).not.toBeNull();
+  });
+
+  it('2E3A: simulated purchase snapshots the offer and grants credits atomically', async () => {
+    const offer = await f.rpc('create_package_offer', {
+      p_profile: fCompanionId, p_title: 'Six pack', p_count: 6, p_duration: 30, p_price_minor: 5400,
+    });
+    expect(offer.error).toBeNull();
+    const offerId = offer.data.id;
+
+    // Member owner purchases (simulated — no payment fields exist).
+    const bought = await e.rpc('create_simulated_package_purchase', {
+      p_member: eMemberId, p_offer: offerId,
+    });
+    expect(bought.error).toBeNull();
+    expect(bought.data.purchase.is_simulated).toBe(true);
+    expect(bought.data.purchase.price_minor).toBe(5400); // server snapshot
+    expect(bought.data.purchase.buyer_account_id).toBe((await e.auth.getUser()).data.user!.id);
+    expect(bought.data.balance).toMatchObject({ granted: 6, reserved: 0, consumed: 0, remaining: 6 });
+    const purchaseId = bought.data.purchase.id;
+
+    // The snapshot survives a later offer price change.
+    const repriced = await f.rpc('update_package_offer', { p_offer: offerId, p_price_minor: 9900 });
+    expect(repriced.error).toBeNull();
+    const after = await e.from('package_purchases').select('price_minor').eq('id', purchaseId).single();
+    expect(after.data!.price_minor).toBe(5400);
+
+    // Balance always comes from the ledger.
+    const balance = await e.rpc('get_package_balance', { p_purchase: purchaseId });
+    expect(balance.error).toBeNull();
+    expect(balance.data.remaining).toBe(6);
+
+    // Coordinator with can_book buys for their managed member…
+    const coordBuy = await g.rpc('create_simulated_package_purchase', {
+      p_member: gManagedMemberId, p_offer: offerId,
+    });
+    expect(coordBuy.error).toBeNull();
+    // …but nobody can buy for someone else's member.
+    const forgedMember = await g.rpc('create_simulated_package_purchase', {
+      p_member: eMemberId, p_offer: offerId,
+    });
+    expect(String(forgedMember.error!.message)).toContain('member_not_accessible');
+
+    // The browser cannot supply a price or buyer (unknown arguments).
+    const forgedPrice = await e.rpc('create_simulated_package_purchase', {
+      p_member: eMemberId, p_offer: offerId, p_price_minor: 1,
+    });
+    expect(forgedPrice.error).not.toBeNull();
+
+    // Archived offers cannot be purchased.
+    const archived = await f.rpc('archive_package_offer', { p_offer: offerId });
+    expect(archived.error).toBeNull();
+    const lateBuy = await e.rpc('create_simulated_package_purchase', {
+      p_member: eMemberId, p_offer: offerId,
+    });
+    expect(String(lateBuy.error!.message)).toContain('offer_inactive');
+  });
+
+  it('2E3A: ledger and purchases are isolated; direct writes are denied', async () => {
+    const mine = await e.from('package_purchases').select('id');
+    expect((mine.data ?? []).length).toBeGreaterThan(0);
+    const purchaseId = mine.data![0].id;
+
+    // Unrelated accounts see nothing of it.
+    const foreign = await h.from('package_purchases').select('*').eq('id', purchaseId);
+    expect(foreign.data ?? []).toHaveLength(0);
+    const foreignLedger = await h.from('package_credit_ledger').select('*')
+      .eq('package_purchase_id', purchaseId);
+    expect(foreignLedger.data ?? []).toHaveLength(0);
+    const foreignBalance = await h.rpc('get_package_balance', { p_purchase: purchaseId });
+    expect(foreignBalance.error).not.toBeNull();
+
+    // No direct writes: ledger forgery and purchase tampering are impossible.
+    const forgedGrant = await e.from('package_credit_ledger').insert({
+      package_purchase_id: purchaseId, entry_type: 'grant', quantity: 99,
+    });
+    expect(forgedGrant.error).not.toBeNull();
+    const tamper = await e.from('package_purchases').update({ conversation_count: 20 })
+      .eq('id', purchaseId).select();
+    expect(tamper.data ?? []).toHaveLength(0);
+  });
 });

@@ -342,6 +342,64 @@ export type PublicReviewRow = {
   updated_at: string;
 };
 
+/** Stage 2E3A — packages. Purchases are SIMULATED (no payment exists). */
+export type PackageOfferRow = {
+  id: string;
+  companion_profile_id: string;
+  title: string;
+  conversation_count: number;
+  duration_minutes: number;
+  price_minor: number;
+  currency: string;
+  supported_methods: string[];
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PackagePurchaseRow = {
+  id: string;
+  buyer_account_id: string;
+  member_profile_id: string;
+  companion_profile_id: string;
+  package_offer_id: string;
+  title: string;
+  conversation_count: number;
+  duration_minutes: number;
+  price_minor: number;
+  currency: string;
+  is_simulated: boolean;
+  status: 'active' | 'exhausted' | 'cancelled';
+  purchased_at: string;
+  expires_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PackageLedgerRow = {
+  id: string;
+  package_purchase_id: string;
+  booking_id: string | null;
+  entry_type: 'grant' | 'reserve' | 'release' | 'consume' | 'adjustment';
+  quantity: number;
+  created_by_account_id: string | null;
+  reason: string | null;
+  created_at: string;
+};
+
+export type PackageBalancePayload = {
+  purchase_id: string;
+  granted: number;
+  reserved: number;
+  consumed: number;
+  remaining: number;
+};
+
+export type PackagePurchaseResultPayload = {
+  purchase: PackagePurchaseRow;
+  balance: PackageBalancePayload;
+};
+
 type Table<R> = {
   Row: R;
   Insert: Partial<R>;
@@ -370,6 +428,9 @@ export type Database = {
       booking_time_proposals: Table<BookingProposalRow>;
       completion_confirmations: Table<CompletionConfirmationRow>;
       ratings: Table<RatingRow>;
+      package_offers: Table<PackageOfferRow>;
+      package_purchases: Table<PackagePurchaseRow>;
+      package_credit_ledger: Table<PackageLedgerRow>;
       platform_config: Table<{
         id: number;
         standard_commission_pct: number;
@@ -469,6 +530,35 @@ export type Database = {
         Returns: RatingRow;
       };
       get_companion_rating_summary: { Args: { p_profile: string }; Returns: RatingSummaryPayload };
+      create_package_offer: {
+        Args: {
+          p_profile: string;
+          p_title: string;
+          p_count: number;
+          p_duration: number;
+          p_price_minor: number;
+          p_methods?: string[];
+        };
+        Returns: PackageOfferRow;
+      };
+      update_package_offer: {
+        Args: {
+          p_offer: string;
+          p_title?: string | null;
+          p_count?: number | null;
+          p_duration?: number | null;
+          p_price_minor?: number | null;
+          p_methods?: string[] | null;
+          p_active?: boolean | null;
+        };
+        Returns: PackageOfferRow;
+      };
+      archive_package_offer: { Args: { p_offer: string }; Returns: PackageOfferRow };
+      create_simulated_package_purchase: {
+        Args: { p_member: string; p_offer: string };
+        Returns: PackagePurchaseResultPayload;
+      };
+      get_package_balance: { Args: { p_purchase: string }; Returns: PackageBalancePayload };
       get_companion_public_reviews: {
         Args: { p_profile: string; p_limit?: number; p_offset?: number };
         Returns: PublicReviewRow[];

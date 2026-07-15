@@ -478,5 +478,56 @@ yet** (Stage 2E2B); no payment, package or notification side effects.
   reach `completed` inside a test run, so the happy-path upsert is proven by
   unit tests + SQL. Run 0007 before `test:rls`.
 
-Deferred after 2E2A: rating UI (2E2B), package credits, payments/payouts,
-admin dispute resolution, external notifications, verification, admin.
+Deferred after 2E2A: package credits (→ 2E3A), payments/payouts, admin
+dispute resolution, external notifications, verification, admin.
+(2E2B added the ratings UI: `RatingPanel` on completed bookings, real
+summaries/reviews on profiles and Explore cards — no schema changes.)
+
+## Stage 2E3A — packages and secure credit accounting
+
+Run `supabase/migrations/0008_packages.sql` after 0001–0007. **No payment
+is taken** — every purchase is SIMULATED (`is_simulated = true`, enforced
+by a check constraint until the payments milestone). **No booking
+integration yet** — reserve/consume arrive in Stage 2E3B.
+
+- **`package_offers`** (rebuilt from the Stage-1 placeholder): companion
+  packages of 2–20 conversations × 15/30/45/60 minutes, total price
+  £1–£2,000 in integer minor units, GBP only. Writes only via
+  `create_package_offer` / `update_package_offer` / `archive_package_offer`
+  (companion editors; validation in SQL; archived, never deleted).
+- **`package_purchases`** (rebuilt): buyer account (derived from
+  `auth.uid()`), member + companion profiles, and full server-side
+  SNAPSHOTS (title, count, duration, price, currency) — later offer edits
+  never touch a purchase. Statuses: active / exhausted / cancelled.
+  `expires_at` exists but no automatic expiry yet.
+- **`package_credit_ledger`** (append-only): entry types grant / reserve /
+  release / consume / adjustment (only `grant` is written in this stage).
+  **Balance is always CALCULATED**: grants + releases + adjustments −
+  reserves − consumes (`get_package_balance`) — browser totals are never
+  trusted, and no direct ledger writes exist for anyone.
+- **`create_simulated_package_purchase(member, offer)`**: requires
+  `can_act_for_member` (owner or `can_book` Coordinator), an active offer
+  from a discoverable companion; snapshots server-side, creates the
+  purchase and the initial grant in ONE transaction, returns purchase +
+  ledger balance. Reason line says it plainly: "simulated purchase, no
+  payment taken".
+- **RLS**: offers readable for discoverable companions/editors; purchases
+  and ledger readable only by the buyer and member-side accounts (the
+  companion doesn't see purchase records in this stage — documented);
+  zero direct write policies on any package table.
+- **Repository**: `src/repositories/packageRepository.ts` — offer CRUD,
+  `createSimulatedPurchase`, `listPackagePurchases`, `getPackageBalance`,
+  `ledgerBalance` (pure mirror of the SQL maths) and `PackageError` codes
+  (`unauthorised`, `invalid_offer`, `offer_inactive`, `invalid_price`,
+  `invalid_count`, `member_not_accessible`, `not_found`,
+  `network_failure`).
+- **Tests**: `packages2e3a.test.ts` (contract — buyer/price/count never
+  sent; validation; typed errors; ledger maths incl. future entry types).
+  The live suite gains a full 2E3A block — unlike completions/ratings this
+  flow has no time dependency, so the ENTIRE happy path runs live:
+  creation, validation, snapshot-survives-reprice, coordinator purchase,
+  forged member/price rejection, archive blocking, ledger isolation and
+  denied forgery. Run 0008 before `test:rls`.
+
+Deferred after 2E3A: package UI + booking-with-credit (2E3B), payments,
+payouts, admin tooling, external notifications, verification.
