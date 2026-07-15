@@ -808,4 +808,69 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
     expect(row).not.toHaveProperty('email');
     expect(row).not.toHaveProperty('phone');
   });
+
+  /* ---------------- Stage 2E1A: completion confirmations (requires 0006) ----------------
+   * Live limitation (documented): bookings created through the public API
+   * always end in the future (minimum notice), so full reconciliation
+   * cannot be exercised live without waiting. The unit suite covers the
+   * reconciliation matrix; here we prove the security boundary. */
+
+  it('2E1A: completion is rejected before the conversation ends (too_early)', async () => {
+    const created = await e.rpc('create_booking_request', {
+      p_member: eMemberId, p_offer: singleOfferId,
+      p_starts_at: slots[24].slot_start, p_method: 'phone',
+    });
+    expect(created.error).toBeNull();
+    const accepted = await f.rpc('accept_booking', { p_booking: created.data.id });
+    expect(accepted.error).toBeNull();
+
+    // Even a genuine participant cannot confirm early…
+    const early = await e.rpc('submit_completion_confirmation', {
+      p_booking: created.data.id, p_outcome: 'completed',
+    });
+    expect(early.error).not.toBeNull();
+    expect(String(early.error!.message)).toContain('too_early');
+
+    // …and an unrelated account cannot confirm at all.
+    const unrelated = await g.rpc('submit_completion_confirmation', {
+      p_booking: created.data.id, p_outcome: 'completed',
+    });
+    expect(unrelated.error).not.toBeNull();
+    expect(String(unrelated.error!.message)).not.toContain('too_early'); // rejected on authorisation, not timing
+
+    // Invalid outcomes are rejected server-side.
+    const badOutcome = await e.rpc('submit_completion_confirmation', {
+      p_booking: created.data.id, p_outcome: 'paid_in_full',
+    });
+    expect(badOutcome.error).not.toBeNull();
+
+    // The browser cannot choose a participant side (unknown argument).
+    const forgedSide = await e.rpc('submit_completion_confirmation', {
+      p_booking: created.data.id, p_outcome: 'completed', p_side: 'companion',
+    });
+    expect(forgedSide.error).not.toBeNull();
+  });
+
+  it('2E1A: direct writes and status tampering are denied', async () => {
+    const booking = await e.from('my_bookings').select('id, member_profile_id').limit(1).single();
+    expect(booking.error).toBeNull();
+
+    const insert = await e.from('completion_confirmations').insert({
+      booking_id: booking.data!.id,
+      participant_side: 'member',
+      submitted_by_account_id: (await e.auth.getUser()).data.user!.id,
+      participant_profile_id: booking.data!.member_profile_id,
+      outcome: 'completed',
+    });
+    expect(insert.error).not.toBeNull(); // no direct insert path exists
+
+    const complete = await e.from('bookings').update({ status: 'completed' })
+      .eq('id', booking.data!.id).select();
+    expect(complete.data ?? []).toHaveLength(0); // cannot self-complete
+
+    // Unrelated users see no confirmations for other people's bookings.
+    const foreign = await g.from('completion_confirmations').select('*')
+      .eq('booking_id', booking.data!.id);
+    expect(foreign.data ?? []).toHaveLength(0);
+  });
 });

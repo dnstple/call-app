@@ -377,6 +377,56 @@ details — direct contact sharing is a later controlled step.
   simultaneous requests for one slot → exactly one success). Same command as
   above; skipped without `SUPABASE_TEST_URL`/`SUPABASE_TEST_ANON_KEY`.
 
-Deferred after 2D: completion confirmations, package credits, payments,
-ratings persistence, meeting links, external notifications, verification,
-administration.
+Deferred after 2D: completion confirmations (→ 2E1A), package credits,
+payments, ratings persistence, meeting links, external notifications,
+verification, administration.
+
+## Stage 2E1A — completion confirmations and reconciliation
+
+Run `supabase/migrations/0006_completion_confirmations.sql` after 0001–0005.
+**No payment, payout, package credit or rating is processed on completion.**
+
+- **Statuses**: `bookings.status` gains `completed` and `needs_review`
+  (terminal for normal users; admin resolution is a later milestone).
+  “Awaiting completion” is DERIVED — a `confirmed` booking whose `ends_at`
+  has passed — no background job.
+- **`completion_confirmations`**: one row per booking per side
+  (`member` / `companion`, unique together), with outcome
+  (`completed` / `did_not_happen` / `report_concern`), optional note,
+  submitting account and the participant profile (server-derived; a trigger
+  guarantees it matches the booking). Updatable until the booking is
+  reconciled.
+- **`submit_completion_confirmation(booking, outcome, note?)`** — the ONLY
+  write path. Requires auth; the SIDE IS DERIVED from `auth.uid()`
+  (companion access → companion side; booker / `can_book` coordinator →
+  member side; anyone else rejected). Rejects: `too_early` (end not passed),
+  `booking_not_eligible` (not confirmed), `already_finalised`,
+  `invalid_outcome`. Upserts this side's row, then reconciles atomically
+  under a row lock and audits any status change into
+  `booking_status_history`.
+- **Reconciliation rules**: any `report_concern` → `needs_review`
+  immediately (even one-sided); both `completed` → `completed`; both sides
+  present with any other combination (`completed`+`did_not_happen`, both
+  `did_not_happen`) → `needs_review`; a single `completed`/`did_not_happen`
+  leaves the booking `confirmed`, awaiting the other side.
+- **`get_completion_state(booking)`** — participant-only payload: status,
+  both sides' outcomes/notes and which side the caller represents.
+- **RLS**: confirmations readable only via `can_read_booking` (participants);
+  NO insert/update/delete policies — concern notes never leave the booking's
+  participants; nobody can set `completed`/`needs_review` directly.
+- **Repository** (`bookingRepository.ts`): `CompletionOutcome`,
+  `ParticipantSide`, `CompletionState`, `getCompletionState`,
+  `submitCompletionOutcome`, `listBookingsNeedingConfirmation`,
+  `canConfirmCompletion`, `reconcileOutcomes` (pure display mirror of the
+  server rules) and `CompletionError` with stable codes (`too_early`,
+  `unauthorised`, `booking_not_eligible`, `already_finalised`,
+  `invalid_outcome`, `needs_review`, `network_failure`).
+- **Tests**: `booking2e1a.test.ts` (reconciliation matrix, eligibility,
+  browser contract — the side is never sent — and typed errors). Live suite
+  gains a 2E1A block (too-early rejection, authorisation, denied direct
+  writes/status tampering, confirmation isolation). Live limitation:
+  API-created bookings always end in the future, so full reconciliation is
+  proven by the unit matrix + SQL, not live. Run 0006 before `test:rls`.
+
+Deferred after 2E1A: completion UI, ratings persistence, package-credit
+consumption, payments/payouts, admin dispute resolution, notifications.

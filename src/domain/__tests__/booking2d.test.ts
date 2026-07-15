@@ -169,7 +169,7 @@ describe('honest status labels (no completion, no payment success)', () => {
       row({ status: 'confirmed', starts_at: '2026-07-01T10:00:00Z', ends_at: '2026-07-01T10:30:00Z' }),
       now,
     );
-    expect(label).toContain('confirmation will be added in a later stage');
+    expect(label).toContain('waiting for both sides to confirm');
     expect(label.toLowerCase()).not.toContain('completed');
   });
   it('no label ever suggests a payment happened', () => {

@@ -215,7 +215,14 @@ export type DiscoverableCompanionRow = {
   available_dayparts: string[];
 };
 
-export type BookingStatus2D = 'requested' | 'confirmed' | 'declined' | 'change_proposed' | 'cancelled';
+export type BookingStatus2D =
+  | 'requested'
+  | 'confirmed'
+  | 'declined'
+  | 'change_proposed'
+  | 'cancelled'
+  | 'completed'
+  | 'needs_review';
 
 /** Prices/fees are server-side snapshots — estimates until payments exist. */
 export type BookingRow = {
@@ -280,6 +287,34 @@ export type SlotRow = {
   slot_end: string;
 };
 
+/** Stage 2E1A — one row per booking per side; only writable via the RPC. */
+export type CompletionConfirmationRow = {
+  id: string;
+  booking_id: string;
+  participant_side: 'member' | 'companion';
+  submitted_by_account_id: string;
+  participant_profile_id: string;
+  outcome: 'completed' | 'did_not_happen' | 'report_concern';
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CompletionSidePayload = {
+  outcome: 'completed' | 'did_not_happen' | 'report_concern';
+  note: string | null;
+  submitted_at: string;
+};
+
+export type CompletionStatePayload = {
+  booking_id: string;
+  status: BookingStatus2D;
+  ends_at: string;
+  your_side: 'member' | 'companion' | null;
+  member: CompletionSidePayload | null;
+  companion: CompletionSidePayload | null;
+};
+
 type Table<R> = {
   Row: R;
   Insert: Partial<R>;
@@ -306,6 +341,7 @@ export type Database = {
       bookings: Table<BookingRow>;
       booking_status_history: Table<BookingHistoryRow>;
       booking_time_proposals: Table<BookingProposalRow>;
+      completion_confirmations: Table<CompletionConfirmationRow>;
       platform_config: Table<{
         id: number;
         standard_commission_pct: number;
@@ -390,6 +426,11 @@ export type Database = {
       };
       accept_booking_time_proposal: { Args: { p_proposal: string }; Returns: BookingRow };
       reject_booking_time_proposal: { Args: { p_proposal: string }; Returns: BookingRow };
+      get_completion_state: { Args: { p_booking: string }; Returns: CompletionStatePayload };
+      submit_completion_confirmation: {
+        Args: { p_booking: string; p_outcome: string; p_note?: string | null };
+        Returns: CompletionStatePayload;
+      };
       complete_member_signup: {
         Args: {
           p_first_name: string;

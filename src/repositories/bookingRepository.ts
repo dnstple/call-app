@@ -11,10 +11,12 @@ import type {
   BookingHistoryRow,
   BookingProposalRow,
   BookingRow,
+  BookingStatus2D,
+  CompletionStatePayload,
   MyBookingRow,
   SlotRow,
 } from '../supabase/database.types';
-import { RepoError } from './profileRepository';
+import { RepoError, type RepoErrorKind } from './profileRepository';
 
 /** Statuses that keep a slot reserved (mirrors the DB exclusion constraints). */
 export const ACTIVE_BOOKING_STATUSES = ['requested', 'confirmed', 'change_proposed'] as const;
@@ -146,7 +148,7 @@ export async function listBookingsForProfile(profileId: string): Promise<MyBooki
 }
 
 export function isUpcoming(b: MyBookingRow, now = new Date()): boolean {
-  if (b.status === 'declined' || b.status === 'cancelled') return false;
+  if (['declined', 'cancelled', 'completed', 'needs_review'].includes(b.status)) return false;
   return new Date(b.ends_at).getTime() > now.getTime();
 }
 
@@ -159,10 +161,14 @@ export function splitBookings(rows: MyBookingRow[], now = new Date()) {
   return { upcoming, past };
 }
 
-/** Derived display state — completion persistence arrives in a later stage. */
+/**
+ * Derived display state. "Awaiting completion" is deliberately NOT a stored
+ * status: a confirmed booking whose end has passed simply awaits both sides'
+ * outcomes (Stage 2E1A).
+ */
 export function derivedStatusLabel(b: MyBookingRow, now = new Date()): string {
   if (b.status === 'confirmed' && new Date(b.ends_at).getTime() <= now.getTime()) {
-    return 'Conversation ended — confirmation will be added in a later stage.';
+    return 'Conversation ended — waiting for both sides to confirm how it went.';
   }
   const labels: Record<string, string> = {
     requested: 'Awaiting the companion’s reply',
@@ -170,6 +176,8 @@ export function derivedStatusLabel(b: MyBookingRow, now = new Date()): string {
     declined: 'Declined',
     change_proposed: 'New time proposed',
     cancelled: 'Cancelled',
+    completed: 'Completed — confirmed by both sides',
+    needs_review: 'Being looked into by the platform',
   };
   return labels[b.status] ?? b.status;
 }
@@ -242,4 +250,148 @@ export function rejectTimeProposal(proposalId: string): Promise<BookingRow> {
     { p_proposal: proposalId },
     'We couldn’t decline that time.',
   );
+}
+
+/* ============================================================
+ * Stage 2E1A — completion confirmations and reconciliation.
+ * NO payment, credit or rating side effects.
+ * ============================================================ */
+
+export type CompletionOutcome = 'completed' | 'did_not_happen' | 'report_concern';
+export type ParticipantSide = 'member' | 'companion';
+
+export interface SideConfirmation {
+  outcome: CompletionOutcome;
+  note: string | null;
+  submittedAt: string;
+}
+
+export interface CompletionState {
+  bookingId: string;
+  status: BookingStatus2D;
+  endsAt: string;
+  /** The side the signed-in account represents (null: read-only viewer). */
+  yourSide: ParticipantSide | null;
+  member: SideConfirmation | null;
+  companion: SideConfirmation | null;
+}
+
+export type CompletionErrorCode =
+  | 'too_early'
+  | 'unauthorised'
+  | 'booking_not_eligible'
+  | 'already_finalised'
+  | 'invalid_outcome'
+  | 'needs_review'
+  | 'network_failure'
+  | 'unknown';
+
+/** RepoError specialised with a stable machine-readable code. */
+export class CompletionError extends RepoError {
+  constructor(message: string, kind: RepoErrorKind, public readonly code: CompletionErrorCode) {
+    super(message, kind);
+    this.name = 'CompletionError';
+  }
+}
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+export function mapCompletionError(e: any): CompletionError {
+  const msg = String(e?.message ?? '').toLowerCase();
+  if (import.meta.env?.DEV) console.warn('[completion]', e?.code ?? '', e?.message ?? '');
+  if (msg.includes('too_early')) {
+    return new CompletionError('This conversation hasn’t finished yet — you can confirm once it has.', 'validation', 'too_early');
+  }
+  if (msg.includes('already_finalised')) {
+    return new CompletionError('This conversation has already been confirmed by both sides.', 'conflict', 'already_finalised');
+  }
+  if (msg.includes('booking_not_eligible')) {
+    return new CompletionError('Only confirmed conversations can be completed.', 'validation', 'booking_not_eligible');
+  }
+  if (msg.includes('invalid_outcome')) {
+    return new CompletionError('Please choose a valid outcome.', 'validation', 'invalid_outcome');
+  }
+  if (msg.includes('cannot confirm') || msg.includes('row-level security') || msg.includes('permission denied') || msg.includes('not authenticated')) {
+    return new CompletionError('You don’t have permission to confirm this conversation.', 'unauthorised', 'unauthorised');
+  }
+  if (msg.includes('not found')) {
+    return new CompletionError('We couldn’t find that conversation.', 'not_found', 'unauthorised');
+  }
+  if (msg.includes('failed to fetch') || msg.includes('network')) {
+    return new CompletionError('We couldn’t reach the server. Please check your connection.', 'network', 'network_failure');
+  }
+  return new CompletionError('Something went wrong. Please try again.', 'database', 'unknown');
+}
+
+/**
+ * Pure mirror of the SERVER reconciliation rules (the database is the
+ * authority; this exists for display/tests):
+ * - any report_concern → needs_review (immediately, even one-sided)
+ * - both completed → completed
+ * - both present, any other combination → needs_review
+ * - otherwise → still awaiting the other side (null)
+ */
+export function reconcileOutcomes(
+  member: CompletionOutcome | null,
+  companion: CompletionOutcome | null,
+): 'completed' | 'needs_review' | null {
+  if (member === 'report_concern' || companion === 'report_concern') return 'needs_review';
+  if (member !== null && companion !== null) {
+    return member === 'completed' && companion === 'completed' ? 'completed' : 'needs_review';
+  }
+  return null;
+}
+
+/** Eligible for a completion outcome: confirmed AND the scheduled end passed. */
+export function canConfirmCompletion(
+  b: Pick<MyBookingRow, 'status' | 'ends_at'>,
+  now = new Date(),
+): boolean {
+  return b.status === 'confirmed' && new Date(b.ends_at).getTime() <= now.getTime();
+}
+
+function payloadToState(p: CompletionStatePayload): CompletionState {
+  const side = (s: CompletionStatePayload['member']): SideConfirmation | null =>
+    s ? { outcome: s.outcome, note: s.note, submittedAt: s.submitted_at } : null;
+  return {
+    bookingId: p.booking_id,
+    status: p.status,
+    endsAt: p.ends_at,
+    yourSide: p.your_side,
+    member: side(p.member),
+    companion: side(p.companion),
+  };
+}
+
+export async function getCompletionState(bookingId: string): Promise<CompletionState> {
+  const { data, error } = await getSupabaseClient().rpc('get_completion_state', {
+    p_booking: bookingId,
+  });
+  if (error) throw mapCompletionError(error);
+  return payloadToState(data as CompletionStatePayload);
+}
+
+/**
+ * Record this account's side of the outcome. The SIDE IS NEVER SENT —
+ * the server derives it from auth.uid(), reconciles both outcomes
+ * atomically and audits any status change.
+ */
+export async function submitCompletionOutcome(
+  bookingId: string,
+  outcome: CompletionOutcome,
+  note?: string,
+): Promise<CompletionState> {
+  const { data, error } = await getSupabaseClient().rpc('submit_completion_confirmation', {
+    p_booking: bookingId,
+    p_outcome: outcome,
+    p_note: note ?? null,
+  });
+  if (error) throw mapCompletionError(error);
+  return payloadToState(data as CompletionStatePayload);
+}
+
+/** Ended, still-confirmed conversations involving this profile. */
+export async function listBookingsNeedingConfirmation(profileId: string): Promise<MyBookingRow[]> {
+  const rows = await listBookingsForProfile(profileId);
+  const now = new Date();
+  return rows.filter((b) => canConfirmCompletion(b, now));
 }
