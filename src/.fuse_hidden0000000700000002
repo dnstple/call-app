@@ -1,0 +1,275 @@
+/** Typed domain models — Stage 1 prototype. All data is fictional. */
+
+export type Role = 'member' | 'companion' | 'coordinator';
+
+export type Medium = 'phone' | 'whatsapp' | 'facetime' | 'zoom' | 'meet' | 'other';
+
+export type ConversationStyle = 'relaxed' | 'energetic' | 'reflective';
+
+export type VerificationState = 'not_verified' | 'pending' | 'verified_demo';
+
+export type BookingStatus =
+  | 'draft'
+  | 'requested'
+  | 'confirmed'
+  | 'in_progress'
+  | 'awaiting_completion'
+  | 'completed'
+  | 'missed'
+  | 'cancelled'
+  | 'needs_review';
+
+export type CompletionOutcome = 'completed' | 'did_not_happen' | 'concern';
+
+export type OfferKind = 'trial' | 'single' | 'package';
+
+export type Cadence = 'once' | 'weekly' | 'fortnightly' | 'monthly';
+
+export type NotificationType =
+  | 'booking_requested'
+  | 'booking_accepted'
+  | 'booking_declined'
+  | 'time_proposed'
+  | 'reminder_24h'
+  | 'reminder_1h'
+  | 'booking_changed'
+  | 'booking_cancelled'
+  | 'completion_prompt'
+  | 'other_party_completed'
+  | 'rating_reminder'
+  | 'package_low'
+  | 'safety';
+
+export interface User {
+  id: string;
+  role: Role;
+  firstName: string;
+  lastName: string;
+  email: string;    // fictional
+  phone: string;    // fictional
+  ageBand: string;  // e.g. "70s" — exact DOB never shown
+  region: string;
+  headline: string;
+  bio: string;
+  interests: string[];
+  languages: string[];
+  style: ConversationStyle;
+  mediums: Medium[];
+  avatarColor: string; // generated avatar background
+  verification: VerificationState;
+  accessibilityNeeds?: string;
+  preferredTimes?: string; // Members: free-text preferred days/times
+  boundaries?: string;     // Companions
+  responseRatePct?: number;        // placeholder metric
+  completionReliabilityPct?: number; // placeholder metric
+  joinedAt: string; // ISO
+}
+
+export interface ManagedRelationship {
+  id: string;
+  coordinatorId: string;
+  memberId: string;
+  relationship: string; // e.g. "Daughter"
+  consentStatus: 'recorded' | 'pending';
+  canBook: boolean;
+  createdAt: string;
+}
+
+/** Recurring weekly availability for a Companion. */
+export interface AvailabilityRule {
+  id: string;
+  companionId: string;
+  weekday: number;      // 0 = Sunday … 6 = Saturday
+  startHour: number;    // 24h local
+  endHour: number;
+  timeZone: string;
+  minNoticeHours: number;
+  bookingHorizonDays: number;
+}
+
+export interface AvailabilityException {
+  id: string;
+  companionId: string;
+  date: string;         // YYYY-MM-DD
+  available: boolean;
+  reason?: string;
+}
+
+export interface PackageOffer {
+  id: string;
+  companionId: string;
+  kind: OfferKind;
+  title: string;
+  durationMins: number;
+  callCount: number;
+  cadence: Cadence;
+  validityDays: number;
+  pricePence: number;
+  active: boolean;
+}
+
+export interface PackagePurchase {
+  id: string;
+  buyerId: string;
+  memberId: string;
+  companionId: string;
+  offerId: string;
+  callsTotal: number;
+  callsUsed: number;    // decremented rule: incremented only on completion
+  purchasedAt: string;
+  expiresAt: string;
+  status: 'active' | 'exhausted' | 'expired';
+  transactionRef: string;
+}
+
+export interface Booking {
+  id: string;
+  memberId: string;
+  companionId: string;
+  coordinatorId?: string;
+  offerId: string;
+  offerKind: OfferKind;
+  packagePurchaseId?: string;
+  start: string;        // ISO
+  end: string;          // ISO
+  timeZone: string;
+  medium: Medium;
+  durationMins: number;
+  pricePence: number;   // 0 when paid by package credit
+  isTrial: boolean;
+  status: BookingStatus;
+  proposedStart?: string; // when Companion proposes a new time
+  cancelledBy?: string;
+  cancelReason?: string;
+  createdAt: string;
+  history: { at: string; event: string }[];
+}
+
+export interface CompletionConfirmation {
+  id: string;
+  bookingId: string;
+  userId: string;
+  outcome: CompletionOutcome;
+  note?: string;
+  confirmedAt: string;
+}
+
+export interface Rating {
+  id: string;
+  reviewerId: string;
+  revieweeId: string;
+  bookingId: string;
+  stars: number;          // 1–5
+  publicComment?: string;
+  privateFeedback?: string;
+  active: boolean;        // one active rating per reviewer–reviewee pair
+  updatedAt: string;
+}
+
+export interface AppNotification {
+  id: string;
+  userId: string;
+  type: NotificationType;
+  title: string;
+  body: string;
+  relatedBookingId?: string;
+  read: boolean;
+  createdAt: string;
+}
+
+export interface Report {
+  id: string;
+  reporterId: string;
+  reportedUserId: string;
+  bookingId?: string;
+  category: string;
+  details: string;
+  status: 'open' | 'reviewing' | 'resolved';
+  createdAt: string;
+}
+
+export interface Transaction {
+  id: string;
+  kind: 'trial' | 'single' | 'package';
+  bookingId?: string;
+  packagePurchaseId?: string;
+  payerId: string;
+  companionId: string;
+  grossPence: number;
+  platformFeePence: number;
+  netPence: number;
+  createdAt: string;
+  simulated: true;
+}
+
+export interface PlatformConfig {
+  /** Commission on non-trial transactions, percent. Configurable — do not hard-code. */
+  standardCommissionPct: number;
+  /** Commission on trials, percent. */
+  trialCommissionPct: number;
+  recommendedTrialPence: number;
+  trialDurationMins: number;
+  completionReminderHours: number;
+  currency: 'GBP';
+}
+
+export interface AccessibilityPrefs {
+  textSize: 'default' | 'large' | 'xlarge';
+  highContrast: boolean;
+  reducedMotion: boolean;
+  captions: boolean;
+  simpleMode: boolean;
+}
+
+export interface NotificationPrefs {
+  bookingRequests: boolean;
+  confirmations: boolean;
+  reminders: boolean;
+  changes: boolean;
+  completionPrompts: boolean;
+  ratings: boolean;
+  marketing: boolean;
+  channels: { email: boolean; sms: boolean; push: boolean; inApp: boolean };
+}
+
+export interface UserSettings {
+  userId: string;
+  notificationPrefs: NotificationPrefs;
+  accessibility: AccessibilityPrefs;
+  profileVisible: boolean;
+  shareContactAfterConfirm: boolean;
+  blockedUserIds: string[];
+}
+
+export interface OnboardingDraft {
+  step: number;
+  role?: Role;
+  data: Record<string, unknown>;
+  updatedAt: string;
+}
+
+export interface Session {
+  currentUserId: string;
+  activeMemberId?: string; // Coordinator: which managed Member is in focus
+}
+
+export interface AppState {
+  version: number;
+  session: Session;
+  config: PlatformConfig;
+  users: User[];
+  relationships: ManagedRelationship[];
+  availabilityRules: AvailabilityRule[];
+  availabilityExceptions: AvailabilityException[];
+  offers: PackageOffer[];
+  purchases: PackagePurchase[];
+  bookings: Booking[];
+  confirmations: CompletionConfirmation[];
+  ratings: Rating[];
+  notifications: AppNotification[];
+  reports: Report[];
+  transactions: Transaction[];
+  favourites: Record<string, string[]>; // userId -> profile ids
+  settings: UserSettings[];
+  onboardingDraft?: OnboardingDraft;
+}
