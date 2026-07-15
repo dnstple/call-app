@@ -37,6 +37,7 @@ import {
 } from '../components/ui';
 import { BookingWizard, PackagePurchaseDialog } from '../components/BookingWizard';
 import { SupabaseBookingWizard } from '../components/SupabaseBookingWizard';
+import { CardRatingSummary, CompanionReviews } from '../components/CompanionReviews';
 import { useAuthSnapshot } from '../state/authBridge';
 import { ReportDialog } from '../components/ConversationRow';
 import { roleLabel } from '../components/Shell';
@@ -183,7 +184,11 @@ export default function ProfileDetail() {
           <div className="muted">{roleLabel(user.role)} · {user.region}</div>
           <p style={{ margin: '4px 0 0', fontSize: '1.05em' }}>{user.headline}</p>
           <div className="row wrap" style={{ gap: 16 }}>
-            <RatingStars average={rating.average} reviewerCount={rating.reviewerCount} />
+            {supabase && user.role === 'companion' ? (
+              <CardRatingSummary profileId={user.id} />
+            ) : (
+              <RatingStars average={rating.average} reviewerCount={rating.reviewerCount} />
+            )}
             <VerificationBadge state={user.verification} />
           </div>
           {canBook && (
@@ -387,6 +392,10 @@ export default function ProfileDetail() {
         </section>
       )}
 
+      {/* Reviews: real Supabase data for companions; mock demo otherwise. */}
+      {supabase ? (
+        user.role === 'companion' && <CompanionReviews profileId={user.id} firstName={user.firstName} />
+      ) : (
       <section className="section-tight">
         <h2>Reviews</h2>
         <div className="row wrap mb-4" style={{ gap: 16 }}>
@@ -415,6 +424,7 @@ export default function ProfileDetail() {
           </div>
         )}
       </section>
+      )}
 
       {booking && <BookingWizard companion={user} onClose={() => setBooking(false)} />}
       {realBooking && (

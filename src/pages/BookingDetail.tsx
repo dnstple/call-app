@@ -30,6 +30,7 @@ import type { BookingHistoryRow, BookingProposalRow, MyBookingRow } from '../sup
 import { EmptyState } from '../components/ui';
 import { SlotPicker, slotDayLabel, slotTimeLabel } from '../components/SupabaseBookingWizard';
 import { CompletionPanel } from '../components/CompletionPanel';
+import { RatingPanel } from '../components/RatingPanel';
 
 const STATUS_BADGE: Record<string, string> = {
   requested: 'badge-neutral',
@@ -235,6 +236,9 @@ export default function BookingDetail() {
 
       {/* Completion confirmation (Stage 2E1B) — ended conversations only */}
       <CompletionPanel booking={booking} onStatusChange={() => void load()} />
+
+      {/* Rating (Stage 2E2B) — member side, completed conversations only */}
+      <RatingPanel booking={booking} />
 
       {/* Price snapshot — honest payment boundary */}
       <section className="section-tight">

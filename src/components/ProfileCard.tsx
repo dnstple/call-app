@@ -9,6 +9,7 @@ import { overallRating } from '../domain/ratings';
 import { generateSlots, nextAvailableLabel } from '../domain/availability';
 import { formatPence } from '../domain/commission';
 import { ProfilePhoto, RatingStars, VerificationBadge } from './ui';
+import { CardRatingSummary } from './CompanionReviews';
 import { isSupabaseMode } from '../config/dataMode';
 import { getMarketMeta } from '../repositories/profileRepository';
 import { formatMinor } from '../repositories/availabilityRepository';
@@ -85,7 +86,11 @@ export function ProfileCard({ user }: { user: User }) {
           <h3 style={{ margin: 0 }}>
             {user.firstName} <span className="muted" style={{ fontWeight: 500 }}>· {user.ageBand}</span>
           </h3>
-          <RatingStars average={rating.average} reviewerCount={rating.reviewerCount} compact />
+          {isSupabaseMode() && user.role === 'companion' ? (
+            <CardRatingSummary profileId={user.id} />
+          ) : (
+            <RatingStars average={rating.average} reviewerCount={rating.reviewerCount} compact />
+          )}
         </div>
         <VerificationBadge state={user.verification} />
         <p className="muted" style={{ margin: 0 }}>{user.headline}</p>
