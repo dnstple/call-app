@@ -873,4 +873,69 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
       .eq('booking_id', booking.data!.id);
     expect(foreign.data ?? []).toHaveLength(0);
   });
+
+  /* ---------------- Stage 2E2A: ratings (requires 0007) ----------------
+   * Live limitation (documented): API-created bookings cannot reach
+   * `completed` inside a test run (their end is in the future), so the
+   * happy-path upsert is proven by unit tests + SQL. Here we prove the
+   * security boundary. */
+
+  it('2E2A: rating eligibility and authorisation are enforced', async () => {
+    const created = await e.rpc('create_booking_request', {
+      p_member: eMemberId, p_offer: singleOfferId,
+      p_starts_at: slots[26].slot_start, p_method: 'phone',
+    });
+    expect(created.error).toBeNull();
+    const accepted = await f.rpc('accept_booking', { p_booking: created.data.id });
+    expect(accepted.error).toBeNull();
+
+    // Not completed yet → rejected even for the genuine member side.
+    const early = await e.rpc('submit_rating', { p_booking: created.data.id, p_score: 5 });
+    expect(early.error).not.toBeNull();
+    expect(String(early.error!.message)).toContain('booking_not_completed');
+
+    // The companion cannot rate (one-way product model → no self-rating).
+    const companionRate = await f.rpc('submit_rating', { p_booking: created.data.id, p_score: 5 });
+    expect(companionRate.error).not.toBeNull();
+    expect(String(companionRate.error!.message)).toContain('self_rating');
+
+    // Unrelated accounts are rejected before any eligibility detail leaks.
+    const unrelated = await g.rpc('submit_rating', { p_booking: created.data.id, p_score: 5 });
+    expect(unrelated.error).not.toBeNull();
+    expect(String(unrelated.error!.message)).not.toContain('booking_not_completed');
+
+    // Invalid scores and forged participant ids are rejected.
+    const badScore = await e.rpc('submit_rating', { p_booking: created.data.id, p_score: 7 });
+    expect(badScore.error).not.toBeNull();
+    const forged = await e.rpc('submit_rating', {
+      p_booking: created.data.id, p_score: 5, p_reviewer_profile_id: fCompanionId,
+    });
+    expect(forged.error).not.toBeNull(); // unknown argument
+  });
+
+  it('2E2A: direct rating writes are denied; public summary stays safe', async () => {
+    const insert = await e.from('ratings').insert({
+      reviewer_profile_id: eMemberId,
+      reviewee_profile_id: fCompanionId,
+      submitted_by_account_id: (await e.auth.getUser()).data.user!.id,
+      source_booking_id: (await e.from('my_bookings').select('id').limit(1).single()).data!.id,
+      score: 5,
+    });
+    expect(insert.error).not.toBeNull(); // no direct write path exists
+
+    // Public summary works for a discoverable companion and reveals only
+    // aggregate numbers (no ratings exist yet → null average, zero count).
+    const summary = await e.rpc('get_companion_rating_summary', { p_profile: fCompanionId });
+    expect(summary.error).toBeNull();
+    expect(summary.data.reviewer_count).toBe(0);
+    expect(summary.data.average).toBeNull();
+
+    const reviews = await e.rpc('get_companion_public_reviews', { p_profile: fCompanionId });
+    expect(reviews.error).toBeNull();
+    expect(reviews.data ?? []).toHaveLength(0);
+
+    // Non-discoverable profiles (e.g. a member) are not summarisable.
+    const memberSummary = await e.rpc('get_companion_rating_summary', { p_profile: gManagedMemberId });
+    expect(memberSummary.error).not.toBeNull();
+  });
 });

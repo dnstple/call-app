@@ -315,6 +315,33 @@ export type CompletionStatePayload = {
   companion: CompletionSidePayload | null;
 };
 
+/** Stage 2E2A — one rating per reviewer–reviewee pair; RPC-only writes. */
+export type RatingRow = {
+  id: string;
+  reviewer_profile_id: string;
+  reviewee_profile_id: string;
+  submitted_by_account_id: string;
+  source_booking_id: string;
+  score: number;
+  public_comment: string | null;
+  private_feedback: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type RatingSummaryPayload = {
+  average: number | null;
+  reviewer_count: number;
+};
+
+export type PublicReviewRow = {
+  reviewer_first_name: string;
+  reviewer_last_initial: string | null;
+  score: number;
+  public_comment: string | null;
+  updated_at: string;
+};
+
 type Table<R> = {
   Row: R;
   Insert: Partial<R>;
@@ -342,6 +369,7 @@ export type Database = {
       booking_status_history: Table<BookingHistoryRow>;
       booking_time_proposals: Table<BookingProposalRow>;
       completion_confirmations: Table<CompletionConfirmationRow>;
+      ratings: Table<RatingRow>;
       platform_config: Table<{
         id: number;
         standard_commission_pct: number;
@@ -430,6 +458,20 @@ export type Database = {
       submit_completion_confirmation: {
         Args: { p_booking: string; p_outcome: string; p_note?: string | null };
         Returns: CompletionStatePayload;
+      };
+      submit_rating: {
+        Args: {
+          p_booking: string;
+          p_score: number;
+          p_public_comment?: string | null;
+          p_private_feedback?: string | null;
+        };
+        Returns: RatingRow;
+      };
+      get_companion_rating_summary: { Args: { p_profile: string }; Returns: RatingSummaryPayload };
+      get_companion_public_reviews: {
+        Args: { p_profile: string; p_limit?: number; p_offset?: number };
+        Returns: PublicReviewRow[];
       };
       complete_member_signup: {
         Args: {

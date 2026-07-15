@@ -428,5 +428,55 @@ Run `supabase/migrations/0006_completion_confirmations.sql` after 0001–0005.
   API-created bookings always end in the future, so full reconciliation is
   proven by the unit matrix + SQL, not live. Run 0006 before `test:rls`.
 
-Deferred after 2E1A: completion UI, ratings persistence, package-credit
+Deferred after 2E1A: ratings persistence (→ 2E2A), package-credit
 consumption, payments/payouts, admin dispute resolution, notifications.
+(2E1B added the completion UI: `CompletionPanel` on the booking detail page,
+a "How did it go?" Home section, honest labels — no schema changes.)
+
+## Stage 2E2A — ratings persistence
+
+Run `supabase/migrations/0007_ratings.sql` after 0001–0006. **No rating UI
+yet** (Stage 2E2B); no payment, package or notification side effects.
+
+- **Model (preserved from Stage 1)**: ONE-WAY — the Member side rates the
+  Companion after a COMPLETED conversation. "One person, one rating":
+  unique `(reviewer_profile_id, reviewee_profile_id)`; a later completed
+  conversation UPDATES the same row and re-points `source_booking_id` at
+  the latest booking. Public averages therefore count unique reviewers
+  structurally — repeat bookings cannot inflate them.
+- **`ratings` (rebuilt)**: reviewer/reviewee profiles, submitting account,
+  source booking, `score` 1–5, `public_comment` (≤1000), `private_feedback`
+  (≤2000, platform-team only), reviewer ≠ reviewee. A trigger guarantees the
+  source booking is `completed` and the participants match it.
+- **`submit_rating(booking, score, public_comment?, private_feedback?)`** —
+  the ONLY write path. Derives reviewer (member side: booker or `can_book`
+  Coordinator) and reviewee (the booking's companion) from `auth.uid()` +
+  the booking; rejects companions (`self_rating` — one-way model), unrelated
+  accounts, non-completed bookings (`booking_not_completed`, incl.
+  needs_review/cancelled/declined), invalid scores and oversized comments.
+  Upserts the pair rating atomically.
+- **Public surfaces** (UI wiring in 2E2B):
+  `get_companion_rating_summary(profile)` → `{ average, reviewer_count }`;
+  `get_companion_public_reviews(profile, limit, offset)` → reviewer first
+  name + last initial, score, public comment, date. Discoverable companions
+  (or own profiles) only. NEVER private feedback, account ids or booking
+  details.
+- **RLS**: reviewer-side reads only (submitting account or reviewer-profile
+  access) — the Companion sees aggregates through the safe functions and can
+  never read private feedback. No direct insert/update/delete for anyone.
+- **Repository**: `src/repositories/ratingRepository.ts` — `submitRating`
+  (client-side score/length pre-validation), `getRatingForPair`,
+  `getRatingForBooking`, `getPublicRatingSummary`, `getPublicReviews`, and
+  `RatingError` with stable codes (`too_early`, `booking_not_completed`,
+  `unauthorised`, `invalid_score`, `invalid_comment`, `self_rating`,
+  `not_found`, `network_failure`).
+- **Tests**: `rating2e2a.test.ts` (contract — participants never sent;
+  validation; typed errors; pair-update and unique-reviewer aggregation via
+  the shared domain rules; safe public payloads). Live suite gains a 2E2A
+  block (eligibility, one-way enforcement, unrelated rejection, forged ids,
+  denied direct writes, safe summaries). Live limitation: bookings cannot
+  reach `completed` inside a test run, so the happy-path upsert is proven by
+  unit tests + SQL. Run 0007 before `test:rls`.
+
+Deferred after 2E2A: rating UI (2E2B), package credits, payments/payouts,
+admin dispute resolution, external notifications, verification, admin.
