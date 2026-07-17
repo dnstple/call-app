@@ -111,6 +111,14 @@ export function statusLabel(status: BookingStatus): string {
 /* ---------- Verification (demo wording, quiet) ---------- */
 
 export function VerificationBadge({ state }: { state: VerificationState }) {
+  if (state === 'verified') {
+    return (
+      <span className="row" style={{ gap: 4 }}>
+        <BadgeCheck size={16} aria-hidden="true" style={{ color: 'var(--success)' }} />
+        Verified
+      </span>
+    );
+  }
   if (state === 'verified_demo') {
     return (
       <span className="row faint" style={{ gap: 4 }}>
