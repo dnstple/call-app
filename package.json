@@ -18,11 +18,13 @@
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.26.2",
     "lucide-react": "^0.446.0",
+    "react-day-picker": "^10.0.1",
     "@supabase/supabase-js": "^2.45.4"
   },
   "devDependencies": {
     "@testing-library/dom": "^10.4.0",
     "@testing-library/react": "^16.0.1",
+    "@types/node": "^22.7.4",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",

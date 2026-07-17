@@ -1395,4 +1395,82 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
     // Permanence after COMPLETION cannot be exercised live (bookings always
     // end in the future) — proven by the unit suite and the SQL rule.
   });
+
+  /* ---------------- Corrective 2E4B: in-app calls + the 2-hour rule (requires 0012) ---------------- */
+
+  it('2E4B: every conversation is an in-app call, server-enforced', async () => {
+    const created = await e.rpc('create_booking_request', {
+      p_member: eMemberId, p_offer: singleOfferId,
+      p_starts_at: slots[42].slot_start, p_method: 'in_app',
+    });
+    expect(created.error).toBeNull();
+    expect(created.data.communication_method).toBe('in_app');
+
+    // Legacy channels are rejected outright.
+    const phone = await e.rpc('create_booking_request', {
+      p_member: eMemberId, p_offer: singleOfferId,
+      p_starts_at: slots[44].slot_start, p_method: 'phone',
+    });
+    expect(phone.error).not.toBeNull();
+
+    // Offers normalise to in-app even via the direct-insert path.
+    const offer = await f.from('conversation_offers').insert({
+      companion_profile_id: fCompanionId, offer_type: 'single',
+      duration_minutes: 45, price_minor: 2000, supported_methods: ['phone', 'zoom'],
+    }).select('supported_methods').single();
+    expect(offer.error).toBeNull();
+    expect(offer.data!.supported_methods).toEqual(['in_app']);
+  });
+
+  it('2E4B: rescheduling is open outside the two-hour window', async () => {
+    const created = await e.rpc('create_booking_request', {
+      p_member: eMemberId, p_offer: singleOfferId,
+      p_starts_at: slots[46].slot_start, p_method: 'in_app',
+    });
+    expect(created.error).toBeNull();
+    const accepted = await f.rpc('accept_booking', { p_booking: created.data.id });
+    expect(accepted.error).toBeNull();
+
+    // The generated slots respect a 24-hour notice, so this booking is
+    // comfortably outside the cutoff.
+    const state = await e.rpc('get_reschedule_state', { p_booking: created.data.id });
+    expect(state.error).toBeNull();
+    expect(state.data.can_reschedule).toBe(true);
+    expect(new Date(state.data.cutoff_at).getTime()).toBe(
+      new Date(created.data.starts_at).getTime() - 2 * 3600 * 1000,
+    );
+
+    const proposed = await f.rpc('propose_booking_time', {
+      p_booking: created.data.id, p_starts_at: slots[48].slot_start,
+    });
+    expect(proposed.error).toBeNull();
+    await e.rpc('cancel_booking', { p_booking: created.data.id, p_reason: 'Reschedule test cleanup' });
+  });
+
+  it('2E4B: a time inside the two-hour window is refused by the SERVER', async () => {
+    const created = await e.rpc('create_booking_request', {
+      p_member: eMemberId, p_offer: singleOfferId,
+      p_starts_at: slots[50].slot_start, p_method: 'in_app',
+    });
+    expect(created.error).toBeNull();
+    await f.rpc('accept_booking', { p_booking: created.data.id });
+
+    // Proposing a time one hour from NOW is inside the cutoff — the
+    // database rejects it using its own clock, whatever the browser thinks.
+    const soon = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const tooSoon = await f.rpc('propose_booking_time', {
+      p_booking: created.data.id, p_starts_at: soon,
+    });
+    expect(tooSoon.error).not.toBeNull();
+    expect(String(tooSoon.error!.message)).toContain('reschedule_closed');
+
+    await e.rpc('cancel_booking', { p_booking: created.data.id, p_reason: 'Reschedule test cleanup' });
+  });
+
+  it('2E4B: reschedule state is participant-only', async () => {
+    const mine = await e.from('my_bookings').select('id').limit(1).single();
+    expect(mine.error).toBeNull();
+    const foreign = await h.rpc('get_reschedule_state', { p_booking: mine.data!.id });
+    expect(foreign.error).not.toBeNull();
+  });
 });

@@ -39,6 +39,7 @@ import { BookingWizard, PackagePurchaseDialog } from '../components/BookingWizar
 import { SupabaseBookingWizard } from '../components/SupabaseBookingWizard';
 import { CardRatingSummary, CompanionReviews } from '../components/CompanionReviews';
 import { CompanionPlanHero } from '../components/CompanionPlanHero';
+import { IN_APP_CALL_LABEL } from '../components/FlowModal';
 import { useAuthSnapshot } from '../state/authBridge';
 import { ReportDialog } from '../components/ConversationRow';
 import { roleLabel } from '../components/Shell';
@@ -179,18 +180,24 @@ export default function ProfileDetail() {
       <header className="row wrap" style={{ gap: 24, alignItems: 'flex-start' }}>
         <ProfilePhoto user={user} size={132} radius={24} />
         <div className="col grow" style={{ gap: 6 }}>
-          <h1 style={{ margin: 0 }}>
-            {user.firstName} <span className="muted" style={{ fontWeight: 500 }}>· {user.ageBand}</span>
+          {/* Empty metadata must not leave stray separators behind. */}
+          <h1 className="longform" style={{ margin: 0 }}>
+            {user.firstName}
+            {user.ageBand ? <span className="muted" style={{ fontWeight: 500 }}> · {user.ageBand}</span> : null}
           </h1>
-          <div className="muted">{roleLabel(user.role)} · {user.region}</div>
-          <p style={{ margin: '4px 0 0', fontSize: '1.05em' }}>{user.headline}</p>
+          <div className="muted longform">
+            {[roleLabel(user.role), user.region].filter(Boolean).join(' · ')}
+          </div>
+          {user.headline && (
+            <p className="longform" style={{ margin: '4px 0 0', fontSize: '1.05em' }}>{user.headline}</p>
+          )}
           <div className="row wrap" style={{ gap: 16 }}>
-            {supabase && user.role === 'companion' ? (
-              <CardRatingSummary profileId={user.id} />
-            ) : (
+            <VerificationBadge state={user.verification} />
+            {/* Ratings sit with the reviews, not beside the badge, so an
+                unrated companion never reads as "New — Not verified". */}
+            {(!supabase || user.role !== 'companion') && (
               <RatingStars average={rating.average} reviewerCount={rating.reviewerCount} />
             )}
-            <VerificationBadge state={user.verification} />
           </div>
           {canBook && (
             <div className="row wrap mt-2" style={{ gap: 12 }}>
@@ -219,10 +226,12 @@ export default function ProfileDetail() {
 
       <section className="section-tight">
         <h2>About {user.firstName}</h2>
-        <p className="muted" style={{ maxWidth: 640 }}>{user.bio}</p>
-        <p className="muted">
-          Speaks {user.languages.join(' and ')} · prefers {user.style} conversations ·{' '}
-          {user.mediums.map((m) => MEDIUM_LABELS[m]).join(', ')}
+        {/* Free text people write: wraps, never escapes the column. */}
+        <p className="muted longform" style={{ maxWidth: 640 }}>{user.bio}</p>
+        <p className="muted longform">
+          Speaks {user.languages.join(' and ')}
+          {user.style ? ` · prefers ${user.style} conversations` : ''}
+          {supabase ? ` · ${IN_APP_CALL_LABEL}` : ` · ${user.mediums.map((m) => MEDIUM_LABELS[m]).join(', ')}`}
         </p>
         <div className="row-wrap mt-2">
           {user.interests.map((i) => (

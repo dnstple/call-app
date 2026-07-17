@@ -18,7 +18,8 @@ import { getMemberPlanPreferences, recommendedFrequency } from '../repositories/
 import { formatMinor } from '../repositories/availabilityRepository';
 import { useAuthSnapshot } from '../state/authBridge';
 import { PlanWizard } from './PlanWizard';
-import { SupabaseBookingWizard } from './SupabaseBookingWizard';
+import { TestCallWizard } from './TestCallWizard';
+import { IN_APP_CALL_EXPLAINER } from './FlowModal';
 import { PLAN_STATUS_LABELS, frequencyLabel } from './PlanCards';
 
 export function CompanionPlanHero({
@@ -152,7 +153,9 @@ export function CompanionPlanHero({
           <button className="btn btn-primary" style={{ alignSelf: 'flex-start' }} onClick={() => setPlanOpen(true)}>
             Start regular conversations
           </button>
-          <span className="faint">Prototype plan — no payment will be taken.</span>
+          <span className="faint longform">
+            {IN_APP_CALL_EXPLAINER} Prototype plan — no payment will be taken.
+          </span>
         </div>
       ) : (
         acceptingNewMembers && (
@@ -170,9 +173,10 @@ export function CompanionPlanHero({
         />
       )}
       {trialOpen && trialOffer && (
-        <SupabaseBookingWizard
+        <TestCallWizard
           companion={companion}
-          offers={[trialOffer]}
+          trialOffer={trialOffer}
+          onBooked={() => void load()}
           onClose={() => {
             setTrialOpen(false);
             void load();

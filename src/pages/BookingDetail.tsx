@@ -13,8 +13,11 @@ import {
   acceptBooking,
   acceptTimeProposal,
   cancelBooking,
+  canRescheduleBooking,
   declineBooking,
   derivedStatusLabel,
+  RESCHEDULE_CLOSED_COPY,
+  RESCHEDULE_OPEN_COPY,
   getBookingById,
   getBookingHistory,
   getPendingProposal,
@@ -30,6 +33,7 @@ import type { BookingHistoryRow, BookingProposalRow, MyBookingRow } from '../sup
 import { EmptyState } from '../components/ui';
 import { SlotPicker, slotDayLabel, slotTimeLabel } from '../components/SupabaseBookingWizard';
 import { CompletionPanel } from '../components/CompletionPanel';
+import { IN_APP_CALL_EXPLAINER, IN_APP_CALL_LABEL } from '../components/FlowModal';
 import { RatingPanel } from '../components/RatingPanel';
 import { BookingCreditPanel } from '../components/BookingCreditBadge';
 
@@ -203,8 +207,12 @@ export default function BookingDetail() {
           </div>
           <div className="row" style={{ gap: 10 }}>
             <Phone size={18} aria-hidden="true" />
-            <span>{MEDIUM_LABELS[booking.communication_method as keyof typeof MEDIUM_LABELS] ?? booking.communication_method}</span>
+            <span className="grow">{IN_APP_CALL_LABEL}</span>
           </div>
+          <p className="faint longform" style={{ margin: 0 }}>
+            {IN_APP_CALL_EXPLAINER}{' '}
+            {canRescheduleBooking(booking) ? RESCHEDULE_OPEN_COPY : ''}
+          </p>
         </div>
       </section>
 
@@ -277,14 +285,14 @@ export default function BookingDetail() {
                 <button className="btn btn-secondary" disabled={busy} onClick={() => setDeclining(true)}>
                   Decline
                 </button>
-                {booking.offer_id && (
+                {booking.offer_id && canRescheduleBooking(booking) && (
                   <button className="btn btn-secondary" disabled={busy} onClick={() => setProposing(true)}>
                     Propose another time
                   </button>
                 )}
               </>
             )}
-            {booking.status === 'confirmed' && (isCompanionSide || isRequesterSide) && booking.offer_id && (
+            {booking.status === 'confirmed' && (isCompanionSide || isRequesterSide) && booking.offer_id && canRescheduleBooking(booking) && (
               <button className="btn btn-secondary" disabled={busy} onClick={() => setProposing(true)}>
                 Propose a new time
               </button>
@@ -293,10 +301,15 @@ export default function BookingDetail() {
               Cancel conversation
             </button>
           </div>
-          {!booking.offer_id && (
-            <p className="faint mt-2">
-              To change the time of a package conversation, cancel it (the credit returns to your
-              package) and book again.
+          {/* The server is authoritative: it re-checks the cutoff with its
+              own clock, so this copy only explains what will happen. */}
+          {!canRescheduleBooking(booking) && (
+            <p className="faint longform mt-2">{RESCHEDULE_CLOSED_COPY}</p>
+          )}
+          {!booking.offer_id && canRescheduleBooking(booking) && (
+            <p className="faint longform mt-2">
+              To change the time of a plan conversation, cancel this one and book another — your
+              conversation comes back to your plan.
             </p>
           )}
 

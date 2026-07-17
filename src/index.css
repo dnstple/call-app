@@ -102,6 +102,39 @@ body {
 }
 #root { min-height: 100vh; }
 
+/* ============ Defensive layout (no horizontal overflow) ============
+   Root cause of the overflow bug: flex and grid children default to
+   min-width: auto, so a single unbroken word (a long URL, a pasted
+   token) forces its parent — and the page — wider than the viewport.
+   These rules let text wrap instead of pushing the layout. */
+html, body { max-width: 100%; overflow-x: hidden; }
+
+.row > *, .col > *, .row-wrap > *, .grid-2 > *, .grid-cards > *, .stack-list > * {
+  min-width: 0;
+}
+/* …but controls must never be squeezed into unreadable slivers. */
+.row > .btn, .row-wrap > .btn, .row > .icon-btn, .row > .badge, .row > .chip {
+  flex-shrink: 0;
+}
+
+/* Prose wraps normally, and only breaks a word when it genuinely
+   cannot fit (never mid-word for ordinary sentences). */
+p, li, blockquote, figcaption, dd, dt, .muted, .faint, .small, .bold, .chip, .badge {
+  overflow-wrap: break-word;
+}
+h1, h2, h3, h4 { overflow-wrap: break-word; }
+
+/* Free-text people write: bios, notes, reviews, headlines. Unbroken
+   strings (URLs, "aaaa…") must break rather than escape the card. */
+.longform, .bio, .review-body, .note-body {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+  max-width: 100%;
+}
+
+.card, .modal, section, article { max-width: 100%; min-width: 0; }
+
 h1 { font-size: clamp(1.7em, 1.2em + 1.6vw, 2.4em); font-weight: 800; letter-spacing: -0.02em; line-height: 1.15; margin: 0 0 var(--space-2); }
 h2 { font-size: clamp(1.25em, 1.1em + 0.5vw, 1.55em); font-weight: 700; letter-spacing: -0.01em; line-height: 1.2; margin: 0 0 var(--space-3); }
 h3 { font-size: 1.15em; font-weight: 700; line-height: 1.25; margin: 0 0 var(--space-2); }
@@ -361,6 +394,60 @@ img.avatar { background: var(--color-surface-muted); }
     padding-bottom: calc(var(--space-5) + env(safe-area-inset-bottom));
   }
 }
+
+/* Flow modals: header and footer stay put, only the middle scrolls, so
+   tall content is never clipped and the primary action stays reachable. */
+.modal-flow { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
+.modal-flow > .modal-head {
+  padding: var(--space-5) var(--space-5) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+.modal-flow > .modal-body {
+  padding: var(--space-4) var(--space-5);
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
+  flex: 1 1 auto; min-height: 0;
+}
+.modal-flow > .modal-foot {
+  padding: var(--space-3) var(--space-5) var(--space-5);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface);
+  display: flex; justify-content: space-between; align-items: center; gap: var(--space-3);
+  flex-shrink: 0;
+}
+@media (max-width: 640px) {
+  .modal-flow { height: 92vh; }
+  .modal-flow > .modal-foot {
+    position: sticky; bottom: 0;
+    padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom));
+  }
+  .modal-flow > .modal-foot .btn { flex: 1 1 0; }
+}
+
+/* ============ Date & time picker (react-day-picker + slots) ============ */
+.dtp { display: grid; grid-template-columns: 1fr; gap: var(--space-4); }
+@media (min-width: 720px) {
+  .dtp { grid-template-columns: minmax(0, auto) minmax(0, 1fr); align-items: start; }
+}
+.dtp-times { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.dtp-times .btn { min-width: 84px; }
+
+.rdp-root {
+  --rdp-accent-color: var(--color-brand-strong);
+  --rdp-accent-background-color: var(--color-brand-subtle, var(--color-surface-muted));
+  --rdp-today-color: var(--color-brand-strong);
+  --rdp-day-height: 40px; --rdp-day-width: 40px;
+  --rdp-day_button-height: 38px; --rdp-day_button-width: 38px;
+  --rdp-day_button-border-radius: 50%;
+  --rdp-selected-border: 2px solid var(--color-brand-strong);
+  font-size: 0.95em;
+}
+.rdp-root .rdp-day_button:hover:not([disabled]) { background: var(--color-surface-muted); }
+.rdp-root .rdp-selected .rdp-day_button {
+  background: var(--color-brand); color: #fff; font-weight: 700;
+}
+.rdp-root .rdp-disabled { opacity: 0.35; }
+.rdp-root .rdp-chevron { fill: var(--color-text-primary); }
 
 /* ============ Overflow menu ============ */
 .menu-wrap { position: relative; }

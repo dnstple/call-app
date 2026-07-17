@@ -750,7 +750,66 @@ No migration: 2E4B is UI + repository helpers on the 0011 backend.
   submission, typed errors, consent accept/decline, plan cards, language
   checks, and the pure scheduling helpers.
 
+## Corrective 2E4B pass — in-app calls, the calendar and the 2-hour rule
+
+Run `supabase/migrations/0012_in_app_calls_and_reschedule_window.sql`
+after 0001–0011. Additive; no earlier migration was edited.
+
+- **In-app calls**: every conversation happens in the app. 0012
+  normalises `communication_method` to the provider-neutral value
+  `in_app` (bookings, plans, offers, member preferences) and enforces it
+  with check constraints plus triggers on both offer tables — legacy
+  values like `phone` are rejected server-side. The UI never shows a
+  channel choice; copy reads "In-app call" with "Your conversation will
+  take place securely in the app." `/calls/:bookingId` is a documented,
+  honest boundary (`src/pages/CallRoom.tsx`) with a `CallProvider`
+  contract sketched in comments — no provider is integrated and the page
+  says the room isn't built yet.
+- **The two-hour rescheduling rule** lives in SQL:
+  `app_private.reschedule_open(starts_at)` = `starts_at - 2h > now()`,
+  using the DATABASE clock. `propose_booking_time` and
+  `accept_booking_time_proposal` reject `reschedule_closed` at or inside
+  the cutoff (both the current AND the proposed time must be movable), so
+  a manipulated browser clock or a direct RPC call cannot bypass it.
+  `get_reschedule_state(booking)` (participants only) drives the copy:
+  open → "You can change this time until two hours before the
+  conversation."; closed → "This conversation can no longer be
+  rescheduled because it starts in less than two hours."
+  Cancellation policy is unchanged.
+  **"This and future"**: `cancel_future_plan_bookings` now skips
+  occurrences inside the cutoff — they keep their original time — and
+  `accept_plan_change` returns `preserved_imminent` so the UI can say so.
+- **Layout**: the overflow root cause was flex/grid children defaulting
+  to `min-width: auto`, so one unbroken word widened the page.
+  `index.css` now sets `min-width: 0` on flex/grid children (with
+  `flex-shrink: 0` on controls), `overflow-wrap: break-word` on prose, a
+  `.longform` class (`overflow-wrap: anywhere`) for bios/reviews/notes,
+  and `overflow-x: hidden` at the root. Flow modals (`.modal-flow`) keep
+  a fixed header/footer with only the body scrolling, become full-height
+  sheets with sticky actions on mobile, trap focus, restore focus to the
+  trigger, close on Escape and confirm before discarding part-finished
+  progress.
+- **Date & time**: `DateTimeSlotPicker` (react-day-picker v10, styled
+  with apricot tokens) — month calendar + times panel, "Next available",
+  visible viewer timezone, disabled days, loading/empty/error states,
+  keyboard support, stacked on mobile / split on desktop. It renders
+  **only** server-generated slots.
+- **Test call**: a dedicated journey (`TestCallWizard`) — date & time →
+  who it's for (permission-scoped; a single eligible Member is
+  preselected) → prototype payment → confirm. It never shows packages,
+  credits or pay-per-conversation options. `get_trial_state` drives
+  available/pending/used.
+- **Recurring scheduling**: rebuilt as N sub-stages ("Conversation 2 of
+  3"), each choosing a weekday then a time from real availability;
+  duplicates blocked, multiple conversations per day allowed at different
+  times, state survives Back/Continue, changing frequency adds/removes
+  stages, "Use recommended times for all N" fills every stage or explains
+  why it can't. Review shows the full weekly schedule, the first real
+  upcoming dates, the weekly price, "Billed weekly when payments are
+  introduced", the prototype notice and the two-hour rule.
+
 Deferred after 2E4B: plan dashboard actions — pause/resume/end, change
-frequency/times/method, skip a week, reschedule one occurrence (2E4C);
-package-UI retirement (2E4D); payments/payouts; admin tooling;
+frequency/times, skip a week, reschedule one occurrence (2E4C);
+package-UI retirement (2E4D); payments/payouts (the `PrototypePaymentStep`
+component is the seam); in-app calling provider; admin tooling;
 notifications.

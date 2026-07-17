@@ -21,6 +21,33 @@ import { RepoError, type RepoErrorKind } from './profileRepository';
 /** Statuses that keep a slot reserved (mirrors the DB exclusion constraints). */
 export const ACTIVE_BOOKING_STATUSES = ['requested', 'confirmed', 'change_proposed'] as const;
 
+/**
+ * Every conversation happens inside the app (migration 0012). This is the
+ * only communication method the product stores or offers — provider-neutral
+ * until a calling provider is integrated behind /calls/:bookingId.
+ */
+export const IN_APP_METHOD = 'in_app';
+
+/** Rescheduling closes this long before a conversation starts. */
+export const RESCHEDULE_CUTOFF_HOURS = 2;
+
+/**
+ * Display mirror of the SERVER rule (`app_private.reschedule_open`).
+ * The database decides using its own clock — this only shapes the copy.
+ */
+export function canRescheduleBooking(
+  b: Pick<MyBookingRow, 'status' | 'starts_at'>,
+  now = new Date(),
+): boolean {
+  if (!['requested', 'confirmed', 'change_proposed'].includes(b.status)) return false;
+  const cutoff = new Date(b.starts_at).getTime() - RESCHEDULE_CUTOFF_HOURS * 3600 * 1000;
+  return cutoff > now.getTime();
+}
+
+export const RESCHEDULE_OPEN_COPY = 'You can change this time until two hours before the conversation.';
+export const RESCHEDULE_CLOSED_COPY =
+  'This conversation can no longer be rescheduled because it starts in less than two hours.';
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export function mapBookingError(e: any, fallback = 'Something went wrong. Please try again.'): RepoError {
   const msg = String(e?.message ?? '').toLowerCase();
@@ -36,6 +63,9 @@ export function mapBookingError(e: any, fallback = 'Something went wrong. Please
   }
   if (msg.includes('invalid_transition')) {
     return new RepoError('This conversation has already moved on — refresh to see its latest status.', 'conflict');
+  }
+  if (msg.includes('reschedule_closed')) {
+    return new RepoError(RESCHEDULE_CLOSED_COPY, 'conflict');
   }
   if (msg.includes('cannot book for this member') || msg.includes('you cannot')) {
     return new RepoError('You don’t have permission to do that for this member.', 'unauthorised');

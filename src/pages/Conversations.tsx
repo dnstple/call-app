@@ -15,8 +15,8 @@ import {
 } from '../repositories/bookingRepository';
 import { formatMinor } from '../repositories/availabilityRepository';
 import { browserTimezone } from '../domain/timezones';
-import { MEDIUM_LABELS } from '../domain/format';
 import { slotDayLabel, slotTimeLabel } from '../components/SupabaseBookingWizard';
+import { IN_APP_CALL_LABEL } from '../components/FlowModal';
 import { isSupabaseConfigured } from '../supabase/client';
 
 /* ---------------- Supabase mode: REAL bookings ---------------- */
@@ -38,8 +38,7 @@ export function SupabaseBookingRow({ booking }: { booking: MyBookingRow }) {
         </span>
         <span className="muted small">
           {slotDayLabel(booking.starts_at, viewerTz)} · {slotTimeLabel(booking.starts_at, viewerTz)} ({viewerTz}) ·{' '}
-          {booking.duration_minutes} mins ·{' '}
-          {MEDIUM_LABELS[booking.communication_method as keyof typeof MEDIUM_LABELS] ?? booking.communication_method}
+          {booking.duration_minutes} mins · {IN_APP_CALL_LABEL}
         </span>
         <span className="faint small">
           {booking.booking_source === 'package_credit'
