@@ -230,7 +230,8 @@ export type BookingRow = {
   member_profile_id: string;
   companion_profile_id: string;
   booked_by_account_id: string;
-  offer_id: string;
+  /** Null for package-credit bookings (they reference a purchase instead). */
+  offer_id: string | null;
   starts_at: string;
   ends_at: string;
   timezone: string;
@@ -246,6 +247,9 @@ export type BookingRow = {
   cancellation_reason: string | null;
   cancelled_by_account_id: string | null;
   cancelled_at: string | null;
+  /** Stage 2E3B2A: package bookings reference a purchase, not an offer. */
+  package_purchase_id: string | null;
+  booking_source: 'single_offer' | 'package_credit';
   created_at: string;
   updated_at: string;
 };
@@ -398,6 +402,15 @@ export type PackageBalancePayload = {
 export type PackagePurchaseResultPayload = {
   purchase: PackagePurchaseRow;
   balance: PackageBalancePayload;
+};
+
+export type BookingCreditStatePayload = {
+  booking_id: string;
+  booking_source: 'single_offer' | 'package_credit';
+  package_purchase_id: string | null;
+  reserved: boolean;
+  released: boolean;
+  consumed: boolean;
 };
 
 type Table<R> = {
@@ -559,6 +572,11 @@ export type Database = {
         Returns: PackagePurchaseResultPayload;
       };
       get_package_balance: { Args: { p_purchase: string }; Returns: PackageBalancePayload };
+      create_package_booking_request: {
+        Args: { p_purchase: string; p_starts_at: string; p_method: string };
+        Returns: BookingRow;
+      };
+      get_booking_credit_state: { Args: { p_booking: string }; Returns: BookingCreditStatePayload };
       get_companion_public_reviews: {
         Args: { p_profile: string; p_limit?: number; p_offset?: number };
         Returns: PublicReviewRow[];

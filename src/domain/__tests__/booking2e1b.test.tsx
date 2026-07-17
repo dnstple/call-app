@@ -51,6 +51,7 @@ function booking(partial: Partial<MyBookingRow> = {}): MyBookingRow {
     is_trial: false, cancellation_reason: null, cancelled_by_account_id: null, cancelled_at: null,
     created_at: '', updated_at: '', member_first_name: 'Dot', member_last_initial: 'F',
     companion_first_name: 'Oli', companion_last_initial: 'R',
+    package_purchase_id: null, booking_source: 'single_offer',
     ...partial,
   };
 }

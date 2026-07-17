@@ -11,6 +11,8 @@
  */
 import { getSupabaseClient } from '../supabase/client';
 import type {
+  BookingCreditStatePayload,
+  BookingRow,
   PackageBalancePayload,
   PackageLedgerRow,
   PackageOfferRow,
@@ -28,6 +30,14 @@ export type PackageErrorCode =
   | 'member_not_accessible'
   | 'not_found'
   | 'network_failure'
+  // Stage 2E3B2A — booking with credits:
+  | 'no_credit'
+  | 'package_inactive'
+  | 'package_mismatch'
+  | 'slot_unavailable'
+  | 'invalid_method'
+  | 'already_released'
+  | 'already_consumed'
   | 'unknown';
 
 export class PackageError extends RepoError {
@@ -41,6 +51,27 @@ export class PackageError extends RepoError {
 export function mapPackageError(e: any): PackageError {
   const msg = String(e?.message ?? '').toLowerCase();
   if (import.meta.env?.DEV) console.warn('[packages]', e?.code ?? '', e?.message ?? '');
+  if (msg.includes('no_credit')) {
+    return new PackageError('This package has no conversations left.', 'conflict', 'no_credit');
+  }
+  if (msg.includes('package_inactive')) {
+    return new PackageError('This package can’t be used any more.', 'conflict', 'package_inactive');
+  }
+  if (msg.includes('package_mismatch')) {
+    return new PackageError('That package doesn’t match this conversation.', 'validation', 'package_mismatch');
+  }
+  if (msg.includes('slot_taken') || msg.includes('outside_availability')) {
+    return new PackageError('That time isn’t available any more. Please choose another time.', 'conflict', 'slot_unavailable');
+  }
+  if (msg.includes('invalid_method')) {
+    return new PackageError('That call method isn’t offered with this package.', 'validation', 'invalid_method');
+  }
+  if (msg.includes('already_released')) {
+    return new PackageError('This credit has already been handed back.', 'conflict', 'already_released');
+  }
+  if (msg.includes('already_consumed')) {
+    return new PackageError('This credit has already been used.', 'conflict', 'already_consumed');
+  }
   if (msg.includes('invalid_count')) {
     return new PackageError('A package holds between 2 and 20 conversations.', 'validation', 'invalid_count');
   }
@@ -53,7 +84,7 @@ export function mapPackageError(e: any): PackageError {
   if (msg.includes('invalid_offer')) {
     return new PackageError('That package isn’t available.', 'validation', 'invalid_offer');
   }
-  if (msg.includes('member_not_accessible')) {
+  if (msg.includes('member_not_accessible') || msg.includes('cannot book for this member')) {
     return new PackageError('You don’t have permission to purchase for this member.', 'unauthorised', 'member_not_accessible');
   }
   if (msg.includes('cannot manage offers') || msg.includes('row-level security') || msg.includes('permission denied') || msg.includes('not authenticated')) {
@@ -254,4 +285,86 @@ export async function getPackageBalance(purchaseId: string): Promise<PackageBala
   });
   if (error) throw mapPackageError(error);
   return payloadToBalance(data as PackageBalancePayload);
+}
+
+/* ============================================================
+ * Stage 2E3B2A — booking with package credits (backend only).
+ * ============================================================ */
+
+/**
+ * Book a conversation USING a package credit. The server derives Member,
+ * Companion, duration and price share from the purchase, checks the
+ * ledger balance under a row lock (two simultaneous requests can never
+ * take the final credit) and reserves 1 credit atomically with the
+ * booking. The browser sends ONLY purchase id, start time and method.
+ */
+export async function createPackageBookingRequest(
+  purchaseId: string,
+  startsAt: string,
+  communicationMethod: string,
+): Promise<BookingRow> {
+  const { data, error } = await getSupabaseClient().rpc('create_package_booking_request', {
+    p_purchase: purchaseId,
+    p_starts_at: startsAt,
+    p_method: communicationMethod,
+  });
+  if (error) throw mapPackageError(error);
+  return data as BookingRow;
+}
+
+export interface AvailablePackagePurchase {
+  purchase: PackagePurchaseRow;
+  remaining: number;
+}
+
+/**
+ * Purchases this Member could use for a conversation with this Companion
+ * at this duration — active, matching, with at least one credit left.
+ * (Display helper: the server re-checks everything at booking time.)
+ */
+export async function getAvailablePackagePurchases(
+  memberProfileId: string,
+  companionProfileId: string,
+  durationMinutes: number,
+): Promise<AvailablePackagePurchase[]> {
+  const purchases = await listPackagePurchases(memberProfileId);
+  const candidates = purchases.filter(
+    (p) =>
+      p.status === 'active' &&
+      p.companion_profile_id === companionProfileId &&
+      p.duration_minutes === durationMinutes,
+  );
+  const withBalances = await Promise.all(
+    candidates.map(async (purchase) => ({
+      purchase,
+      remaining: (await getPackageBalance(purchase.id).catch(() => null))?.remaining ?? 0,
+    })),
+  );
+  return withBalances.filter((p) => p.remaining >= 1);
+}
+
+export interface BookingCreditState {
+  bookingId: string;
+  bookingSource: 'single_offer' | 'package_credit';
+  packagePurchaseId: string | null;
+  reserved: boolean;
+  released: boolean;
+  consumed: boolean;
+}
+
+/** Reservation state of one booking's credit (authorised readers only). */
+export async function getBookingCreditState(bookingId: string): Promise<BookingCreditState> {
+  const { data, error } = await getSupabaseClient().rpc('get_booking_credit_state', {
+    p_booking: bookingId,
+  });
+  if (error) throw mapPackageError(error);
+  const p = data as BookingCreditStatePayload;
+  return {
+    bookingId: p.booking_id,
+    bookingSource: p.booking_source,
+    packagePurchaseId: p.package_purchase_id,
+    reserved: p.reserved,
+    released: p.released,
+    consumed: p.consumed,
+  };
 }

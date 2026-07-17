@@ -64,6 +64,8 @@ function row(partial: Partial<MyBookingRow>): MyBookingRow {
     member_last_initial: 'F',
     companion_first_name: 'Oli',
     companion_last_initial: 'R',
+    package_purchase_id: null,
+    booking_source: 'single_offer',
     ...partial,
   };
 }

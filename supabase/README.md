@@ -529,5 +529,63 @@ integration yet** — reserve/consume arrive in Stage 2E3B.
   forged member/price rejection, archive blocking, ledger isolation and
   denied forgery. Run 0008 before `test:rls`.
 
-Deferred after 2E3A: package UI + booking-with-credit (2E3B), payments,
-payouts, admin tooling, external notifications, verification.
+Deferred after 2E3A: booking-with-credit UI (2E3B2B), payments, payouts,
+admin tooling, external notifications, verification.
+(2E3B1 added the package UI: Companion editor on Availability & rates,
+public package cards with the simulated purchase flow, and the Home
+dashboard — no schema changes.)
+
+## Stage 2E3B2A — package-credit reservation, release and consumption
+
+Run `supabase/migrations/0009_package_booking_credits.sql` after
+0001–0008. **Backend + repository only — no booking UI changes yet.**
+
+- **Bookings**: gain `package_purchase_id` and `booking_source`
+  (`single_offer` | `package_credit`). Package bookings reference a
+  purchase and have NO `offer_id` (now nullable; a shape check keeps the
+  two sources mutually exclusive — no fake conversation offers). The
+  `my_bookings` view is recreated to expose the new columns. Existing
+  single-offer bookings are untouched.
+- **Lifecycle** (ledger formula: grants + releases + adjustments −
+  reserves − consumes):
+  book → `reserve 1` atomic with creation · decline/cancel → `release 1`
+  · completed → `release 1 + consume 1` (the reservation becomes a
+  consumed credit, never deducted twice) · requested / confirmed /
+  change_proposed / **needs_review** → stays reserved. When total
+  consumption reaches the snapshot count the purchase flips to
+  `exhausted` (server-decided; nobody can set it manually).
+- **Concurrency**: `create_package_booking_request(purchase, starts_at,
+  method)` locks the purchase row FOR UPDATE while checking the balance
+  and writing the reserve — two simultaneous requests can never spend
+  the same final credit. Unique partial indexes make a second reserve /
+  release / consume per booking structurally impossible, and
+  `app_private.settle_package_credit` (not callable by users) is
+  idempotent on top of that.
+- **Eligibility**: caller must `can_act_for_member`; purchase active with
+  ≥1 credit; method from the originating package offer; duration from the
+  purchase snapshot; availability/notice/horizon and the GiST no-overlap
+  constraints all apply exactly as for single-offer bookings. Member,
+  Companion, duration, price share (price ÷ count, standard fee rate) and
+  buyer all derive server-side.
+- **Transitions**: `decline_booking`, `cancel_booking` and
+  `submit_completion_confirmation` are re-created (identical behaviour)
+  plus settlement. Ordinary bookings take the no-op path.
+- **Reads**: `get_booking_credit_state(booking)` — participant-only
+  reserve/release/consume flags. Direct ledger writes remain impossible.
+- **Repository** (`packageRepository.ts`): `createPackageBookingRequest`,
+  `getAvailablePackagePurchases(member, companion, duration)` (display
+  filter — active, matching, ≥1 credit; the server re-checks at booking),
+  `getBookingCreditState`, and new `PackageError` codes (`no_credit`,
+  `package_inactive`, `package_mismatch`, `slot_unavailable`,
+  `invalid_method`, `already_released`, `already_consumed`).
+- **Tests**: `packages2e3b2a.test.ts` (contract — participants/prices
+  never sent; typed errors; availability filtering; the ledger conversion
+  maths incl. exhaustion). The live suite gains a 2E3B2A block: reserve on
+  booking, **final-credit concurrency race**, zero-balance rejection,
+  method/authorisation/forged-source rejection, release on decline and
+  cancel with double-release proven impossible, credit-state isolation.
+  Live limitation: completed→consume needs an ended booking, so the
+  conversion is proven by unit tests + SQL. Run 0009 before `test:rls`.
+
+Deferred after 2E3B2A: booking-with-credit UI (2E3B2B), payments,
+payouts, package expiry, admin tooling, notifications.

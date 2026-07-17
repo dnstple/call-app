@@ -1046,4 +1046,103 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
       .eq('id', purchaseId).select();
     expect(tamper.data ?? []).toHaveLength(0);
   });
+
+  /* ---------------- Stage 2E3B2A: booking with package credits (requires 0009) ----------------
+   * Live limitation (documented): the completed→consume conversion needs an
+   * ENDED booking, which the public API cannot create — covered by unit
+   * tests + SQL. Everything else runs live. */
+
+  it('2E3B2A: reserve on booking, final-credit concurrency, release on decline/cancel', async () => {
+    // A fresh two-conversation package for e's member.
+    const offer = await f.rpc('create_package_offer', {
+      p_profile: fCompanionId, p_title: 'Two pack', p_count: 2, p_duration: 30, p_price_minor: 2000,
+    });
+    expect(offer.error).toBeNull();
+    const bought = await e.rpc('create_simulated_package_purchase', {
+      p_member: eMemberId, p_offer: offer.data.id,
+    });
+    expect(bought.error).toBeNull();
+    const purchaseId = bought.data.purchase.id;
+
+    // Booking with a credit reserves exactly one, atomically.
+    const bookingA = await e.rpc('create_package_booking_request', {
+      p_purchase: purchaseId, p_starts_at: slots[34].slot_start, p_method: 'phone',
+    });
+    expect(bookingA.error).toBeNull();
+    expect(bookingA.data.booking_source).toBe('package_credit');
+    expect(bookingA.data.offer_id).toBeNull(); // never a fake offer
+    const afterOne = await e.rpc('get_package_balance', { p_purchase: purchaseId });
+    expect(afterOne.data).toMatchObject({ granted: 2, reserved: 1, remaining: 1 });
+
+    // CONCURRENCY: two simultaneous requests for the FINAL credit
+    // (different times, same purchase) → exactly one wins.
+    const [r1, r2] = await Promise.all([
+      e.rpc('create_package_booking_request', {
+        p_purchase: purchaseId, p_starts_at: slots[36].slot_start, p_method: 'phone',
+      }),
+      e.rpc('create_package_booking_request', {
+        p_purchase: purchaseId, p_starts_at: slots[38].slot_start, p_method: 'phone',
+      }),
+    ]);
+    const wins = [r1, r2].filter((r) => r.error === null);
+    expect(wins).toHaveLength(1);
+    const loser = [r1, r2].find((r) => r.error !== null)!;
+    // The loser failed on credit or slot arithmetic — never silently.
+    expect(String(loser.error!.message)).toMatch(/no_credit|slot_taken/);
+
+    // Zero balance → no further package bookings.
+    const empty = await e.rpc('create_package_booking_request', {
+      p_purchase: purchaseId, p_starts_at: slots[40].slot_start, p_method: 'phone',
+    });
+    expect(String(empty.error!.message)).toContain('no_credit');
+
+    // Unsupported method and unrelated accounts are rejected.
+    const badMethod = await e.rpc('create_package_booking_request', {
+      p_purchase: purchaseId, p_starts_at: slots[40].slot_start, p_method: 'carrier_pigeon',
+    });
+    expect(badMethod.error).not.toBeNull();
+    const unrelated = await g.rpc('create_package_booking_request', {
+      p_purchase: purchaseId, p_starts_at: slots[40].slot_start, p_method: 'phone',
+    });
+    expect(unrelated.error).not.toBeNull();
+    // The browser cannot override the booking source (unknown argument).
+    const forgedSource = await e.rpc('create_package_booking_request', {
+      p_purchase: purchaseId, p_starts_at: slots[40].slot_start, p_method: 'phone',
+      p_source: 'single_offer',
+    });
+    expect(forgedSource.error).not.toBeNull();
+
+    // Decline releases the credit — once, and only once.
+    const declined = await f.rpc('decline_booking', {
+      p_booking: bookingA.data.id, p_reason: 'Testing release',
+    });
+    expect(declined.error).toBeNull();
+    const afterDecline = await e.rpc('get_package_balance', { p_purchase: purchaseId });
+    expect(afterDecline.data.remaining).toBe(1); // reservation handed back
+    const again = await f.rpc('decline_booking', { p_booking: bookingA.data.id });
+    expect(again.error).not.toBeNull(); // invalid transition → no double-release
+    const stillOne = await e.rpc('get_package_balance', { p_purchase: purchaseId });
+    expect(stillOne.data.remaining).toBe(1);
+
+    // Cancelling the concurrency winner releases the other credit too.
+    const winner = wins[0]!;
+    const cancelled = await e.rpc('cancel_booking', { p_booking: winner.data.id });
+    expect(cancelled.error).toBeNull();
+    const restored = await e.rpc('get_package_balance', { p_purchase: purchaseId });
+    expect(restored.data).toMatchObject({ granted: 2, remaining: 2 });
+
+    // Credit state is readable by participants, opaque to others.
+    const state = await e.rpc('get_booking_credit_state', { p_booking: bookingA.data.id });
+    expect(state.error).toBeNull();
+    expect(state.data).toMatchObject({ reserved: true, released: true, consumed: false });
+    const foreignState = await h.rpc('get_booking_credit_state', { p_booking: bookingA.data.id });
+    expect(foreignState.error).not.toBeNull();
+
+    // Ordinary single-offer bookings never touch package credits: the
+    // earlier 2D bookings all carry booking_source = 'single_offer'.
+    const ordinary = await e.from('my_bookings').select('booking_source, package_purchase_id')
+      .eq('booking_source', 'single_offer').limit(1);
+    expect(ordinary.data!.length).toBeGreaterThan(0);
+    expect(ordinary.data![0].package_purchase_id).toBeNull();
+  });
 });

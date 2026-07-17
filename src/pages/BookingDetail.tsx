@@ -316,7 +316,9 @@ export default function BookingDetail() {
             </div>
           )}
 
-          {proposing && (
+          {/* Slot suggestions need a conversation offer; package-credit
+              bookings reschedule via cancel + rebook for now (2E3B2B). */}
+          {proposing && booking.offer_id && (
             <div className="card card-tight col mt-4" style={{ gap: 12 }}>
               <div className="bold">Choose an alternative time</div>
               <SlotPicker
