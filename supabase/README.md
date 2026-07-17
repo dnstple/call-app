@@ -631,3 +631,81 @@ the same rules (availability + exceptions, notice, horizon, conflicts,
 
 Deferred after 2E3B2B: payments/payouts, package expiry, admin tooling,
 external notifications, verification.
+
+## Stage 2E4A — recurring conversation plans (backend)
+
+Run `supabase/migrations/0011_conversation_plans.sql` after 0001–0010.
+**Additive only — no UI in this stage** (wizard/dashboard are 2E4B/2E4C).
+Approved architecture: `docs/STAGE_2E4_PLAN.md` (wrap, don't rewrite).
+
+- **`conversation_plans`**: one Member ↔ one Companion, `frequency_per_week`
+  (1–7), `duration_minutes`, `communication_method`, server-snapshotted
+  `per_conversation_price_minor` + `weekly_price_minor` (= frequency ×
+  rate), status `requested | active | paused | ended | declined`,
+  `pending_change` (jsonb), `generated_until`. One live plan per pair
+  (partial unique index). Weekly rhythm rows live in
+  **`plan_schedule_slots`** (count = frequency; ISO day + Companion-local
+  time + timezone, validated against recurring availability).
+- **Hidden allowance**: every plan owns a 1:1 `package_purchases` row
+  (`package_offer_id` now nullable — never a fake offer). The 0008–0009
+  ledger engine is reused untouched: each generated occurrence writes
+  `grant(1)` + `reserve(1)`; completion converts to `consume`;
+  cancel/pause/skip `release`. Plan allowances are **rolling** — the
+  exhaust flip is now skipped for them (the only change to
+  `settle_package_credit`).
+- **Occurrences are bookings**: `bookings.plan_id` (additive) +
+  `booking_source='package_credit'`; generated as **confirmed** (the
+  Companion accepted the plan once). Conflicts, completion, ratings,
+  release-on-cancel all work unchanged. `my_bookings` recreated to expose
+  `plan_id`.
+- **`extend_plan_bookings(plan)`** — idempotent rolling **4-week** window
+  under the purchase lock. **Generation is never silent**: every attempt
+  is persisted in **`plan_generation_log`** (unique per plan+time) as
+  `booked` / `skipped_conflict` / `skipped_availability` /
+  `skipped_paused` / `skipped_by_request`. Skips reserve **no credit** and
+  are **retried** by simply calling extend again — except
+  `skipped_by_request` (a deliberate member skip), which never regenerates.
+- **Lifecycle**: `create_conversation_plan` (member side; derives price
+  from the Companion's active single offer at that duration, validates
+  every slot, creates the allowance atomically), `accept_plan` /
+  `decline_plan` (Companion only; accept generates the window),
+  `pause_plan` / `resume_plan` / `end_plan` / `skip_plan_week`
+  (participants via `can_manage_plan`; future occurrences cancel → credits
+  release; **no re-acceptance**).
+- **Material changes require Companion re-acceptance**: frequency,
+  duration, method, schedule (and therefore weekly price) go through
+  `propose_plan_change` (member side) → `accept_plan_change` /
+  `decline_plan_change` (Companion). The plan keeps running on the old
+  terms until accepted; acceptance re-derives the price, rewrites the
+  slots and regenerates the window.
+- **Test call = the trial, once per pair, EVER**: `create_booking_request`
+  now rejects a trial when a **completed** trial exists for the pair
+  (`trial_used`); the pending-trial rule from 0005 is unchanged.
+  `get_trial_state(member, companion)` → `available | pending | used`
+  (participants only) drives the later profile UI.
+- **RLS**: plans, slots and the log are readable by participants only; no
+  direct write policies anywhere — functions only. `can_manage_plan`
+  ensures read access alone never permits pausing/ending.
+- **Repository**: `src/repositories/planRepository.ts` speaks plans, never
+  packages — lifecycle calls, `listMyPlans`/`getPlanSlots`/
+  `getPlanGenerationLog`/`listPlanBookings`/`nextConversation`,
+  `getTrialState`, pure helpers (`weeklyPriceMinor`, `validatePlanInput`,
+  `isMaterialChange`, `needsCompanionAction`, `retriableSkips`) and
+  `PlanError` codes (`plan_exists`, `plan_not_active`,
+  `invalid_frequency`, `invalid_slots`, `invalid_method`,
+  `slot_unavailable`, `price_unavailable`, `no_pending_change`,
+  `trial_used`, `unauthorised`, `network_failure`).
+- **Tests**: `plans2e4a.test.ts` (contract, validation, weekly pricing,
+  material-change rule, generation-log semantics, trial state, error
+  codes). Live suite gains a 2E4A block — the plan lifecycle has no time
+  dependency, so it runs end-to-end: creation validation (slots, method,
+  missing rate, forged price/member), accept → 4-week generation →
+  idempotent re-extend → pause (credits release) → resume → material
+  change re-acceptance → end, plan isolation and denied direct writes, a
+  **concurrent-generation** test, and trial-state permanence (the
+  completed-trial branch needs an ended booking, so it's proven by unit
+  tests + SQL). Run 0011 before `test:rls`.
+
+Deferred after 2E4A: plan wizard + schedule picker (2E4B), plan dashboard
+and management UI (2E4C), package-UI retirement (2E4D), payments/payouts,
+admin tooling, notifications.

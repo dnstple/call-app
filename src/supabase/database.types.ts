@@ -250,6 +250,8 @@ export type BookingRow = {
   /** Stage 2E3B2A: package bookings reference a purchase, not an offer. */
   package_purchase_id: string | null;
   booking_source: 'single_offer' | 'package_credit';
+  /** Stage 2E4A: set when this conversation came from a recurring plan. */
+  plan_id: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -413,6 +415,92 @@ export type BookingCreditStatePayload = {
   consumed: boolean;
 };
 
+/* ---------------- Stage 2E4A — recurring conversation plans ---------------- */
+
+export type PlanStatus = 'requested' | 'active' | 'paused' | 'ended' | 'declined';
+
+/** Weekly price = frequency × the snapshotted per-conversation rate. */
+export type ConversationPlanRow = {
+  id: string;
+  member_profile_id: string;
+  companion_profile_id: string;
+  created_by_account_id: string;
+  frequency_per_week: number;
+  duration_minutes: number;
+  communication_method: string;
+  per_conversation_price_minor: number;
+  weekly_price_minor: number;
+  currency: string;
+  status: PlanStatus;
+  /** Hidden allowance account feeding the credit ledger. */
+  allowance_purchase_id: string;
+  /** Material change awaiting Companion re-acceptance. */
+  pending_change: PlanPendingChange | null;
+  generated_until: string | null;
+  paused_at: string | null;
+  ended_at: string | null;
+  end_reason: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PlanPendingChange = {
+  frequency_per_week: number;
+  duration_minutes: number;
+  communication_method: string;
+  per_conversation_price_minor: number;
+  weekly_price_minor: number;
+  slots: { day: number; time: string }[] | null;
+  proposed_by_account_id: string;
+  proposed_at: string;
+};
+
+export type PlanScheduleSlotRow = {
+  id: string;
+  plan_id: string;
+  iso_day: number;
+  local_time: string;
+  timezone: string;
+  created_at: string;
+};
+
+/** Generation is never silent: every attempt lands here. */
+export type PlanGenerationOutcome =
+  | 'booked'
+  | 'skipped_conflict'
+  | 'skipped_availability'
+  | 'skipped_paused'
+  | 'skipped_by_request';
+
+export type PlanGenerationLogRow = {
+  id: string;
+  plan_id: string;
+  intended_start: string;
+  outcome: PlanGenerationOutcome;
+  booking_id: string | null;
+  detail: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PlanGenerationResultPayload = {
+  plan_id: string;
+  generated: number;
+  skipped: number;
+  retried: number;
+  generated_until: string;
+};
+
+export type PlanActionResultPayload = {
+  plan_id: string;
+  status?: PlanStatus;
+  cancelled?: number;
+  skipped?: number;
+  generated?: number;
+};
+
+export type TrialState = 'available' | 'pending' | 'used';
+
 type Table<R> = {
   Row: R;
   Insert: Partial<R>;
@@ -444,6 +532,9 @@ export type Database = {
       package_offers: Table<PackageOfferRow>;
       package_purchases: Table<PackagePurchaseRow>;
       package_credit_ledger: Table<PackageLedgerRow>;
+      conversation_plans: Table<ConversationPlanRow>;
+      plan_schedule_slots: Table<PlanScheduleSlotRow>;
+      plan_generation_log: Table<PlanGenerationLogRow>;
       platform_config: Table<{
         id: number;
         standard_commission_pct: number;
@@ -581,6 +672,37 @@ export type Database = {
         Args: { p_purchase: string; p_from: string; p_to: string };
         Returns: SlotRow[];
       };
+      create_conversation_plan: {
+        Args: {
+          p_member: string;
+          p_companion: string;
+          p_frequency: number;
+          p_duration: number;
+          p_method: string;
+          p_slots: { day: number; time: string }[];
+        };
+        Returns: ConversationPlanRow;
+      };
+      extend_plan_bookings: { Args: { p_plan: string }; Returns: PlanGenerationResultPayload };
+      accept_plan: { Args: { p_plan: string }; Returns: PlanGenerationResultPayload };
+      decline_plan: { Args: { p_plan: string; p_reason?: string | null }; Returns: ConversationPlanRow };
+      pause_plan: { Args: { p_plan: string }; Returns: PlanActionResultPayload };
+      resume_plan: { Args: { p_plan: string }; Returns: PlanGenerationResultPayload };
+      end_plan: { Args: { p_plan: string; p_reason?: string | null }; Returns: PlanActionResultPayload };
+      skip_plan_week: { Args: { p_plan: string; p_week_start: string }; Returns: PlanActionResultPayload };
+      propose_plan_change: {
+        Args: {
+          p_plan: string;
+          p_frequency?: number | null;
+          p_duration?: number | null;
+          p_method?: string | null;
+          p_slots?: { day: number; time: string }[] | null;
+        };
+        Returns: ConversationPlanRow;
+      };
+      accept_plan_change: { Args: { p_plan: string }; Returns: PlanActionResultPayload };
+      decline_plan_change: { Args: { p_plan: string }; Returns: ConversationPlanRow };
+      get_trial_state: { Args: { p_member: string; p_companion: string }; Returns: TrialState };
       get_companion_public_reviews: {
         Args: { p_profile: string; p_limit?: number; p_offset?: number };
         Returns: PublicReviewRow[];

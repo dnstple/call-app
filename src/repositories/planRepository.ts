@@ -1,0 +1,399 @@
+/**
+ * Recurring conversation plans (Supabase mode, Stage 2E4A).
+ *
+ * A plan is an ongoing relationship: one Member ↔ one Companion, a weekly
+ * rhythm and a weekly SIMULATED price (frequency × the snapshotted
+ * per-conversation rate). The Companion accepts the plan once; occurrences
+ * generate as CONFIRMED bookings inside a rolling 4-week window.
+ *
+ * The credit ledger is hidden infrastructure — this layer speaks only of
+ * plans, schedules and conversations. All writes go through controlled
+ * database functions; the browser never sends prices, credits, buyers or
+ * statuses. NO payment is taken. Never falls back to mock data.
+ */
+import { getSupabaseClient } from '../supabase/client';
+import type {
+  ConversationPlanRow,
+  MyBookingRow,
+  PlanActionResultPayload,
+  PlanGenerationLogRow,
+  PlanGenerationResultPayload,
+  PlanScheduleSlotRow,
+  TrialState,
+} from '../supabase/database.types';
+import { RepoError, type RepoErrorKind } from './profileRepository';
+
+/* ---------------- Domain types ---------------- */
+
+/** A weekly rhythm entry: ISO weekday (1 = Monday) + Companion-local time. */
+export interface PlanSlotInput {
+  day: number;
+  time: string; // "HH:MM"
+}
+
+export interface PlanInput {
+  frequencyPerWeek: number;
+  durationMinutes: number;
+  communicationMethod: string;
+  slots: PlanSlotInput[];
+}
+
+export interface PlanGenerationResult {
+  planId: string;
+  generated: number;
+  skipped: number;
+  retried: number;
+  generatedUntil: string;
+}
+
+export const PLAN_FREQUENCY_OPTIONS = [1, 2, 3, 4] as const;
+export const PLAN_FREQUENCY_MIN = 1;
+export const PLAN_FREQUENCY_MAX = 7;
+export const PLAN_DURATIONS = [15, 30, 45, 60];
+/** Rolling window: occurrences are generated this far ahead, never further. */
+export const PLAN_WINDOW_DAYS = 28;
+
+export type PlanErrorCode =
+  | 'unauthorised'
+  | 'plan_exists'
+  | 'plan_not_found'
+  | 'plan_not_active'
+  | 'invalid_frequency'
+  | 'invalid_slots'
+  | 'invalid_method'
+  | 'slot_unavailable'
+  | 'price_unavailable'
+  | 'no_pending_change'
+  | 'trial_used'
+  | 'network_failure'
+  | 'unknown';
+
+export class PlanError extends RepoError {
+  constructor(message: string, kind: RepoErrorKind, public readonly code: PlanErrorCode) {
+    super(message, kind);
+    this.name = 'PlanError';
+  }
+}
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+export function mapPlanError(e: any): PlanError {
+  const msg = String(e?.message ?? '').toLowerCase();
+  if (import.meta.env?.DEV) console.warn('[plans]', e?.code ?? '', e?.message ?? '');
+  if (msg.includes('plan_exists')) {
+    return new PlanError('There’s already a conversation plan with this companion.', 'conflict', 'plan_exists');
+  }
+  if (msg.includes('plan_not_active')) {
+    return new PlanError('This plan isn’t active any more — refresh to see its latest state.', 'conflict', 'plan_not_active');
+  }
+  if (msg.includes('invalid_frequency')) {
+    return new PlanError('Choose between 1 and 7 conversations per week.', 'validation', 'invalid_frequency');
+  }
+  if (msg.includes('invalid_slots')) {
+    return new PlanError('Please choose a weekly time for each conversation.', 'validation', 'invalid_slots');
+  }
+  if (msg.includes('invalid_method')) {
+    return new PlanError('That call method isn’t offered by this companion.', 'validation', 'invalid_method');
+  }
+  if (msg.includes('slot_unavailable')) {
+    return new PlanError('One of those times is outside the companion’s weekly availability.', 'conflict', 'slot_unavailable');
+  }
+  if (msg.includes('price_unavailable')) {
+    return new PlanError('This companion hasn’t set a rate for that conversation length yet.', 'validation', 'price_unavailable');
+  }
+  if (msg.includes('no_pending_change')) {
+    return new PlanError('There’s no plan change waiting.', 'conflict', 'no_pending_change');
+  }
+  if (msg.includes('trial_used')) {
+    return new PlanError('The test call with this companion has already happened.', 'conflict', 'trial_used');
+  }
+  if (msg.includes('only the companion') || msg.includes('only the member side')
+      || msg.includes('cannot manage this plan') || msg.includes('cannot book for this member')
+      || msg.includes('row-level security') || msg.includes('permission denied')
+      || msg.includes('not authenticated') || msg.includes('not accepting new members')) {
+    return new PlanError('You don’t have permission to do that.', 'unauthorised', 'unauthorised');
+  }
+  if (msg.includes('not found') || msg.includes('not available')) {
+    return new PlanError('We couldn’t find that plan.', 'not_found', 'plan_not_found');
+  }
+  if (msg.includes('failed to fetch') || msg.includes('network')) {
+    return new PlanError('We couldn’t reach the server. Please check your connection.', 'network', 'network_failure');
+  }
+  return new PlanError('Something went wrong. Please try again.', 'database', 'unknown');
+}
+
+/* ---------------- Pure domain helpers ---------------- */
+
+/** Weekly price mirror of the SQL: frequency × per-conversation rate. */
+export function weeklyPriceMinor(perConversationMinor: number, frequencyPerWeek: number): number {
+  return perConversationMinor * frequencyPerWeek;
+}
+
+/** Validate a plan before troubling the server (which re-checks anyway). */
+export function validatePlanInput(input: PlanInput): PlanError | null {
+  if (
+    !Number.isInteger(input.frequencyPerWeek) ||
+    input.frequencyPerWeek < PLAN_FREQUENCY_MIN ||
+    input.frequencyPerWeek > PLAN_FREQUENCY_MAX
+  ) {
+    return new PlanError('Choose between 1 and 7 conversations per week.', 'validation', 'invalid_frequency');
+  }
+  if (!PLAN_DURATIONS.includes(input.durationMinutes)) {
+    return new PlanError('Please choose 15, 30, 45 or 60 minutes.', 'validation', 'invalid_slots');
+  }
+  if (input.slots.length !== input.frequencyPerWeek) {
+    return new PlanError(
+      `Please choose exactly ${input.frequencyPerWeek} weekly time${input.frequencyPerWeek === 1 ? '' : 's'}.`,
+      'validation',
+      'invalid_slots',
+    );
+  }
+  const seen = new Set<string>();
+  for (const s of input.slots) {
+    if (!Number.isInteger(s.day) || s.day < 1 || s.day > 7 || !/^\d{2}:\d{2}$/.test(s.time)) {
+      return new PlanError('Each weekly time needs a day and a time.', 'validation', 'invalid_slots');
+    }
+    const key = `${s.day}-${s.time}`;
+    if (seen.has(key)) {
+      return new PlanError('Please choose different weekly times.', 'validation', 'invalid_slots');
+    }
+    seen.add(key);
+  }
+  return null;
+}
+
+/**
+ * Which fields require the Companion to accept the plan again?
+ * Frequency, duration, method, schedule (and therefore weekly price).
+ * Occurrence-level actions (skip, pause, reschedule one) never do.
+ */
+export function isMaterialChange(
+  plan: Pick<ConversationPlanRow, 'frequency_per_week' | 'duration_minutes' | 'communication_method'>,
+  next: Partial<PlanInput>,
+): boolean {
+  if (next.frequencyPerWeek !== undefined && next.frequencyPerWeek !== plan.frequency_per_week) return true;
+  if (next.durationMinutes !== undefined && next.durationMinutes !== plan.duration_minutes) return true;
+  if (next.communicationMethod !== undefined && next.communicationMethod !== plan.communication_method) return true;
+  if (next.slots !== undefined) return true; // schedule changes are material
+  return false;
+}
+
+/** Plans awaiting the Companion (new request or a proposed change). */
+export function needsCompanionAction(plan: ConversationPlanRow): boolean {
+  return plan.status === 'requested' || plan.pending_change !== null;
+}
+
+/** Occurrences the later UI can retry (never silent, never credit-consuming). */
+export function retriableSkips(log: PlanGenerationLogRow[]): PlanGenerationLogRow[] {
+  return log.filter(
+    (l) => l.outcome === 'skipped_conflict' || l.outcome === 'skipped_availability' || l.outcome === 'skipped_paused',
+  );
+}
+
+/* ---------------- Plan lifecycle ---------------- */
+
+/**
+ * Request a plan. The server derives the price from the Companion's rate,
+ * validates every weekly time against their availability, and creates the
+ * hidden allowance account atomically. Sends no prices or credits.
+ */
+export async function createConversationPlan(
+  memberProfileId: string,
+  companionProfileId: string,
+  input: PlanInput,
+): Promise<ConversationPlanRow> {
+  const invalid = validatePlanInput(input);
+  if (invalid) throw invalid;
+  const { data, error } = await getSupabaseClient().rpc('create_conversation_plan', {
+    p_member: memberProfileId,
+    p_companion: companionProfileId,
+    p_frequency: input.frequencyPerWeek,
+    p_duration: input.durationMinutes,
+    p_method: input.communicationMethod,
+    p_slots: input.slots,
+  });
+  if (error) throw mapPlanError(error);
+  return data as ConversationPlanRow;
+}
+
+function toGenerationResult(p: PlanGenerationResultPayload): PlanGenerationResult {
+  return {
+    planId: p.plan_id,
+    generated: Number(p.generated ?? 0),
+    skipped: Number(p.skipped ?? 0),
+    retried: Number(p.retried ?? 0),
+    generatedUntil: p.generated_until,
+  };
+}
+
+/** Companion accepts the plan once — occurrences generate immediately. */
+export async function acceptPlan(planId: string): Promise<PlanGenerationResult> {
+  const { data, error } = await getSupabaseClient().rpc('accept_plan', { p_plan: planId });
+  if (error) throw mapPlanError(error);
+  return toGenerationResult(data as PlanGenerationResultPayload);
+}
+
+export async function declinePlan(planId: string, reason?: string): Promise<ConversationPlanRow> {
+  const { data, error } = await getSupabaseClient().rpc('decline_plan', {
+    p_plan: planId,
+    p_reason: reason ?? null,
+  });
+  if (error) throw mapPlanError(error);
+  return data as ConversationPlanRow;
+}
+
+/**
+ * Top up the rolling 4-week window. Idempotent and safe to call on page
+ * load: already-generated occurrences are left alone, previously skipped
+ * ones are retried, deliberate skips are never resurrected.
+ */
+export async function extendPlanBookings(planId: string): Promise<PlanGenerationResult> {
+  const { data, error } = await getSupabaseClient().rpc('extend_plan_bookings', { p_plan: planId });
+  if (error) throw mapPlanError(error);
+  return toGenerationResult(data as PlanGenerationResultPayload);
+}
+
+/* ---------------- Occurrence-level actions (no re-acceptance) ---------------- */
+
+export async function pausePlan(planId: string): Promise<PlanActionResultPayload> {
+  const { data, error } = await getSupabaseClient().rpc('pause_plan', { p_plan: planId });
+  if (error) throw mapPlanError(error);
+  return data as PlanActionResultPayload;
+}
+
+export async function resumePlan(planId: string): Promise<PlanGenerationResult> {
+  const { data, error } = await getSupabaseClient().rpc('resume_plan', { p_plan: planId });
+  if (error) throw mapPlanError(error);
+  return toGenerationResult(data as PlanGenerationResultPayload);
+}
+
+export async function endPlan(planId: string, reason?: string): Promise<PlanActionResultPayload> {
+  const { data, error } = await getSupabaseClient().rpc('end_plan', {
+    p_plan: planId,
+    p_reason: reason ?? null,
+  });
+  if (error) throw mapPlanError(error);
+  return data as PlanActionResultPayload;
+}
+
+/** Skip a whole week — credits return; the week is never regenerated. */
+export async function skipPlanWeek(planId: string, weekStart: string): Promise<PlanActionResultPayload> {
+  const { data, error } = await getSupabaseClient().rpc('skip_plan_week', {
+    p_plan: planId,
+    p_week_start: weekStart,
+  });
+  if (error) throw mapPlanError(error);
+  return data as PlanActionResultPayload;
+}
+
+/* ---------------- Material changes (Companion re-acceptance) ---------------- */
+
+/** Propose a material change; the plan keeps running until it's accepted. */
+export async function proposePlanChange(
+  planId: string,
+  change: Partial<PlanInput>,
+): Promise<ConversationPlanRow> {
+  const { data, error } = await getSupabaseClient().rpc('propose_plan_change', {
+    p_plan: planId,
+    p_frequency: change.frequencyPerWeek ?? null,
+    p_duration: change.durationMinutes ?? null,
+    p_method: change.communicationMethod ?? null,
+    p_slots: change.slots ?? null,
+  });
+  if (error) throw mapPlanError(error);
+  return data as ConversationPlanRow;
+}
+
+export async function acceptPlanChange(planId: string): Promise<PlanActionResultPayload> {
+  const { data, error } = await getSupabaseClient().rpc('accept_plan_change', { p_plan: planId });
+  if (error) throw mapPlanError(error);
+  return data as PlanActionResultPayload;
+}
+
+export async function declinePlanChange(planId: string): Promise<ConversationPlanRow> {
+  const { data, error } = await getSupabaseClient().rpc('decline_plan_change', { p_plan: planId });
+  if (error) throw mapPlanError(error);
+  return data as ConversationPlanRow;
+}
+
+/* ---------------- Reads ---------------- */
+
+export async function getPlan(planId: string): Promise<ConversationPlanRow | null> {
+  const { data, error } = await getSupabaseClient()
+    .from('conversation_plans')
+    .select('*')
+    .eq('id', planId)
+    .maybeSingle();
+  if (error) throw mapPlanError(error);
+  return (data as ConversationPlanRow | null) ?? null;
+}
+
+/** Every plan this account can see (RLS scopes it to participants). */
+export async function listMyPlans(): Promise<ConversationPlanRow[]> {
+  const { data, error } = await getSupabaseClient()
+    .from('conversation_plans')
+    .select('*')
+    .order('created_at', { ascending: false });
+  if (error) throw mapPlanError(error);
+  return (data ?? []) as ConversationPlanRow[];
+}
+
+export async function getPlanSlots(planId: string): Promise<PlanScheduleSlotRow[]> {
+  const { data, error } = await getSupabaseClient()
+    .from('plan_schedule_slots')
+    .select('*')
+    .eq('plan_id', planId)
+    .order('iso_day')
+    .order('local_time');
+  if (error) throw mapPlanError(error);
+  return (data ?? []) as PlanScheduleSlotRow[];
+}
+
+/** Generation attempts — including retriable skips. Never silent. */
+export async function getPlanGenerationLog(planId: string): Promise<PlanGenerationLogRow[]> {
+  const { data, error } = await getSupabaseClient()
+    .from('plan_generation_log')
+    .select('*')
+    .eq('plan_id', planId)
+    .order('intended_start');
+  if (error) throw mapPlanError(error);
+  return (data ?? []) as PlanGenerationLogRow[];
+}
+
+/** This plan's generated conversations (ordinary bookings). */
+export async function listPlanBookings(planId: string): Promise<MyBookingRow[]> {
+  const { data, error } = await getSupabaseClient()
+    .from('my_bookings')
+    .select('*')
+    .eq('plan_id', planId)
+    .order('starts_at');
+  if (error) throw mapPlanError(error);
+  return (data ?? []) as MyBookingRow[];
+}
+
+/** The next upcoming conversation of a plan, if any. */
+export function nextConversation(bookings: MyBookingRow[], now = new Date()): MyBookingRow | null {
+  const upcoming = bookings
+    .filter((b) => ['requested', 'confirmed', 'change_proposed'].includes(b.status))
+    .filter((b) => new Date(b.starts_at).getTime() > now.getTime())
+    .sort((a, z) => new Date(a.starts_at).getTime() - new Date(z.starts_at).getTime());
+  return upcoming[0] ?? null;
+}
+
+/* ---------------- Test call (the trial, once per pair, ever) ---------------- */
+
+/**
+ * `available` → offer the test call; `pending` → one is already booked;
+ * `used` → permanently replaced by "Start regular conversations".
+ * Server-derived: never browser state.
+ */
+export async function getTrialState(
+  memberProfileId: string,
+  companionProfileId: string,
+): Promise<TrialState> {
+  const { data, error } = await getSupabaseClient().rpc('get_trial_state', {
+    p_member: memberProfileId,
+    p_companion: companionProfileId,
+  });
+  if (error) throw mapPlanError(error);
+  return data as TrialState;
+}

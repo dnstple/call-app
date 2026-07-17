@@ -58,7 +58,7 @@ const packageBooking: BookingRow = {
   duration_minutes: 30, price_minor: 900, currency: 'GBP', platform_fee_rate: 2,
   platform_fee_minor: 18, companion_amount_minor: 882, is_trial: false,
   cancellation_reason: null, cancelled_by_account_id: null, cancelled_at: null,
-  package_purchase_id: 'pp1', booking_source: 'package_credit',
+  package_purchase_id: 'pp1', booking_source: 'package_credit', plan_id: null,
   created_at: '', updated_at: '',
 };
 

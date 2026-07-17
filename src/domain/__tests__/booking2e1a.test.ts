@@ -150,7 +150,7 @@ describe('listBookingsNeedingConfirmation', () => {
       cancellation_reason: null, cancelled_by_account_id: null, cancelled_at: null,
       created_at: '', updated_at: '', member_first_name: 'M', member_last_initial: null,
       companion_first_name: 'C', companion_last_initial: null,
-      package_purchase_id: null, booking_source: 'single_offer',
+      package_purchase_id: null, booking_source: 'single_offer', plan_id: null,
       ...partial,
     };
   }

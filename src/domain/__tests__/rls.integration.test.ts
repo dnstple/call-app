@@ -1145,4 +1145,254 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
     expect(ordinary.data!.length).toBeGreaterThan(0);
     expect(ordinary.data![0].package_purchase_id).toBeNull();
   });
+
+  /* ---------------- Stage 2E4A: recurring conversation plans (requires 0011) ----------------
+   * The plan lifecycle has no time dependency, so the whole flow runs live:
+   * request → accept → generate a 4-week window → pause (release) → resume
+   * (regenerate) → material change re-acceptance → end. */
+
+  it('2E4A: plan creation derives price and validates the weekly schedule', async () => {
+    // The companion's weekly availability is 09:00–18:00 every day (beforeAll),
+    // and there is an active 30-minute single offer at £15.
+    const bad = await e.rpc('create_conversation_plan', {
+      p_member: eMemberId, p_companion: fCompanionId, p_frequency: 2,
+      p_duration: 30, p_method: 'phone',
+      p_slots: [{ day: 2, time: '10:00' }], // one slot for a frequency of two
+    });
+    expect(String(bad.error!.message)).toContain('invalid_slots');
+
+    const outside = await e.rpc('create_conversation_plan', {
+      p_member: eMemberId, p_companion: fCompanionId, p_frequency: 1,
+      p_duration: 30, p_method: 'phone',
+      p_slots: [{ day: 2, time: '23:00' }], // outside the availability window
+    });
+    expect(String(outside.error!.message)).toContain('slot_unavailable');
+
+    const badMethod = await e.rpc('create_conversation_plan', {
+      p_member: eMemberId, p_companion: fCompanionId, p_frequency: 1,
+      p_duration: 30, p_method: 'carrier_pigeon',
+      p_slots: [{ day: 2, time: '10:00' }],
+    });
+    expect(String(badMethod.error!.message)).toContain('invalid_method');
+
+    const noRate = await e.rpc('create_conversation_plan', {
+      p_member: eMemberId, p_companion: fCompanionId, p_frequency: 1,
+      p_duration: 60, p_method: 'phone', // no 60-minute offer exists
+      p_slots: [{ day: 2, time: '10:00' }],
+    });
+    expect(String(noRate.error!.message)).toContain('price_unavailable');
+
+    // Unrelated accounts cannot create a plan for someone else's member.
+    const forged = await g.rpc('create_conversation_plan', {
+      p_member: eMemberId, p_companion: fCompanionId, p_frequency: 1,
+      p_duration: 30, p_method: 'phone', p_slots: [{ day: 2, time: '10:00' }],
+    });
+    expect(forged.error).not.toBeNull();
+    // …and cannot send their own price (unknown argument).
+    const forgedPrice = await e.rpc('create_conversation_plan', {
+      p_member: eMemberId, p_companion: fCompanionId, p_frequency: 1,
+      p_duration: 30, p_method: 'phone', p_slots: [{ day: 2, time: '10:00' }],
+      p_weekly_price_minor: 1,
+    });
+    expect(forgedPrice.error).not.toBeNull();
+  });
+
+  it('2E4A: full plan lifecycle — accept, generate, pause, resume, change, end', async () => {
+    const created = await e.rpc('create_conversation_plan', {
+      p_member: eMemberId, p_companion: fCompanionId, p_frequency: 2,
+      p_duration: 30, p_method: 'phone',
+      p_slots: [{ day: 2, time: '10:00' }, { day: 4, time: '14:00' }],
+    });
+    expect(created.error).toBeNull();
+    const planId = created.data.id;
+    // Weekly price = frequency × the £15 single-offer rate, server-derived.
+    expect(created.data.per_conversation_price_minor).toBe(1500);
+    expect(created.data.weekly_price_minor).toBe(3000);
+    expect(created.data.status).toBe('requested');
+    expect(created.data.allowance_purchase_id).not.toBeNull();
+
+    // A second live plan for the same pair is refused.
+    const duplicate = await e.rpc('create_conversation_plan', {
+      p_member: eMemberId, p_companion: fCompanionId, p_frequency: 1,
+      p_duration: 30, p_method: 'phone', p_slots: [{ day: 3, time: '10:00' }],
+    });
+    expect(String(duplicate.error!.message)).toContain('plan_exists');
+
+    // Only the companion accepts; the member cannot self-accept.
+    const memberAccept = await e.rpc('accept_plan', { p_plan: planId });
+    expect(memberAccept.error).not.toBeNull();
+    const accepted = await f.rpc('accept_plan', { p_plan: planId });
+    expect(accepted.error).toBeNull();
+    // 2 per week × 4 weeks ≈ 8 occurrences (a boundary week may vary).
+    expect(accepted.data.generated).toBeGreaterThanOrEqual(6);
+
+    // Occurrences are CONFIRMED bookings carrying the plan id, and each
+    // reserved exactly one credit (grant+reserve pairs net to zero).
+    const occurrences = await e.from('my_bookings').select('*').eq('plan_id', planId);
+    expect(occurrences.data!.length).toBe(accepted.data.generated);
+    expect(occurrences.data!.every((b) => b.status === 'confirmed')).toBe(true);
+    expect(occurrences.data!.every((b) => b.booking_source === 'package_credit')).toBe(true);
+    expect(occurrences.data!.every((b) => b.offer_id === null)).toBe(true);
+    const balance = await e.rpc('get_package_balance', { p_purchase: created.data.allowance_purchase_id });
+    expect(balance.data.granted).toBe(accepted.data.generated);
+    expect(balance.data.reserved).toBe(accepted.data.generated);
+    expect(balance.data.remaining).toBe(0); // rolling allowance: grant per occurrence
+
+    // Generation is idempotent: a second extend adds nothing.
+    const again = await e.rpc('extend_plan_bookings', { p_plan: planId });
+    expect(again.error).toBeNull();
+    expect(again.data.generated).toBe(0);
+    const afterAgain = await e.from('my_bookings').select('id').eq('plan_id', planId);
+    expect(afterAgain.data!.length).toBe(accepted.data.generated);
+
+    // Every attempt is logged — never silently omitted.
+    const log = await e.from('plan_generation_log').select('*').eq('plan_id', planId);
+    expect(log.data!.length).toBeGreaterThanOrEqual(accepted.data.generated);
+    expect(log.data!.filter((l) => l.outcome === 'booked').length).toBe(accepted.data.generated);
+
+    // Pause: future occurrences cancel and their credits release.
+    const paused = await e.rpc('pause_plan', { p_plan: planId });
+    expect(paused.error).toBeNull();
+    expect(paused.data.cancelled).toBe(accepted.data.generated);
+    const pausedBalance = await e.rpc('get_package_balance', { p_purchase: created.data.allowance_purchase_id });
+    expect(pausedBalance.data.reserved - pausedBalance.data.granted).toBeLessThanOrEqual(0);
+    const cancelledRows = await e.from('my_bookings').select('status').eq('plan_id', planId);
+    expect(cancelledRows.data!.every((b) => b.status === 'cancelled')).toBe(true);
+    // A paused plan cannot generate.
+    const pausedExtend = await e.rpc('extend_plan_bookings', { p_plan: planId });
+    expect(String(pausedExtend.error!.message)).toContain('plan_not_active');
+
+    // Resume regenerates the window (pause skips are retriable).
+    const resumed = await e.rpc('resume_plan', { p_plan: planId });
+    expect(resumed.error).toBeNull();
+    expect(resumed.data.generated).toBeGreaterThan(0);
+
+    // Material change: proposed by the member side, accepted by the companion.
+    const proposed = await e.rpc('propose_plan_change', {
+      p_plan: planId, p_frequency: 1, p_slots: [{ day: 5, time: '15:00' }],
+    });
+    expect(proposed.error).toBeNull();
+    expect(proposed.data.pending_change).not.toBeNull();
+    expect(proposed.data.frequency_per_week).toBe(2); // unchanged until accepted
+    // The companion cannot propose; the member cannot accept their own change.
+    const companionPropose = await f.rpc('propose_plan_change', { p_plan: planId, p_frequency: 4 });
+    expect(companionPropose.error).not.toBeNull();
+    const memberAcceptChange = await e.rpc('accept_plan_change', { p_plan: planId });
+    expect(memberAcceptChange.error).not.toBeNull();
+
+    const acceptedChange = await f.rpc('accept_plan_change', { p_plan: planId });
+    expect(acceptedChange.error).toBeNull();
+    const changedPlan = await e.from('conversation_plans').select('*').eq('id', planId).single();
+    expect(changedPlan.data!.frequency_per_week).toBe(1);
+    expect(changedPlan.data!.weekly_price_minor).toBe(1500); // re-derived server-side
+    expect(changedPlan.data!.pending_change).toBeNull();
+
+    // End: no further generation, future occurrences cancelled.
+    const ended = await f.rpc('end_plan', { p_plan: planId, p_reason: 'Testing' });
+    expect(ended.error).toBeNull();
+    const endedExtend = await e.rpc('extend_plan_bookings', { p_plan: planId });
+    expect(String(endedExtend.error!.message)).toContain('plan_not_active');
+  });
+
+  it('2E4A: plans are isolated and direct writes are denied', async () => {
+    const mine = await e.from('conversation_plans').select('id, allowance_purchase_id').limit(1).single();
+    expect(mine.error).toBeNull();
+
+    // Unrelated accounts see nothing and can do nothing.
+    const foreign = await h.from('conversation_plans').select('*').eq('id', mine.data!.id);
+    expect(foreign.data ?? []).toHaveLength(0);
+    const foreignSlots = await h.from('plan_schedule_slots').select('*').eq('plan_id', mine.data!.id);
+    expect(foreignSlots.data ?? []).toHaveLength(0);
+    const foreignLog = await h.from('plan_generation_log').select('*').eq('plan_id', mine.data!.id);
+    expect(foreignLog.data ?? []).toHaveLength(0);
+    const foreignPause = await h.rpc('pause_plan', { p_plan: mine.data!.id });
+    expect(foreignPause.error).not.toBeNull();
+    const foreignExtend = await h.rpc('extend_plan_bookings', { p_plan: mine.data!.id });
+    expect(foreignExtend.error).not.toBeNull();
+
+    // No direct write path exists for plans, slots or the log.
+    const forgedPlan = await e.from('conversation_plans').insert({
+      member_profile_id: eMemberId, companion_profile_id: fCompanionId,
+      created_by_account_id: (await e.auth.getUser()).data.user!.id,
+      frequency_per_week: 7, duration_minutes: 30, communication_method: 'phone',
+      per_conversation_price_minor: 1, weekly_price_minor: 1,
+      allowance_purchase_id: mine.data!.allowance_purchase_id,
+    });
+    expect(forgedPlan.error).not.toBeNull();
+    const tamper = await e.from('conversation_plans').update({ weekly_price_minor: 1 })
+      .eq('id', mine.data!.id).select();
+    expect(tamper.data ?? []).toHaveLength(0);
+    const forgedSlot = await e.from('plan_schedule_slots').insert({
+      plan_id: mine.data!.id, iso_day: 1, local_time: '03:00', timezone: 'Europe/London',
+    });
+    expect(forgedSlot.error).not.toBeNull();
+    const forgedLog = await e.from('plan_generation_log').insert({
+      plan_id: mine.data!.id, intended_start: new Date().toISOString(), outcome: 'booked',
+    });
+    expect(forgedLog.error).not.toBeNull();
+  });
+
+  it('2E4A: CONCURRENCY — simultaneous generation never double-books an occurrence', async () => {
+    const created = await h.rpc('create_conversation_plan', {
+      p_member: hMemberId, p_companion: fCompanionId, p_frequency: 1,
+      p_duration: 30, p_method: 'phone', p_slots: [{ day: 3, time: '16:00' }],
+    });
+    expect(created.error).toBeNull();
+    const planId = created.data.id;
+    const accepted = await f.rpc('accept_plan', { p_plan: planId });
+    expect(accepted.error).toBeNull();
+
+    // Two extends at once: the purchase lock serialises them, and the
+    // (plan, intended_start) uniqueness plus the booking exclusion
+    // constraints mean no occurrence can be created twice.
+    const before = await h.from('my_bookings').select('id').eq('plan_id', planId);
+    const [x, y] = await Promise.all([
+      h.rpc('extend_plan_bookings', { p_plan: planId }),
+      h.rpc('extend_plan_bookings', { p_plan: planId }),
+    ]);
+    expect([x, y].filter((r) => r.error === null).length).toBeGreaterThanOrEqual(1);
+    const after = await h.from('my_bookings').select('id, starts_at').eq('plan_id', planId);
+    expect(after.data!.length).toBe(before.data!.length); // nothing duplicated
+    const starts = after.data!.map((b) => b.starts_at);
+    expect(new Set(starts).size).toBe(starts.length); // no repeated times
+
+    await f.rpc('end_plan', { p_plan: planId, p_reason: 'Concurrency test cleanup' });
+  });
+
+  it('2E4A: the test call is once per pair, permanently', async () => {
+    // Trial state is server-derived and readable only by participants.
+    const state = await e.rpc('get_trial_state', { p_member: eMemberId, p_companion: fCompanionId });
+    expect(state.error).toBeNull();
+    expect(['available', 'pending', 'used']).toContain(state.data);
+
+    const foreignState = await h.rpc('get_trial_state', { p_member: eMemberId, p_companion: fCompanionId });
+    expect(foreignState.error).not.toBeNull();
+
+    // A pending trial still blocks a second one (0005 rule intact).
+    const s = await e.rpc('get_available_slots', {
+      p_companion: fCompanionId, p_offer: trialOfferId,
+      p_from: new Date().toISOString(),
+      p_to: new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString(),
+    });
+    const free = (s.data ?? []) as { slot_start: string }[];
+    if (free.length > 0) {
+      const first = await e.rpc('create_booking_request', {
+        p_member: eMemberId, p_offer: trialOfferId,
+        p_starts_at: free[0].slot_start, p_method: 'phone',
+      });
+      if (first.error === null && free.length > 1) {
+        const second = await e.rpc('create_booking_request', {
+          p_member: eMemberId, p_offer: trialOfferId,
+          p_starts_at: free[1].slot_start, p_method: 'phone',
+        });
+        expect(second.error).not.toBeNull();
+        expect(String(second.error!.message)).toMatch(/trial/);
+        const pending = await e.rpc('get_trial_state', { p_member: eMemberId, p_companion: fCompanionId });
+        expect(pending.data).toBe('pending');
+        await e.rpc('cancel_booking', { p_booking: first.data.id, p_reason: 'Trial state cleanup' });
+      }
+    }
+    // Permanence after COMPLETION cannot be exercised live (bookings always
+    // end in the future) — proven by the unit suite and the SQL rule.
+  });
 });
