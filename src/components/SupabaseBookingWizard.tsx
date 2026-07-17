@@ -1,14 +1,16 @@
 /**
- * Supabase-mode booking wizard (Stage 2D) — REAL booking requests.
+ * Supabase-mode booking wizard (Stage 2D, extended in 2E3B2B).
  *
- * Slots come from the database (recurring availability + exceptions, notice,
- * horizon, conflicts); prices and fees shown here are display copies of what
- * the SERVER will snapshot — nothing money-related is sent from the browser.
- * No payment is taken yet. Entirely separate from the mock BookingWizard.
+ * Books REAL conversations either pay-per-conversation (a live offer) or
+ * with a PACKAGE CREDIT (Stage 2E3B2B): eligible packages for the chosen
+ * Member appear beside the offers, slots follow the package duration, and
+ * confirming reserves exactly one credit server-side. The browser never
+ * sends members, companions, durations or prices as authority — only ids,
+ * a start time and a method. No payment is taken anywhere.
  */
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, CalendarDays, Loader2, X } from 'lucide-react';
+import { ArrowLeft, CalendarDays, Loader2, Package, X } from 'lucide-react';
 import type { ConversationOfferRow } from '../supabase/database.types';
 import type { User } from '../types';
 import {
@@ -16,6 +18,13 @@ import {
   getAvailableSlots,
   type AvailableSlot,
 } from '../repositories/bookingRepository';
+import {
+  createPackageBookingRequest,
+  getAvailablePackageSlots,
+  getUsablePackagePurchases,
+  PackageError,
+  type UsablePackagePurchase,
+} from '../repositories/packageRepository';
 import { RepoError } from '../repositories/profileRepository';
 import {
   calculateFeePreview,
@@ -52,12 +61,16 @@ export function slotTimeLabel(iso: string, tz: string): string {
 export function SlotPicker({
   companionProfileId,
   offerId,
+  purchaseId,
   onSelect,
   selected,
   reloadKey = 0,
 }: {
   companionProfileId: string;
-  offerId: string;
+  /** Pay-per-conversation slots (offer duration). */
+  offerId?: string;
+  /** Package-credit slots (purchase duration) — Stage 2E3B2B. */
+  purchaseId?: string;
   onSelect: (slot: AvailableSlot) => void;
   selected?: AvailableSlot | null;
   reloadKey?: number;
@@ -72,13 +85,16 @@ export function SlotPicker({
     setError(null);
     const from = new Date().toISOString();
     const to = new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString();
-    getAvailableSlots({ companionProfileId, offerId, from, to })
+    const request = purchaseId
+      ? getAvailablePackageSlots(purchaseId, from, to)
+      : getAvailableSlots({ companionProfileId, offerId: offerId ?? '', from, to });
+    request
       .then((s) => live && setSlots(s))
       .catch((e) => live && setError(e instanceof RepoError ? e.message : 'We couldn’t load available times.'));
     return () => {
       live = false;
     };
-  }, [companionProfileId, offerId, reloadKey]);
+  }, [companionProfileId, offerId, purchaseId, reloadKey]);
 
   const byDay = useMemo(() => {
     const map = new Map<string, AvailableSlot[]>();
@@ -132,6 +148,10 @@ export function SlotPicker({
 
 type Step = 'offer' | 'time' | 'review';
 
+type Selection =
+  | { kind: 'offer'; offer: ConversationOfferRow }
+  | { kind: 'package'; pack: UsablePackagePurchase };
+
 export function SupabaseBookingWizard({
   companion,
   offers,
@@ -154,8 +174,11 @@ export function SupabaseBookingWizard({
   }, [auth.profiles]);
 
   const [step, setStep] = useState<Step>('offer');
-  const [offerId, setOfferId] = useState<string>(offers[0]?.id ?? '');
+  const [selection, setSelection] = useState<Selection | null>(
+    offers[0] ? { kind: 'offer', offer: offers[0] } : null,
+  );
   const [memberId, setMemberId] = useState<string>(bookableMembers[0]?.id ?? '');
+  const [packages, setPackages] = useState<UsablePackagePurchase[] | null>(null);
   const [slot, setSlot] = useState<AvailableSlot | null>(null);
   const [method, setMethod] = useState<string>('');
   const [rates, setRates] = useState<{ trialPct: number; standardPct: number }>({ trialPct: 0, standardPct: 2 });
@@ -163,47 +186,87 @@ export function SupabaseBookingWizard({
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
-  const offer = offers.find((o) => o.id === offerId);
   const member = bookableMembers.find((m) => m.id === memberId);
   const isCoordinator = state.users.find((u) => u.id === state.session.currentUserId)?.role === 'coordinator';
+
+  // Eligible packages for THIS member with THIS companion (Stage 2E3B2B).
+  const loadPackages = useCallback(async () => {
+    if (!memberId) {
+      setPackages([]);
+      return;
+    }
+    try {
+      setPackages(await getUsablePackagePurchases(memberId, companion.id));
+    } catch {
+      setPackages([]); // packages are an extra option, never a blocker
+    }
+  }, [memberId, companion.id]);
+
+  useEffect(() => {
+    setPackages(null);
+    void loadPackages();
+  }, [loadPackages]);
 
   useEffect(() => {
     getPublicCommissionSettings().then(setRates).catch(() => undefined);
   }, []);
 
-  useEffect(() => {
-    if (offer && !offer.supported_methods.includes(method)) {
-      setMethod(offer.supported_methods[0] ?? 'phone');
-    }
-  }, [offer, method]);
+  const supportedMethods = useMemo(() => {
+    if (!selection) return [];
+    return selection.kind === 'offer' ? selection.offer.supported_methods : selection.pack.supportedMethods;
+  }, [selection]);
 
-  const fee = offer ? calculateFeePreview(offer.price_minor, offer.offer_type, rates) : null;
+  useEffect(() => {
+    if (supportedMethods.length > 0 && !supportedMethods.includes(method)) {
+      setMethod(supportedMethods[0]);
+    }
+  }, [supportedMethods, method]);
+
+  const fee =
+    selection?.kind === 'offer'
+      ? calculateFeePreview(selection.offer.price_minor, selection.offer.offer_type, rates)
+      : null;
+
+  const durationMinutes =
+    selection?.kind === 'offer' ? selection.offer.duration_minutes : selection?.pack.purchase.duration_minutes;
 
   const submit = useCallback(async () => {
-    if (!offer || !slot || !member) return;
+    if (!selection || !slot || !member || submitting) return; // duplicate-click protection
     setSubmitting(true);
     setError(null);
     try {
-      const booking = await createBookingRequest({
-        memberProfileId: member.id,
-        offerId: offer.id,
-        startsAt: slot.startsAt,
-        communicationMethod: method,
-      });
+      const booking =
+        selection.kind === 'offer'
+          ? await createBookingRequest({
+              memberProfileId: member.id,
+              offerId: selection.offer.id,
+              startsAt: slot.startsAt,
+              communicationMethod: method,
+            })
+          : await createPackageBookingRequest(selection.pack.purchase.id, slot.startsAt, method);
       onClose();
       navigate(`/conversations/${booking.id}`);
     } catch (e) {
       const msg = e instanceof RepoError ? e.message : 'We couldn’t send your request. Please try again.';
-      setError(msg);
-      // Slot-taken conflicts: return to the time step with fresh slots.
-      if (e instanceof RepoError && e.kind === 'conflict' && msg.includes('taken')) {
+      if (e instanceof PackageError && e.code === 'no_credit') {
+        // The final credit went to a simultaneous booking: refresh the
+        // options and fall back to pay-per-conversation booking.
+        setError(`${msg} You can still book a pay-per-conversation time below.`);
+        setSelection(offers[0] ? { kind: 'offer', offer: offers[0] } : null);
         setSlot(null);
-        setReloadKey((k) => k + 1);
-        setStep('time');
+        setStep('offer');
+        void loadPackages();
+      } else {
+        setError(msg);
+        if (e instanceof RepoError && e.kind === 'conflict' && msg.includes('taken')) {
+          setSlot(null);
+          setReloadKey((k) => k + 1);
+          setStep('time');
+        }
       }
       setSubmitting(false);
     }
-  }, [offer, slot, member, method, navigate, onClose]);
+  }, [selection, slot, member, method, submitting, navigate, onClose, offers, loadPackages]);
 
   if (bookableMembers.length === 0) {
     return (
@@ -232,7 +295,10 @@ export function SupabaseBookingWizard({
                       type="radio"
                       name="booking-member"
                       checked={memberId === m.id}
-                      onChange={() => setMemberId(m.id)}
+                      onChange={() => {
+                        setMemberId(m.id);
+                        setSlot(null);
+                      }}
                     />
                     <span className="bold">{m.first_name} {m.last_name}</span>
                   </label>
@@ -240,18 +306,20 @@ export function SupabaseBookingWizard({
               </div>
             </div>
           )}
+
           <div>
-            <div className="bold mb-2">Choose a conversation</div>
+            <div className="bold mb-2">Pay per conversation</div>
             <div className="col" style={{ gap: 8 }}>
+              {offers.length === 0 && <p className="muted" style={{ margin: 0 }}>No single conversations on offer.</p>}
               {offers.map((o) => (
                 <label key={o.id} className="card card-tight row between" style={{ cursor: 'pointer' }}>
                   <span className="row" style={{ gap: 10 }}>
                     <input
                       type="radio"
-                      name="booking-offer"
-                      checked={offerId === o.id}
+                      name="booking-choice"
+                      checked={selection?.kind === 'offer' && selection.offer.id === o.id}
                       onChange={() => {
-                        setOfferId(o.id);
+                        setSelection({ kind: 'offer', offer: o });
                         setSlot(null);
                       }}
                     />
@@ -265,17 +333,58 @@ export function SupabaseBookingWizard({
               ))}
             </div>
           </div>
-          <button className="btn btn-primary" disabled={!offer || !member} onClick={() => setStep('time')}>
+
+          {/* Package credits (Stage 2E3B2B) */}
+          {packages === null ? (
+            <div className="row" style={{ gap: 10 }}>
+              <Loader2 size={16} aria-hidden="true" />
+              <span className="faint">Checking your packages…</span>
+            </div>
+          ) : packages.length > 0 ? (
+            <div>
+              <div className="bold mb-2">Use a package credit</div>
+              <div className="col" style={{ gap: 8 }}>
+                {packages.map((p) => (
+                  <label key={p.purchase.id} className="card card-tight row between" style={{ cursor: 'pointer' }}>
+                    <span className="row" style={{ gap: 10 }}>
+                      <input
+                        type="radio"
+                        name="booking-choice"
+                        checked={selection?.kind === 'package' && selection.pack.purchase.id === p.purchase.id}
+                        onChange={() => {
+                          setSelection({ kind: 'package', pack: p });
+                          setSlot(null);
+                        }}
+                      />
+                      <span className="col" style={{ gap: 2 }}>
+                        <span className="bold row" style={{ gap: 6 }}>
+                          <Package size={16} aria-hidden="true" /> {p.purchase.title}
+                        </span>
+                        <span className="faint">
+                          {p.remaining} of {p.purchase.conversation_count} conversations left ·{' '}
+                          {p.purchase.duration_minutes} minutes each
+                        </span>
+                      </span>
+                    </span>
+                    <span className="badge badge-neutral">1 credit</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          <button className="btn btn-primary" disabled={!selection || !member} onClick={() => setStep('time')}>
             Choose a time
           </button>
         </div>
       )}
 
-      {step === 'time' && offer && (
+      {step === 'time' && selection && (
         <div className="col" style={{ gap: 18 }}>
           <SlotPicker
             companionProfileId={companion.id}
-            offerId={offer.id}
+            offerId={selection.kind === 'offer' ? selection.offer.id : undefined}
+            purchaseId={selection.kind === 'package' ? selection.pack.purchase.id : undefined}
             selected={slot}
             onSelect={setSlot}
             reloadKey={reloadKey}
@@ -291,7 +400,7 @@ export function SupabaseBookingWizard({
         </div>
       )}
 
-      {step === 'review' && offer && slot && member && (
+      {step === 'review' && selection && slot && member && (
         <div className="col" style={{ gap: 14 }}>
           <div className="card card-muted col" style={{ gap: 6 }}>
             <div className="row" style={{ gap: 8 }}>
@@ -300,7 +409,7 @@ export function SupabaseBookingWizard({
                 {slotDayLabel(slot.startsAt, viewerTz)}, {slotTimeLabel(slot.startsAt, viewerTz)}–{slotTimeLabel(slot.endsAt, viewerTz)}
               </span>
             </div>
-            <span className="muted">Shown in your timezone ({viewerTz}) · {offer.duration_minutes} minutes</span>
+            <span className="muted">Shown in your timezone ({viewerTz}) · {durationMinutes} minutes</span>
             <span className="muted">
               For {member.first_name} {member.last_name} · with {companion.firstName}
             </span>
@@ -309,7 +418,7 @@ export function SupabaseBookingWizard({
           <div>
             <div className="bold mb-2">How should the call happen?</div>
             <div className="row wrap" style={{ gap: 8 }}>
-              {offer.supported_methods.map((m) => (
+              {supportedMethods.map((m) => (
                 <button
                   key={m}
                   className={`btn btn-small ${method === m ? 'btn-primary' : 'btn-secondary'}`}
@@ -322,21 +431,33 @@ export function SupabaseBookingWizard({
             </div>
           </div>
 
-          <div className="card card-tight col" style={{ gap: 4 }}>
-            <div className="row between">
-              <span className="muted">Conversation price</span>
-              <span className="bold">{formatMinor(offer.price_minor)}</span>
-            </div>
-            {fee && (
+          {selection.kind === 'offer' ? (
+            <div className="card card-tight col" style={{ gap: 4 }}>
               <div className="row between">
-                <span className="muted">Estimated platform fee ({fee.ratePct}%)</span>
-                <span>{formatMinor(fee.feeMinor)}</span>
+                <span className="muted">Conversation price</span>
+                <span className="bold">{formatMinor(selection.offer.price_minor)}</span>
               </div>
-            )}
-            <p className="faint" style={{ margin: '6px 0 0' }}>
-              No payment will be taken yet. Payments will be added in a later stage.
-            </p>
-          </div>
+              {fee && (
+                <div className="row between">
+                  <span className="muted">Estimated platform fee ({fee.ratePct}%)</span>
+                  <span>{formatMinor(fee.feeMinor)}</span>
+                </div>
+              )}
+              <p className="faint" style={{ margin: '6px 0 0' }}>
+                No payment will be taken yet. Payments will be added in a later stage.
+              </p>
+            </div>
+          ) : (
+            <div className="card card-tight col" style={{ gap: 4 }}>
+              <div className="row between">
+                <span className="muted">{selection.pack.purchase.title}</span>
+                <span className="badge badge-neutral">1 package credit will be reserved</span>
+              </div>
+              <p className="faint" style={{ margin: '6px 0 0' }}>
+                This uses one credit from your simulated package. No payment will be taken.
+              </p>
+            </div>
+          )}
 
           <div className="row" style={{ gap: 10 }}>
             <button className="btn btn-ghost" onClick={() => setStep('time')} disabled={submitting}>

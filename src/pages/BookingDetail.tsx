@@ -31,6 +31,7 @@ import { EmptyState } from '../components/ui';
 import { SlotPicker, slotDayLabel, slotTimeLabel } from '../components/SupabaseBookingWizard';
 import { CompletionPanel } from '../components/CompletionPanel';
 import { RatingPanel } from '../components/RatingPanel';
+import { BookingCreditPanel } from '../components/BookingCreditBadge';
 
 const STATUS_BADGE: Record<string, string> = {
   requested: 'badge-neutral',
@@ -240,7 +241,11 @@ export default function BookingDetail() {
       {/* Rating (Stage 2E2B) — member side, completed conversations only */}
       <RatingPanel booking={booking} />
 
-      {/* Price snapshot — honest payment boundary */}
+      {/* Price snapshot — honest payment boundary. Package-credit bookings
+          show their credit state instead of a payable price. */}
+      {booking.booking_source === 'package_credit' ? (
+        <BookingCreditPanel booking={booking} />
+      ) : (
       <section className="section-tight">
         <h2>Price</h2>
         <div className="card card-tight col" style={{ gap: 4, maxWidth: 420 }}>
@@ -257,6 +262,7 @@ export default function BookingDetail() {
           </p>
         </div>
       </section>
+      )}
 
       {/* Actions */}
       {active && (isCompanionSide || isRequesterSide) && (
@@ -271,12 +277,14 @@ export default function BookingDetail() {
                 <button className="btn btn-secondary" disabled={busy} onClick={() => setDeclining(true)}>
                   Decline
                 </button>
-                <button className="btn btn-secondary" disabled={busy} onClick={() => setProposing(true)}>
-                  Propose another time
-                </button>
+                {booking.offer_id && (
+                  <button className="btn btn-secondary" disabled={busy} onClick={() => setProposing(true)}>
+                    Propose another time
+                  </button>
+                )}
               </>
             )}
-            {booking.status === 'confirmed' && (isCompanionSide || isRequesterSide) && (
+            {booking.status === 'confirmed' && (isCompanionSide || isRequesterSide) && booking.offer_id && (
               <button className="btn btn-secondary" disabled={busy} onClick={() => setProposing(true)}>
                 Propose a new time
               </button>
@@ -285,6 +293,12 @@ export default function BookingDetail() {
               Cancel conversation
             </button>
           </div>
+          {!booking.offer_id && (
+            <p className="faint mt-2">
+              To change the time of a package conversation, cancel it (the credit returns to your
+              package) and book again.
+            </p>
+          )}
 
           {declining && (
             <div className="card card-tight col mt-4" style={{ gap: 10, maxWidth: 480 }}>

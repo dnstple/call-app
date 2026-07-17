@@ -577,6 +577,10 @@ export type Database = {
         Returns: BookingRow;
       };
       get_booking_credit_state: { Args: { p_booking: string }; Returns: BookingCreditStatePayload };
+      get_available_package_slots: {
+        Args: { p_purchase: string; p_from: string; p_to: string };
+        Returns: SlotRow[];
+      };
       get_companion_public_reviews: {
         Args: { p_profile: string; p_limit?: number; p_offset?: number };
         Returns: PublicReviewRow[];

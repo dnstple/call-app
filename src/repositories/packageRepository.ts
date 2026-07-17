@@ -343,6 +343,68 @@ export async function getAvailablePackagePurchases(
   return withBalances.filter((p) => p.remaining >= 1);
 }
 
+/** One usable package with its ledger balance and supported methods. */
+export interface UsablePackagePurchase {
+  purchase: PackagePurchaseRow;
+  remaining: number;
+  supportedMethods: string[];
+}
+
+/**
+ * Packages this Member can use with this Companion RIGHT NOW (any
+ * duration): active, matching, ≥1 credit. Display helper — the server
+ * re-checks everything at booking time.
+ */
+export async function getUsablePackagePurchases(
+  memberProfileId: string,
+  companionProfileId: string,
+): Promise<UsablePackagePurchase[]> {
+  const purchases = await listPackagePurchases(memberProfileId);
+  const candidates = purchases.filter(
+    (p) => p.status === 'active' && p.companion_profile_id === companionProfileId,
+  );
+  if (candidates.length === 0) return [];
+  const offers = await getPackageOffers(companionProfileId).catch(() => [] as PackageOfferRow[]);
+  const results = await Promise.all(
+    candidates.map(async (purchase) => ({
+      purchase,
+      remaining: (await getPackageBalance(purchase.id).catch(() => null))?.remaining ?? 0,
+      supportedMethods:
+        offers.find((o) => o.id === purchase.package_offer_id)?.supported_methods ?? ['phone'],
+    })),
+  );
+  return results.filter((r) => r.remaining >= 1);
+}
+
+/** One purchase row, when readable (buyer / member side only). */
+export async function getPackagePurchase(purchaseId: string): Promise<PackagePurchaseRow | null> {
+  const { data, error } = await getSupabaseClient()
+    .from('package_purchases')
+    .select('*')
+    .eq('id', purchaseId)
+    .maybeSingle();
+  if (error) throw mapPackageError(error);
+  return (data as PackagePurchaseRow | null) ?? null;
+}
+
+/** Real bookable slots for a package (same rules as offer slots). */
+export async function getAvailablePackageSlots(
+  purchaseId: string,
+  from: string,
+  to: string,
+): Promise<{ startsAt: string; endsAt: string }[]> {
+  const { data, error } = await getSupabaseClient().rpc('get_available_package_slots', {
+    p_purchase: purchaseId,
+    p_from: from,
+    p_to: to,
+  });
+  if (error) throw mapPackageError(error);
+  return ((data ?? []) as { slot_start: string; slot_end: string }[]).map((s) => ({
+    startsAt: s.slot_start,
+    endsAt: s.slot_end,
+  }));
+}
+
 export interface BookingCreditState {
   bookingId: string;
   bookingSource: 'single_offer' | 'package_credit';

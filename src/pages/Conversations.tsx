@@ -42,8 +42,10 @@ export function SupabaseBookingRow({ booking }: { booking: MyBookingRow }) {
           {MEDIUM_LABELS[booking.communication_method as keyof typeof MEDIUM_LABELS] ?? booking.communication_method}
         </span>
         <span className="faint small">
-          {booking.is_trial ? 'Trial' : 'Standard'} · {formatMinor(booking.price_minor, booking.currency)} ·{' '}
-          {derivedStatusLabel(booking)}
+          {booking.booking_source === 'package_credit'
+            ? 'Package credit — no payment'
+            : `${booking.is_trial ? 'Trial' : 'Standard'} · ${formatMinor(booking.price_minor, booking.currency)}`}{' '}
+          · {derivedStatusLabel(booking)}
         </span>
       </span>
     </button>

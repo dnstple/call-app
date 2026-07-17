@@ -587,5 +587,47 @@ Run `supabase/migrations/0009_package_booking_credits.sql` after
   Live limitation: completed→consume needs an ended booking, so the
   conversion is proven by unit tests + SQL. Run 0009 before `test:rls`.
 
-Deferred after 2E3B2A: booking-with-credit UI (2E3B2B), payments,
-payouts, package expiry, admin tooling, notifications.
+Deferred after 2E3B2A: payments, payouts, package expiry, admin tooling,
+notifications.
+
+## Stage 2E3B2B — package-credit booking UI
+
+Run `supabase/migrations/0010_package_slots.sql` after 0001–0009.
+The only schema addition is `get_available_package_slots(purchase, from,
+to)` — a genuine gap: slot generation previously required an active
+conversation offer, which package bookings deliberately don't have. It
+derives the companion and duration from the PURCHASE and applies exactly
+the same rules (availability + exceptions, notice, horizon, conflicts,
+15-minute grid, 31 days, 200 slots), readable only by purchase readers.
+
+- **Wizard**: the booking flow now offers "Pay per conversation" AND
+  "Use a package credit" whenever the chosen Member has an active,
+  in-credit package with this Companion (remaining count, duration and
+  a "1 credit" badge shown). Slots follow the package duration; methods
+  come from the originating package offer. The review step shows
+  "1 package credit will be reserved", "This uses one credit from your
+  simulated package." and "No payment will be taken." — no payable
+  price. Submission sends ONLY purchase id + start time + method.
+  A `no_credit` race (someone else took the final credit) explains
+  itself, refreshes the package list and falls back to normal offers.
+- **Displays**: rows (Home + Conversations) show "Package credit — no
+  payment" instead of a price; the booking detail page replaces the
+  Price section with a Package panel whose state comes from
+  `get_booking_credit_state` (server ledger flags, never React maths):
+  reserved / released ("returned to your package") / used / reserved
+  while under review. Ordinary bookings are untouched.
+- **Rescheduling**: propose-another-time stays for single-offer bookings
+  only; package bookings explain "cancel (the credit returns) and book
+  again". No fake offers are ever created.
+- **Repository**: `getUsablePackagePurchases(member, companion)` (any
+  duration, with methods + remaining), `getPackagePurchase`,
+  `getAvailablePackageSlots`.
+- **Tests**: `packages2e3b2b.test.tsx` — package option appearance and
+  exclusions, purchase-based slot calls, honest review + contract,
+  duplicate-click, no-credit recovery, row labels, credit-state labels,
+  ordinary bookings unchanged. Live suite: the 2E3B2A block already
+  proves the underlying lifecycle; 0010's slot function follows the
+  same authorisation as the balance reads.
+
+Deferred after 2E3B2B: payments/payouts, package expiry, admin tooling,
+external notifications, verification.
