@@ -189,6 +189,136 @@ export function retriableSkips(log: PlanGenerationLogRow[]): PlanGenerationLogRo
   );
 }
 
+/* ---------------- Member preferences → recommendations ---------------- */
+
+export interface MemberPlanPreferences {
+  /** Signup answers: days and dayparts they'd like conversations. */
+  preferredDays: string[];
+  preferredDayparts: string[];
+  preferredDurationMinutes: number | null;
+}
+
+const ISO_DAY_BY_NAME: Record<string, number> = {
+  Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6, Sunday: 7,
+};
+
+export async function getMemberPlanPreferences(memberProfileId: string): Promise<MemberPlanPreferences> {
+  const { data, error } = await getSupabaseClient()
+    .from('member_profiles')
+    .select('preferred_days, preferred_dayparts, preferred_duration_minutes')
+    .eq('profile_id', memberProfileId)
+    .maybeSingle();
+  if (error) throw mapPlanError(error);
+  return {
+    preferredDays: data?.preferred_days ?? [],
+    preferredDayparts: data?.preferred_dayparts ?? [],
+    preferredDurationMinutes: data?.preferred_duration_minutes ?? null,
+  };
+}
+
+/**
+ * How often does this Member want to talk? Derived from the days they chose
+ * at signup (one conversation per preferred day), clamped to the offered
+ * options. Three per week is the product default when they didn't say.
+ */
+export function recommendedFrequency(prefs: MemberPlanPreferences): number {
+  const days = prefs.preferredDays.filter((d) => ISO_DAY_BY_NAME[d]).length;
+  if (days < 1) return 3;
+  return Math.min(Math.max(days, PLAN_FREQUENCY_MIN), 4);
+}
+
+export function recommendedDuration(prefs: MemberPlanPreferences): number {
+  return prefs.preferredDurationMinutes && PLAN_DURATIONS.includes(prefs.preferredDurationMinutes)
+    ? prefs.preferredDurationMinutes
+    : 30;
+}
+
+/* ---------------- Weekly availability grid (for the scheduler) ---------------- */
+
+export interface WeeklyGridDay {
+  isoDay: number;
+  /** Companion-local "HH:MM" starts that fit the whole conversation. */
+  times: string[];
+}
+
+function toMinutes(hhmm: string): number {
+  const [h, m] = hhmm.split(':').map(Number);
+  return h * 60 + m;
+}
+
+function toHHMM(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+/** Which part of the day a start time falls in (matches Explore's rule). */
+export function daypartOf(time: string): 'Morning' | 'Afternoon' | 'Evening' {
+  const m = toMinutes(time);
+  if (m < 12 * 60) return 'Morning';
+  if (m <= 17 * 60) return 'Afternoon';
+  return 'Evening';
+}
+
+/**
+ * Candidate weekly times from the Companion's recurring availability, on a
+ * 30-minute grid, only where the whole conversation fits. Times are
+ * Companion-local wall times — exactly what a weekly plan slot stores.
+ */
+export function buildWeeklyGrid(
+  windows: { day: number; start: string; end: string }[],
+  durationMinutes: number,
+  stepMinutes = 30,
+): WeeklyGridDay[] {
+  const byDay = new Map<number, Set<string>>();
+  for (const w of windows) {
+    const start = toMinutes(w.start);
+    const end = toMinutes(w.end);
+    for (let t = start; t + durationMinutes <= end; t += stepMinutes) {
+      const set = byDay.get(w.day) ?? new Set<string>();
+      set.add(toHHMM(t));
+      byDay.set(w.day, set);
+    }
+  }
+  return [1, 2, 3, 4, 5, 6, 7]
+    .filter((d) => (byDay.get(d)?.size ?? 0) > 0)
+    .map((d) => ({ isoDay: d, times: [...byDay.get(d)!].sort() }));
+}
+
+/**
+ * A recommended weekly rhythm: the Member's preferred days and dayparts
+ * first, spread across the week, filled from availability if needed.
+ * Returns fewer slots only when the Companion genuinely lacks days.
+ */
+export function recommendSchedule(
+  grid: WeeklyGridDay[],
+  prefs: MemberPlanPreferences,
+  frequency: number,
+): PlanSlotInput[] {
+  const wantedDays = prefs.preferredDays
+    .map((d) => ISO_DAY_BY_NAME[d])
+    .filter((d): d is number => Boolean(d));
+  const wantedParts = prefs.preferredDayparts.length > 0 ? prefs.preferredDayparts : ['Morning', 'Afternoon', 'Evening'];
+
+  const pickTime = (day: WeeklyGridDay): string | null => {
+    const preferred = day.times.find((t) => wantedParts.includes(daypartOf(t)));
+    return preferred ?? day.times[0] ?? null;
+  };
+
+  // Preferred days first, then the rest — spread evenly across the week.
+  const ordered = [
+    ...grid.filter((d) => wantedDays.includes(d.isoDay)),
+    ...grid.filter((d) => !wantedDays.includes(d.isoDay)),
+  ];
+  const chosen: PlanSlotInput[] = [];
+  for (const day of ordered) {
+    if (chosen.length >= frequency) break;
+    const time = pickTime(day);
+    if (time) chosen.push({ day: day.isoDay, time });
+  }
+  return chosen.sort((a, b) => a.day - b.day);
+}
+
 /* ---------------- Plan lifecycle ---------------- */
 
 /**

@@ -706,6 +706,51 @@ Approved architecture: `docs/STAGE_2E4_PLAN.md` (wrap, don't rewrite).
   completed-trial branch needs an ended booking, so it's proven by unit
   tests + SQL). Run 0011 before `test:rls`.
 
-Deferred after 2E4A: plan wizard + schedule picker (2E4B), plan dashboard
-and management UI (2E4C), package-UI retirement (2E4D), payments/payouts,
-admin tooling, notifications.
+## Stage 2E4B — the recurring-companionship experience (UI)
+
+No migration: 2E4B is UI + repository helpers on the 0011 backend.
+
+- **Companion profile** now leads with people and then the relationship:
+  photo → hero actions → story/interests → reviews → availability → a
+  quiet "Prefer a single conversation?" section. `CompanionPlanHero`
+  shows (1) the one-time **test call** — `get_trial_state` drives
+  `available` → "Book a test call · 30 minutes · £5 · No commitment",
+  `pending` → "Test call requested", `used` → the card disappears
+  permanently — and (2) the primary action, **"Start regular
+  conversations with {name}"**, with the Member's recommended frequency.
+  An existing plan replaces the CTA with its status.
+- **`PlanWizard`** (six steps): frequency (Member's preference
+  preselected + "Recommended", 1/2/3/4/Custom) → duration (rate per
+  conversation shown) → method → **the weekly scheduler** → review →
+  request. The scheduler renders only the Companion's real recurring
+  availability on a 30-minute grid where the whole conversation fits,
+  enforces one slot per day and exactly `frequency` slots, offers "Use
+  recommended times" (Member's preferred days + dayparts), and labels
+  everything in the viewer's timezone (DST-safe via the existing
+  utilities). Review previews the weekly price exactly as the server will
+  snapshot it (frequency × rate) with "Prototype plan — no payment will
+  be taken".
+- **Consent**: requesting creates a `requested` plan; the Companion sees
+  **"Requests for regular conversations"** on Home and accepts once —
+  which generates the conversations through the 2E4A backend — or
+  declines.
+- **Home**: **"Your conversation plans"** (rhythm, weekly schedule, next
+  conversation, Pending approval / Active / Paused; Coordinators see
+  "Mary's conversation plan"). Active plans opportunistically top up the
+  rolling 4-week window on load (idempotent). Nothing was removed.
+- **Language**: in Supabase mode "package", "credits" and "purchase" are
+  gone from the UI — plan allowances never render as packages, and the
+  legacy bundle list only appears if a real one exists ("Earlier
+  conversation bundles"). Repositories and SQL are untouched.
+- **Repository helpers** (`planRepository`): `getMemberPlanPreferences`,
+  `recommendedFrequency` / `recommendedDuration`, `buildWeeklyGrid`,
+  `recommendSchedule`, `daypartOf`.
+- **Tests**: `plans2e4b.test.tsx` (27) — hero/trial states, wizard flow,
+  scheduler constraints, recommended times, review + contract, duplicate
+  submission, typed errors, consent accept/decline, plan cards, language
+  checks, and the pure scheduling helpers.
+
+Deferred after 2E4B: plan dashboard actions — pause/resume/end, change
+frequency/times/method, skip a week, reschedule one occurrence (2E4C);
+package-UI retirement (2E4D); payments/payouts; admin tooling;
+notifications.

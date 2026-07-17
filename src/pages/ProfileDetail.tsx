@@ -38,7 +38,7 @@ import {
 import { BookingWizard, PackagePurchaseDialog } from '../components/BookingWizard';
 import { SupabaseBookingWizard } from '../components/SupabaseBookingWizard';
 import { CardRatingSummary, CompanionReviews } from '../components/CompanionReviews';
-import { PublicPackages } from '../components/PackagePurchaseSupabase';
+import { CompanionPlanHero } from '../components/CompanionPlanHero';
 import { useAuthSnapshot } from '../state/authBridge';
 import { ReportDialog } from '../components/ConversationRow';
 import { roleLabel } from '../components/Shell';
@@ -204,36 +204,18 @@ export default function ProfileDetail() {
             </div>
           )}
           {blocked && <span className="badge badge-danger" style={{ alignSelf: 'flex-start' }}>Blocked</span>}
-          {supabase && user.role === 'companion' && (
-            <div className="row wrap mt-2" style={{ gap: 10 }}>
-              {(() => {
-                const accepting = getMarketMeta(user.id)?.acceptingNewMembers !== false;
-                const canRequest =
-                  realOffers.length > 0 &&
-                  accepting &&
-                  authSnap.profiles.some(
-                    (p) => p.profile.role === 'member' && p.access.can_book && p.access.consent_status !== 'withdrawn',
-                  );
-                return (
-                  <>
-                    {canRequest && (
-                      <button className="btn btn-primary" onClick={() => setRealBooking(true)}>
-                        Request a conversation
-                      </button>
-                    )}
-                    {!accepting && (
-                      <span className="badge badge-neutral">Not taking new members right now</span>
-                    )}
-                    {accepting && realOffers.length === 0 && (
-                      <span className="faint">No bookable conversations yet.</span>
-                    )}
-                  </>
-                );
-              })()}
-            </div>
-          )}
         </div>
       </header>
+
+      {/* Stage 2E4B — the test call, then ongoing companionship: the
+          primary actions of the product, above everything else. */}
+      {supabase && user.role === 'companion' && (
+        <CompanionPlanHero
+          companion={user}
+          offers={realOffers}
+          acceptingNewMembers={getMarketMeta(user.id)?.acceptingNewMembers !== false}
+        />
+      )}
 
       <section className="section-tight">
         <h2>About {user.firstName}</h2>
@@ -257,25 +239,10 @@ export default function ProfileDetail() {
         )}
       </section>
 
-      {supabase && user.role === 'companion' && realOffers.length > 0 && (
-        <section className="section-tight">
-          <h2>Conversations & rates</h2>
-          <div className="grid-2">
-            {realOffers.map((o) => (
-              <div key={o.id} className="card card-tight row between wrap">
-                <div>
-                  <div className="bold">{o.offer_type === 'trial' ? 'Trial conversation' : 'Standard conversation'}</div>
-                  <div className="faint">{o.duration_minutes} minutes</div>
-                </div>
-                <span className="bold" style={{ fontSize: '1.15em' }}>{formatMinor(o.price_minor)}</span>
-              </div>
-            ))}
-          </div>
-          <p className="faint mt-4">No payment will be taken yet. Payments will be added in a later stage.</p>
-        </section>
+      {/* Reviews sit above the diary: people first, logistics second. */}
+      {supabase && user.role === 'companion' && (
+        <CompanionReviews profileId={user.id} firstName={user.firstName} />
       )}
-
-      {supabase && user.role === 'companion' && <PublicPackages companion={user} />}
 
       {supabase && user.role === 'companion' && realRules.length > 0 && (
         <section className="section-tight">
@@ -312,8 +279,35 @@ export default function ProfileDetail() {
               })}
           </div>
           <p className="faint mt-2">
-            A general guide — exact bookable times appear when you request a conversation.
+            A general guide — you’ll pick exact weekly times when you start regular conversations.
           </p>
+        </section>
+      )}
+
+      {/* One-off conversations: deliberately quiet, below the plan. */}
+      {supabase && user.role === 'companion' && realOffers.some((o) => o.offer_type === 'single') && (
+        <section className="section-tight">
+          <h2>Prefer a single conversation?</h2>
+          <p className="muted" style={{ marginTop: 0 }}>
+            Most people arrange regular conversations, but you can also book a one-off.
+          </p>
+          <div className="grid-2">
+            {realOffers
+              .filter((o) => o.offer_type === 'single')
+              .map((o) => (
+                <div key={o.id} className="card card-tight row between wrap">
+                  <div className="faint">{o.duration_minutes}-minute conversation</div>
+                  <span className="bold">{formatMinor(o.price_minor)}</span>
+                </div>
+              ))}
+          </div>
+          {realOffers.length > 0 &&
+            authSnap.profiles.some((p) => p.profile.role === 'member' && p.access.can_book) && (
+              <button className="btn btn-ghost btn-small mt-4" onClick={() => setRealBooking(true)}>
+                Book a single conversation
+              </button>
+            )}
+          <p className="faint mt-2">No payment will be taken yet.</p>
         </section>
       )}
 
@@ -395,10 +389,9 @@ export default function ProfileDetail() {
         </section>
       )}
 
-      {/* Reviews: real Supabase data for companions; mock demo otherwise. */}
-      {supabase ? (
-        user.role === 'companion' && <CompanionReviews profileId={user.id} firstName={user.firstName} />
-      ) : (
+      {/* Supabase reviews render higher up (people before logistics);
+          mock mode keeps its original demo section here. */}
+      {supabase ? null : (
       <section className="section-tight">
         <h2>Reviews</h2>
         <div className="row wrap mb-4" style={{ gap: 16 }}>

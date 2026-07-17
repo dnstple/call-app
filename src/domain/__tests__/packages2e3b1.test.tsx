@@ -289,11 +289,13 @@ describe('package dashboard', () => {
     expect(mock.rpcCalls.some((c) => c.fn === 'get_package_balance')).toBe(true);
   });
 
-  it('15. shows the empty state when there are no purchases', async () => {
+  it('15. renders nothing when there are no earlier bundles (2E4B: plans are the product)', async () => {
     signInAs([[profileRow('member', 'm1'), true]]);
     mock.fromRows = [[]];
-    render(<PackageDashboard />);
-    expect(await screen.findByText(/No conversation packages yet\./)).toBeTruthy();
+    const { container } = render(<PackageDashboard />);
+    // Stage 2E4B repositioning: package vocabulary is gone from Home —
+    // "Your conversation plans" (PlanCards) speaks for the empty case.
+    await waitFor(() => expect(container.textContent).toBe(''));
   });
 
   it('renders nothing for accounts with no bookable member', () => {

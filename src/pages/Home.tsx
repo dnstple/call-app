@@ -7,6 +7,7 @@ import { canConfirmCompletion, listMyBookings, splitBookings } from '../reposito
 import { SupabaseBookingRow } from './Conversations';
 import { isSupabaseConfigured } from '../supabase/client';
 import { PackageDashboard } from '../components/PackageDashboard';
+import { CompanionPlanRequests, ConversationPlans } from '../components/PlanCards';
 import { useAppState } from '../state/store';
 import {
   activeMember,
@@ -103,6 +104,10 @@ export default function Home() {
         <header className="page-header">
           <h1>{greeting}, {me.firstName}</h1>
         </header>
+
+        {/* Stage 2E4B — ongoing companionship comes first. */}
+        {isSupabaseConfigured() && me.role === 'companion' && <CompanionPlanRequests />}
+        {isSupabaseConfigured() && me.role !== 'companion' && <ConversationPlans />}
 
         {real.needsConfirmation.length > 0 && (
           <section className="section-tight" aria-label="Waiting for your confirmation">

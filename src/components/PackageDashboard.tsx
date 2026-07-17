@@ -22,6 +22,14 @@ const STATUS_LABELS: Record<PackagePurchaseRow['status'], string> = {
   cancelled: 'Cancelled',
 };
 
+/**
+ * Stage 2E4B: plans are the product; a purchase backing a conversation
+ * plan is hidden infrastructure and never shown as its own "package".
+ */
+function isPlanAllowance(purchase: PackagePurchaseRow): boolean {
+  return purchase.package_offer_id === null;
+}
+
 interface Row {
   purchase: PackagePurchaseRow;
   balance: PackageBalance | null;
@@ -47,7 +55,9 @@ export function PackageDashboard() {
       try {
         const purchases = (
           await Promise.all(memberIds.map((id) => listPackagePurchases(id)))
-        ).flat();
+        )
+          .flat()
+          .filter((p) => !isPlanAllowance(p)); // plans render as plans, not packages
         // Authoritative balances come from the ledger, one call per purchase.
         const withBalances = await Promise.all(
           purchases.map(async (purchase) => ({
@@ -68,9 +78,11 @@ export function PackageDashboard() {
 
   if (memberIds.length === 0) return null;
 
+  if (rows !== null && rows.length === 0 && !error) return null;
+
   return (
-    <section className="section-tight" aria-label="Conversation packages">
-      <h2>Conversation packages</h2>
+    <section className="section-tight" aria-label="Earlier conversation bundles">
+      <h2>Earlier conversation bundles</h2>
       {error ? (
         <p className="muted" role="alert">{error}</p>
       ) : rows === null ? (
@@ -79,7 +91,7 @@ export function PackageDashboard() {
           <span className="muted">Loading packages…</span>
         </div>
       ) : rows.length === 0 ? (
-        <p className="muted">No conversation packages yet.</p>
+        null // nothing to say: plans are shown by ConversationPlans
       ) : (
         <div className="stack-list">
           {rows.map(({ purchase, balance }) => (
