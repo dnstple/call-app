@@ -71,3 +71,18 @@ src/
 
 All colours/typography/spacing are CSS custom properties at the top of `src/index.css` — swap
 them to rebrand. The product name is the “App Name” placeholder in `components/Shell.tsx`.
+
+## Conversations happen in the app
+
+Every conversation is an **in-app conversation** — there is no phone, WhatsApp,
+FaceTime or Zoom option anywhere in the product, and no method selection in any
+flow. The single internal value is `in_app`; `/calls/:bookingId` is the future
+provider boundary (LiveKit/Daily/Twilio are **not** integrated yet).
+
+## Future milestones (documented, not built)
+
+- **Messaging/chat** — see `docs/CHAT_SCOPE.md`. The plan-request and response
+  messages are consent notes, not chat.
+- **Trust & Safety** — see `docs/TRUST_AND_SAFETY.md`. Profiles activate
+  automatically in the prototype ("Profile active"); nothing is described as
+  identity-verified until a real workflow exists.

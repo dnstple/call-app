@@ -137,12 +137,11 @@ export default function MyProfile() {
 
       <section className="section-tight">
         <div className="row between">
-          <h2>Languages & calls</h2>
+          <h2>Languages & conversations</h2>
           {editable && <button className="btn btn-ghost btn-small" onClick={() => setEditing('preferences')}>Edit</button>}
         </div>
         <p className="muted">
-          Speaks {me.languages.join(' and ')} · prefers {me.style} conversations ·{' '}
-          {me.mediums.map((m) => MEDIUM_LABELS[m]).join(', ')}
+          Speaks {me.languages.join(' and ')} · prefers {me.style} conversations · In-app conversations
         </p>
         {me.role === 'member' && me.preferredTimes && (
           <p className="muted">Preferred times: {me.preferredTimes}</p>
@@ -318,12 +317,8 @@ function EditDialog({
     basics: 'Edit profile',
     about: 'Edit about',
     interests: 'Edit interests',
-    preferences: 'Edit languages & calls',
+    preferences: 'Edit languages & conversations',
   };
-
-  const mediumLabels = Object.values(MEDIUM_LABELS);
-  const labelToMedium = (label: string): Medium =>
-    (Object.entries(MEDIUM_LABELS).find(([, v]) => v === label)?.[0] ?? 'other') as Medium;
 
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -343,7 +338,7 @@ function EditDialog({
             interests,
             languages: languages.split(',').map((s) => s.trim()).filter(Boolean),
             style,
-            mediumLabels: mediums.map((m) => MEDIUM_LABELS[m]),
+            mediumLabels: ['In-app conversation'],
           });
           pushToast('Profile updated', 'ok');
           onClose();
@@ -443,20 +438,9 @@ function EditDialog({
                 <option value="reflective">Reflective</option>
               </select>
             </div>
-            <div className="field">
-              <label>Call methods</label>
-              <ChipGroup
-                ariaLabel="Call methods"
-                options={mediumLabels}
-                selected={mediums.map((m) => MEDIUM_LABELS[m])}
-                onToggle={(label) => {
-                  const medium = labelToMedium(label);
-                  setMediums((cur) =>
-                    cur.includes(medium) ? cur.filter((x) => x !== medium) : [...cur, medium],
-                  );
-                }}
-              />
-            </div>
+            <p className="muted small">
+              All conversations happen through the app, so there are no call methods to manage.
+            </p>
           </>
         )}
         <div className="row between mt-4">

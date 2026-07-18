@@ -11,7 +11,7 @@ import { computeFee, formatPence } from '../domain/commission';
 import { MEDIUM_LABELS, formatDateTime, formatTime } from '../domain/format';
 import { Modal, Stepper } from './ui';
 
-type Step = 'offer' | 'member' | 'slot' | 'medium' | 'review' | 'done';
+type Step = 'offer' | 'member' | 'slot' | 'review' | 'done';
 
 export function BookingWizard({ companion, onClose }: { companion: User; onClose: () => void }) {
   const state = useAppState();
@@ -25,7 +25,8 @@ export function BookingWizard({ companion, onClose }: { companion: User; onClose
     isCoordinator ? (state.session.activeMemberId ?? managed[0]?.id ?? '') : me.id,
   );
   const [slot, setSlot] = useState<Slot | null>(null);
-  const [medium, setMedium] = useState<Medium | null>(null);
+  // All conversations happen through the app; there is no method to choose.
+  const medium: Medium = 'in_app';
   const [usePurchaseId, setUsePurchaseId] = useState<string | undefined>();
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -65,8 +66,8 @@ export function BookingWizard({ companion, onClose }: { companion: User; onClose
   }, [slots]);
 
   const steps: Step[] = isCoordinator
-    ? ['offer', 'member', 'slot', 'medium', 'review']
-    : ['offer', 'slot', 'medium', 'review'];
+    ? ['offer', 'member', 'slot', 'review']
+    : ['offer', 'slot', 'review'];
   const stepIndex = steps.indexOf(step === 'done' ? 'review' : step) + 1;
 
   function next() {
@@ -211,23 +212,6 @@ export function BookingWizard({ companion, onClose }: { companion: User; onClose
             </div>
           ))}
           <WizardNav onBack={back} onNext={next} nextDisabled={!slot} />
-        </div>
-      )}
-
-      {step === 'medium' && (
-        <div className="col">
-          <p className="muted">
-            How should the call happen? Contact details are only shared after the booking is confirmed,
-            and only if both people allow it.
-          </p>
-          <div className="row-wrap">
-            {companion.mediums.map((m) => (
-              <button key={m} className="chip" aria-pressed={medium === m} onClick={() => setMedium(m)}>
-                {MEDIUM_LABELS[m]}
-              </button>
-            ))}
-          </div>
-          <WizardNav onBack={back} onNext={next} nextDisabled={!medium} />
         </div>
       )}
 

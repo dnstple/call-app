@@ -228,17 +228,17 @@ describe('wizard: choosing between offers and package credits', () => {
     expect(Object.keys(call.args).sort()).toEqual(['p_method', 'p_purchase', 'p_starts_at']);
   });
 
-  it('7. only package-supported methods are offered', async () => {
+  it('7. no method choice is offered — every conversation is in-app', async () => {
     renderWizard();
     fireEvent.click(await screen.findByRole('radio', { name: /Four pack/ }));
     fireEvent.click(screen.getByRole('button', { name: /Choose a time/ }));
     const slotButtons = await screen.findAllByRole('button', { name: /^\d\d:\d\d$/ });
     fireEvent.click(slotButtons[0]);
     fireEvent.click(screen.getByRole('button', { name: /Review request/ }));
-    await screen.findByText(/How should the call happen/);
-    expect(screen.getByRole('button', { name: 'Phone call' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'WhatsApp' })).toBeTruthy(); // from the package offer
-    expect(screen.queryByRole('button', { name: 'Zoom' })).toBeNull(); // unsupported never offered
+    expect(screen.queryByText(/How should the call happen/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Phone call' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'WhatsApp' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Zoom' })).toBeNull();
   });
 
   it('10. duplicate submission is prevented', async () => {

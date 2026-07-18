@@ -28,7 +28,6 @@ export default function ExploreSupabase() {
   const [searchInput, setSearchInput] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [language, setLanguage] = useState('');
-  const [method, setMethod] = useState('');
   const [interest, setInterest] = useState('');
   const [acceptingOnly, setAcceptingOnly] = useState(false);
   const [maxPrice, setMaxPrice] = useState(''); // pounds; filters lowest single offer
@@ -50,7 +49,6 @@ export default function ExploreSupabase() {
     () => ({
       searchTerm,
       languages: language ? [language] : undefined,
-      methods: method ? [method] : undefined,
       interestNames: interest ? [interest] : undefined,
       acceptingOnly,
       maxPriceMinor: maxPrice !== '' && Number(maxPrice) > 0 ? Math.round(Number(maxPrice) * 100) : undefined,
@@ -61,7 +59,7 @@ export default function ExploreSupabase() {
       sort,
       pageSize: 12,
     }),
-    [searchTerm, language, method, interest, acceptingOnly, maxPrice, trialOnly, duration, day, daypart, sort],
+    [searchTerm, language, interest, acceptingOnly, maxPrice, trialOnly, duration, day, daypart, sort],
   );
 
   // Debounce typing into a committed search term.
@@ -109,7 +107,6 @@ export default function ExploreSupabase() {
 
   const activeChips: { label: string; clear: () => void }[] = [];
   if (language) activeChips.push({ label: language, clear: () => setLanguage('') });
-  if (method) activeChips.push({ label: MEDIUM_LABELS[method as keyof typeof MEDIUM_LABELS] ?? method, clear: () => setMethod('') });
   if (interest) activeChips.push({ label: interest, clear: () => setInterest('') });
   if (acceptingOnly) activeChips.push({ label: 'Accepting new members', clear: () => setAcceptingOnly(false) });
   if (maxPrice !== '' && Number(maxPrice) > 0) activeChips.push({ label: `Under £${maxPrice}`, clear: () => setMaxPrice('') });
@@ -184,7 +181,6 @@ export default function ExploreSupabase() {
                 onClick={() => {
                   setSearchInput('');
                   setLanguage('');
-                  setMethod('');
                   setInterest('');
                   setAcceptingOnly(false);
                   setMaxPrice('');
@@ -228,15 +224,6 @@ export default function ExploreSupabase() {
                 <option value="">Any</option>
                 {LANGUAGE_OPTIONS.map((l) => (
                   <option key={l} value={l}>{l}</option>
-                ))}
-              </select>
-            </div>
-            <div className="field">
-              <label htmlFor="fs-method">Call method</label>
-              <select id="fs-method" value={method} onChange={(e) => setMethod(e.target.value)}>
-                <option value="">Any</option>
-                {Object.entries(MEDIUM_LABELS).map(([k, v]) => (
-                  <option key={k} value={k}>{v}</option>
                 ))}
               </select>
             </div>
@@ -303,7 +290,6 @@ export default function ExploreSupabase() {
                 className="btn btn-ghost"
                 onClick={() => {
                   setLanguage('');
-                  setMethod('');
                   setInterest('');
                   setAcceptingOnly(false);
                   setMaxPrice('');

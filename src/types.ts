@@ -2,7 +2,7 @@
 
 export type Role = 'member' | 'companion' | 'coordinator';
 
-export type Medium = 'phone' | 'whatsapp' | 'facetime' | 'zoom' | 'meet' | 'other';
+export type Medium = 'in_app' | 'phone' | 'whatsapp' | 'facetime' | 'zoom' | 'meet' | 'other';
 
 export type ConversationStyle = 'relaxed' | 'energetic' | 'reflective';
 

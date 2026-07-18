@@ -538,6 +538,7 @@ img.avatar { background: var(--color-surface-muted); }
   display: flex; gap: var(--space-3); align-items: flex-start; background: var(--color-brand-subtle); color: var(--color-text-primary);
 }
 .banner-danger { background: var(--color-danger-bg); color: var(--color-danger-text); }
+.banner-warning { background: var(--color-warning-bg); color: var(--color-warning-text); }
 .banner-success { background: var(--color-success-bg); color: var(--color-success-text); }
 .banner-info { background: var(--color-info-bg); color: var(--color-info-text); }
 

@@ -206,7 +206,7 @@ export function companionRowToUser(row: DiscoverableCompanionRow): User & { avat
     interests: row.interest_names ?? [],
     languages: row.languages ?? ['English'],
     style: (row.style as User['style']) || 'relaxed',
-    mediums: (row.mediums as Medium[])?.length ? (row.mediums as Medium[]) : ['phone'],
+    mediums: (row.mediums as Medium[])?.length ? (row.mediums as Medium[]) : ['in_app'],
     avatarColor: '#c8643d',
     photoUrl: row.photo_url ?? undefined,
     verification: row.verification_status === 'verified' ? 'verified' : 'pending',

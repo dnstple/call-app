@@ -79,7 +79,7 @@ export function PackageOfferEditor({ profileId, methods }: { profileId: string; 
       conversationCount: count,
       durationMinutes: duration,
       priceMinor,
-      supportedMethods: methods.length > 0 ? methods : ['phone'],
+      supportedMethods: ['in_app'],
     };
     const invalid = validatePackageOfferInput(input);
     if (invalid) {

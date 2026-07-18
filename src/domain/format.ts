@@ -1,12 +1,18 @@
 import type { Medium } from '../types';
 
+/**
+ * Every conversation happens through the app. Legacy medium values may still
+ * exist in stored data, so they all render with the same in-app label rather
+ * than naming external services.
+ */
 export const MEDIUM_LABELS: Record<Medium, string> = {
-  phone: 'Phone call',
-  whatsapp: 'WhatsApp',
-  facetime: 'FaceTime',
-  zoom: 'Zoom',
-  meet: 'Google Meet',
-  other: 'Other',
+  in_app: 'In-app conversation',
+  phone: 'In-app conversation',
+  whatsapp: 'In-app conversation',
+  facetime: 'In-app conversation',
+  zoom: 'In-app conversation',
+  meet: 'In-app conversation',
+  other: 'In-app conversation',
 };
 
 const TZ_LABEL = 'UK time';

@@ -4,6 +4,7 @@ import { Compass, Phone, UserRound } from 'lucide-react';
 import { isSupabaseMode } from '../config/dataMode';
 import type { MyBookingRow } from '../supabase/database.types';
 import { canConfirmCompletion, listMyBookings, splitBookings } from '../repositories/bookingRepository';
+import { listMyPlans } from '../repositories/planRepository';
 import { SupabaseBookingRow } from './Conversations';
 import { isSupabaseConfigured } from '../supabase/client';
 import { PackageDashboard } from '../components/PackageDashboard';
@@ -58,8 +59,24 @@ export default function Home() {
       needsConfirmation: mine.filter((b) => canConfirmCompletion(b)),
     };
   }, [realRows, me.role, me.id]);
+  // Plan requests and active plans count as real activity too: a Companion
+  // with a pending plan request must not see the "profile is ready" filler.
+  const [planActivity, setPlanActivity] = useState(0);
+  useEffect(() => {
+    if (!supabase || !isSupabaseConfigured()) return;
+    let live = true;
+    listMyPlans()
+      .then((plans) => live && setPlanActivity(
+        plans.filter((p) => ['requested', 'active', 'paused'].includes(p.status)).length,
+      ))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [supabase]);
   const hasRealActivity =
-    real.requests.length + real.proposed.length + real.confirmed.length + real.needsConfirmation.length > 0;
+    real.requests.length + real.proposed.length + real.confirmed.length +
+    real.needsConfirmation.length + planActivity > 0;
 
   // The single most important item drives the feature card.
   const needsMyConfirmation = bookings.filter(
@@ -105,9 +122,21 @@ export default function Home() {
           <h1>{greeting}, {me.firstName}</h1>
         </header>
 
-        {/* Stage 2E4B — ongoing companionship comes first. */}
+        {/* Priority order: plan requests → upcoming → things needing attention
+            → profile filler only when there is genuinely nothing else. */}
         {isSupabaseConfigured() && me.role === 'companion' && <CompanionPlanRequests />}
         {isSupabaseConfigured() && me.role !== 'companion' && <ConversationPlans />}
+
+        {me.role === 'companion' && real.confirmed.length > 0 && (
+          <section className="section-tight" aria-label="Upcoming conversations">
+            <h2>Up next</h2>
+            <div className="stack-list">
+              {real.confirmed.map((b) => (
+                <SupabaseBookingRow key={b.id} booking={b} />
+              ))}
+            </div>
+          </section>
+        )}
 
         {real.needsConfirmation.length > 0 && (
           <section className="section-tight" aria-label="Waiting for your confirmation">
@@ -145,7 +174,7 @@ export default function Home() {
           </section>
         )}
 
-        {real.confirmed.length > 0 && (
+        {me.role !== 'companion' && real.confirmed.length > 0 && (
           <section className="section-tight" aria-label="Upcoming conversations">
             <h2>Up next</h2>
             <div className="stack-list">

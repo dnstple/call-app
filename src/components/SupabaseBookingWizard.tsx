@@ -180,7 +180,8 @@ export function SupabaseBookingWizard({
   const [memberId, setMemberId] = useState<string>(bookableMembers[0]?.id ?? '');
   const [packages, setPackages] = useState<UsablePackagePurchase[] | null>(null);
   const [slot, setSlot] = useState<AvailableSlot | null>(null);
-  const [method, setMethod] = useState<string>('');
+  // All conversations happen through the app — one method, never chosen.
+  const method = 'in_app';
   const [rates, setRates] = useState<{ trialPct: number; standardPct: number }>({ trialPct: 0, standardPct: 2 });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -210,17 +211,6 @@ export function SupabaseBookingWizard({
   useEffect(() => {
     getPublicCommissionSettings().then(setRates).catch(() => undefined);
   }, []);
-
-  const supportedMethods = useMemo(() => {
-    if (!selection) return [];
-    return selection.kind === 'offer' ? selection.offer.supported_methods : selection.pack.supportedMethods;
-  }, [selection]);
-
-  useEffect(() => {
-    if (supportedMethods.length > 0 && !supportedMethods.includes(method)) {
-      setMethod(supportedMethods[0]);
-    }
-  }, [supportedMethods, method]);
 
   const fee =
     selection?.kind === 'offer'
@@ -413,22 +403,6 @@ export function SupabaseBookingWizard({
             <span className="muted">
               For {member.first_name} {member.last_name} · with {companion.firstName}
             </span>
-          </div>
-
-          <div>
-            <div className="bold mb-2">How should the call happen?</div>
-            <div className="row wrap" style={{ gap: 8 }}>
-              {supportedMethods.map((m) => (
-                <button
-                  key={m}
-                  className={`btn btn-small ${method === m ? 'btn-primary' : 'btn-secondary'}`}
-                  aria-pressed={method === m}
-                  onClick={() => setMethod(m)}
-                >
-                  {MEDIUM_LABELS[m as keyof typeof MEDIUM_LABELS] ?? m}
-                </button>
-              ))}
-            </div>
           </div>
 
           {selection.kind === 'offer' ? (

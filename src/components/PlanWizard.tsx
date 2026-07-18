@@ -17,7 +17,11 @@ import {
   buildWeeklyGrid,
   createConversationPlan,
   getMemberPlanPreferences,
+  hasRecurringConflict,
+  oneOffConflicts,
+  PLAN_MESSAGE_MAX,
   PlanError,
+  previewPlanSchedule,
   recommendedDuration,
   recommendedFrequency,
   recommendSchedule,
@@ -27,6 +31,7 @@ import {
   type PlanSlotInput,
   type WeeklyGridDay,
 } from '../repositories/planRepository';
+import type { SlotPreviewPayload } from '../supabase/database.types';
 import { getAvailabilityRules, formatMinor, ruleRowToWindow } from '../repositories/availabilityRepository';
 import { RESCHEDULE_OPEN_COPY } from '../repositories/bookingRepository';
 import { browserTimezone, ISO_DAY_NAMES, nextDateForIsoDay, wallTimeToUtc } from '../domain/timezones';
@@ -124,6 +129,11 @@ export function PlanWizard({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  /** Optional personal message for the Companion, saved with the request. */
+  const [message, setMessage] = useState('');
+  /** Server-classified four-week preview of the chosen weekly times. */
+  const [preview, setPreview] = useState<SlotPreviewPayload[] | null>(null);
+  const [previewPending, setPreviewPending] = useState(false);
 
   const durationOptions = useMemo(
     () => [...new Set(offers.filter((o) => o.offer_type === 'single').map((o) => o.duration_minutes))].sort((a, b) => a - b),
@@ -217,6 +227,26 @@ export function PlanWizard({
     setStep(reviewStep);
   }, [grid, prefs, frequency, companion.firstName, duration, reviewStep]);
 
+  // Entering review (or changing the schedule) refreshes the server-side
+  // four-week preview. PostgreSQL stays the final authority on conflicts;
+  // this is the honest early warning.
+  useEffect(() => {
+    if (step !== reviewStep || chosen.length === 0) return;
+    let live = true;
+    setPreviewPending(true);
+    previewPlanSchedule(memberProfileId, companion.id, duration, chosen)
+      .then((p) => live && setPreview(p))
+      .catch(() => live && setPreview(null)) // preview is advisory; the server still refuses conflicts
+      .finally(() => live && setPreviewPending(false));
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, reviewStep, duration, chosen.map((s) => `${s.day}T${s.time}`).join(',')]);
+
+  const recurringBlocked = preview ? hasRecurringConflict(preview) : false;
+  const oneOffs = preview ? oneOffConflicts(preview) : [];
+
   const setSlotAt = (index: number, slot: PlanSlotInput | null) => {
     setSlots((prev) => {
       const next = [...prev];
@@ -238,10 +268,14 @@ export function PlanWizard({
       setError(invalid.message);
       return;
     }
+    if (recurringBlocked) {
+      setError('One of your weekly times is already taken every week. Please choose a different weekly time.');
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
-      await createConversationPlan(memberProfileId, companion.id, input);
+      await createConversationPlan(memberProfileId, companion.id, input, message.trim() || undefined);
       setDone(true);
       onCreated?.();
     } catch (e) {
@@ -310,7 +344,7 @@ export function PlanWizard({
               Continue
             </button>
           ) : (
-            <button className="btn btn-primary" disabled={submitting} onClick={() => void submit()}>
+            <button className="btn btn-primary" disabled={submitting || recurringBlocked} onClick={() => void submit()}>
               {submitting ? 'Sending…' : 'Request plan'}
             </button>
           )}
@@ -441,10 +475,66 @@ export function PlanWizard({
           </div>
 
           <div className="card card-tight col" style={{ gap: 6 }}>
-            <span className="muted">Your first conversations</span>
-            {firstUpcomingDates(chosen, companionTz, viewerTz).map((d) => (
+            <span className="muted">Your first four weeks</span>
+            {previewPending && <span className="faint">Checking these times against both diaries…</span>}
+            {!previewPending && preview && (
+              <div className="col" style={{ gap: 8 }}>
+                {preview.map((slot) => (
+                  <div key={`${slot.day}-${slot.time}`} className="col" style={{ gap: 2 }}>
+                    <span className="bold">{slotLabel({ day: slot.day, time: slot.time.slice(0, 5) }, companionTz, viewerTz)}</span>
+                    {slot.occurrences.map((o) => (
+                      <span key={o.starts_at} className={o.conflict ? 'badge badge-danger' : 'faint'} style={o.conflict ? { alignSelf: 'flex-start' } : undefined}>
+                        {new Intl.DateTimeFormat('en-GB', {
+                          timeZone: viewerTz, weekday: 'short', day: 'numeric', month: 'short',
+                          hour: '2-digit', minute: '2-digit', hour12: false,
+                        }).format(new Date(o.starts_at))}
+                        {o.conflict ? ' — conflicts with an existing conversation' : ''}
+                      </span>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
+            {!previewPending && !preview && firstUpcomingDates(chosen, companionTz, viewerTz).map((d) => (
               <span key={d} className="bold longform">{d}</span>
             ))}
+          </div>
+
+          {recurringBlocked && (
+            <div className="banner banner-danger" role="alert">
+              One of your weekly times is already taken every week across the next four weeks, so this
+              plan can’t go ahead at that time. Go back and choose a different weekly time.
+            </div>
+          )}
+          {!recurringBlocked && oneOffs.length > 0 && (
+            <div className="banner banner-warning" role="alert">
+              {oneOffs.length === 1 ? 'One conversation conflicts' : `${oneOffs.length} conversations conflict`} with
+              something already arranged — the first affected date is shown above. Your weekly plan still
+              works: that occurrence will be skipped without being charged, and you can arrange a
+              replacement time for it from your plan page once {companion.firstName} accepts.
+            </div>
+          )}
+
+          <div className="field col" style={{ gap: 4, marginBottom: 0 }}>
+            <label htmlFor="plan-message" className="bold">
+              Add a message for {companion.firstName}
+            </label>
+            <p className="faint longform" style={{ margin: 0 }}>
+              Introduce yourself or explain what you are hoping for from regular conversations.
+            </p>
+            <textarea
+              id="plan-message"
+              rows={4}
+              maxLength={PLAN_MESSAGE_MAX}
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              placeholder={member && member.first_name !== undefined && auth.profiles.some((p) => p.profile.role === 'coordinator')
+                ? `e.g. “${member.first_name} loves gardening and local history. She would really enjoy having someone to speak with regularly during the week.”`
+                : 'e.g. “I’d love a regular chat about books and local history.”'}
+            />
+            <span className="faint" aria-live="polite" style={{ alignSelf: 'flex-end' }}>
+              {message.length}/{PLAN_MESSAGE_MAX} characters
+            </span>
           </div>
 
           <PrototypePaymentStep

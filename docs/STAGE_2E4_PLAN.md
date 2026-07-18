@@ -207,3 +207,16 @@ applicable), in the established stage format.
    vocabularies exist. Sequencing keeps it short.
 7. **Weekly billing is simulated**: the ledger records rhythm, not money.
    When Stripe arrives, weekly charges attach to the plan row cleanly.
+
+## Corrective stage after 2E4B (migration 0013)
+
+Adds: plan `request_message`/`response_message` (≤1000 chars, trimmed, locked
+after decision), safe plan-scoped Member profile (`get_plan_member_profile`),
+four-week conflict preview (`preview_plan_schedule` — available / one-off /
+recurring), acceptance guard refusing recurring conflicts, prototype profile
+activation + backfill, 18+ DOB enforcement, `in_app` normalisation.
+
+## Future milestone — messaging
+
+Real chat (plan-level threads, unread counts, blocking/reporting, moderated
+access) is deliberately out of scope here: see `docs/CHAT_SCOPE.md`.

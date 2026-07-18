@@ -63,10 +63,8 @@ export default function Explore() {
         [u.firstName, u.headline, u.bio, ...u.interests, ...u.languages].join(' ').toLowerCase().includes(q),
       );
     }
-    if (filters.medium) list = list.filter((u) => u.mediums.includes(filters.medium as Medium));
     if (filters.language) list = list.filter((u) => u.languages.includes(filters.language));
     if (filters.interest) list = list.filter((u) => u.interests.includes(filters.interest));
-    if (filters.verifiedOnly) list = list.filter((u) => u.verification === 'verified_demo');
     if (targetRole === 'companion') {
       if (filters.maxPrice !== '') {
         list = list.filter((u) => {
@@ -124,14 +122,12 @@ export default function Explore() {
 
   // Active filters shown as removable chips.
   const activeChips: { label: string; clear: () => void }[] = [];
-  if (filters.medium) activeChips.push({ label: MEDIUM_LABELS[filters.medium as Medium], clear: () => setFilters((f) => ({ ...f, medium: '' })) });
   if (filters.language) activeChips.push({ label: filters.language, clear: () => setFilters((f) => ({ ...f, language: '' })) });
   if (filters.interest) activeChips.push({ label: filters.interest, clear: () => setFilters((f) => ({ ...f, interest: '' })) });
   if (filters.maxPrice !== '') activeChips.push({ label: `Under £${filters.maxPrice}`, clear: () => setFilters((f) => ({ ...f, maxPrice: '' })) });
   if (filters.minRating !== '') activeChips.push({ label: `${filters.minRating}★ and up`, clear: () => setFilters((f) => ({ ...f, minRating: '' })) });
   if (filters.trialOnly) activeChips.push({ label: 'Trial available', clear: () => setFilters((f) => ({ ...f, trialOnly: false })) });
   if (filters.availableSoon) activeChips.push({ label: 'Available soon', clear: () => setFilters((f) => ({ ...f, availableSoon: false })) });
-  if (filters.verifiedOnly) activeChips.push({ label: 'Verified', clear: () => setFilters((f) => ({ ...f, verifiedOnly: false })) });
 
   const languages = [...new Set(state.users.filter((u) => u.role === targetRole).flatMap((u) => u.languages))];
 
@@ -221,19 +217,6 @@ export default function Explore() {
         <Modal title="Filters" onClose={() => setFiltersOpen(false)}>
           <div className="col" style={{ gap: 4 }}>
             <div className="field">
-              <label htmlFor="f-medium">Call method</label>
-              <select
-                id="f-medium"
-                value={filters.medium}
-                onChange={(e) => setFilters((f) => ({ ...f, medium: e.target.value as Medium | '' }))}
-              >
-                <option value="">Any</option>
-                {Object.entries(MEDIUM_LABELS).map(([k, v]) => (
-                  <option key={k} value={k}>{v}</option>
-                ))}
-              </select>
-            </div>
-            <div className="field">
               <label htmlFor="f-language">Language</label>
               <select
                 id="f-language"
@@ -300,11 +283,6 @@ export default function Explore() {
                 />
               </>
             )}
-            <Switch
-              label="Verified profiles only"
-              checked={filters.verifiedOnly}
-              onChange={(v) => setFilters((f) => ({ ...f, verifiedOnly: v }))}
-            />
             <div className="row between mt-4">
               <button className="btn btn-ghost" onClick={() => setFilters(EMPTY_FILTERS)}>
                 Clear all

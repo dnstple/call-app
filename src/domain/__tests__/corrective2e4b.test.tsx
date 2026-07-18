@@ -399,7 +399,7 @@ describe('recurring schedule stages', () => {
     expect(await screen.findByText('Conversation 1 of 1')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Tuesday 17:00' }));
     fireEvent.click(screen.getByRole('button', { name: /Continue/ }));
-    expect(await screen.findByText(/Review plan|Your first conversations/)).toBeTruthy();
+    expect(await screen.findByText(/Review plan|Your first four weeks/)).toBeTruthy();
   });
 
   it('16. a chosen time survives Back and Continue', async () => {
@@ -440,7 +440,7 @@ describe('recurring schedule stages', () => {
     await screen.findByText('Conversation 1 of 3');
     fireEvent.click(screen.getByRole('button', { name: /Use recommended times for all 3/ }));
 
-    expect(await screen.findByText(/Your first conversations/)).toBeTruthy();
+    expect(await screen.findByText(/Your first four weeks/)).toBeTruthy();
     expect(screen.getByText(/3 regular conversations per week with Daniel/)).toBeTruthy();
     const dialog = screen.getByRole('dialog');
     expect(dialog.textContent).toMatch(/Tuesday/);

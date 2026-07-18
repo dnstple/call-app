@@ -211,7 +211,7 @@ export async function createPackageOffer(
     p_count: input.conversationCount,
     p_duration: input.durationMinutes,
     p_price_minor: input.priceMinor,
-    p_methods: input.supportedMethods ?? ['phone'],
+    p_methods: input.supportedMethods ?? ['in_app'],
   });
   if (error) throw mapPackageError(error);
   return data as PackageOfferRow;

@@ -45,7 +45,7 @@ describe('signup payload builders', () => {
     const p = buildMemberPayload({ ...base, role: 'member', ageRange: '80s' });
     expect(p.p_first_name).toBe('Dorothy');
     expect(p.p_age_band).toBe('80s');
-    expect(p.p_methods).toEqual(['phone', 'whatsapp']);
+    expect(p.p_methods).toEqual(['in_app']); // every conversation happens in the app
     expect(p.p_duration).toBe(45);
     expect(p.p_regular_companion).toBe(true);
     expect(p.p_topics_to_avoid).toEqual(['Politics']);
@@ -88,7 +88,7 @@ describe('signup payload builders', () => {
       'local-news',
       'current-affairs',
     ]);
-    expect(methodsToDb(['FaceTime', 'Another method'])).toEqual(['facetime', 'other']);
+    expect(methodsToDb(['FaceTime', 'Another method'])).toEqual(['in_app']); // legacy labels collapse to in_app
   });
 });
 

@@ -15,18 +15,9 @@ import {
 } from '../repositories/availabilityRepository';
 import { browserTimezone, type WindowInput } from '../domain/timezones';
 
-const MEDIUM_MAP: Record<string, string> = {
-  'Phone call': 'phone',
-  WhatsApp: 'whatsapp',
-  FaceTime: 'facetime',
-  Zoom: 'zoom',
-  'Google Meet': 'meet',
-  'Another method': 'other',
-};
-
-export function methodsToDb(labels: string[]): string[] {
-  const mapped = labels.map((l) => MEDIUM_MAP[l] ?? 'other');
-  return mapped.length > 0 ? [...new Set(mapped)] : ['phone'];
+/** Every conversation happens through the app; the only stored method is 'in_app'. */
+export function methodsToDb(_labels: string[]): string[] {
+  return ['in_app'];
 }
 
 /** Interests persist through the controlled catalogue by slug. Custom

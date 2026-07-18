@@ -54,3 +54,29 @@ they are placeholders. Before real users: real identity checks and Companion app
 moderation queue behind `reports`, documented consent for Coordinator-managed accounts, audit
 trails on booking changes (the `history` array becomes an append-only audit table), and privacy
 policy/terms. The "verified demo" badge wording must never appear in production.
+
+## In-app conversations and the provider boundary
+
+All conversations use the single communication method `in_app` (migration 0012,
+normalised app-wide in the corrective stage after 0013). No user-facing flow
+selects a method. `/calls/:bookingId` (`pages/CallRoom.tsx`) is the seam where a
+real calling provider will plug in later; nothing else in the app may depend on
+how calls are carried.
+
+## One authoritative overlap rule
+
+PostgreSQL is the final authority on double-booking. Every source of bookings —
+test calls, single conversations, generated plan occurrences, proposed new times
+and reschedules — passes through the same conflict check: statuses `requested`,
+`confirmed` and `change_proposed` (current time still reserved) block a slot for
+**both** the Companion and the Member; `cancelled` and `declined` never block.
+GiST exclusion constraints back the rule; `preview_plan_schedule` (0013) gives
+the UI an honest four-week preview (available / one-off conflict / recurring
+conflict) but the database still refuses races.
+
+## Future messaging and Trust & Safety
+
+See `docs/CHAT_SCOPE.md` and `docs/TRUST_AND_SAFETY.md`. Neither is built; both
+documents exist so later stages extend rather than rewrite. Plan consent
+messages (`request_message` / `response_message`, 0013) are locked after the
+decision and are not a chat substitute.

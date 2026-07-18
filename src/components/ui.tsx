@@ -110,25 +110,16 @@ export function statusLabel(status: BookingStatus): string {
 
 /* ---------- Verification (demo wording, quiet) ---------- */
 
+/**
+ * Prototype honesty: profiles are activated automatically, with no real
+ * identity-verification workflow yet. We therefore never display "Verified" —
+ * only a quiet "Profile active" state. When a genuine verification workflow
+ * exists (see docs/TRUST_AND_SAFETY.md), states other than 'verified' can
+ * render differently again.
+ */
 export function VerificationBadge({ state }: { state: VerificationState }) {
-  if (state === 'verified') {
-    return (
-      <span className="row" style={{ gap: 4 }}>
-        <BadgeCheck size={16} aria-hidden="true" style={{ color: 'var(--success)' }} />
-        Verified
-      </span>
-    );
-  }
-  if (state === 'verified_demo') {
-    return (
-      <span className="row faint" style={{ gap: 4 }}>
-        <BadgeCheck size={16} aria-hidden="true" style={{ color: 'var(--success)' }} />
-        Verified (demo)
-      </span>
-    );
-  }
-  if (state === 'pending') return <span className="faint">Verification pending</span>;
-  return <span className="faint">Not verified</span>;
+  void state; // all prototype states mean the same thing: the profile is active
+  return <span className="faint">Profile active</span>;
 }
 
 /* ---------- Modal (bottom sheet on mobile) ---------- */

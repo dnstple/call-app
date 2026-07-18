@@ -91,8 +91,11 @@ export default function SignupWizard() {
       ? [baseSteps[0], 'account', ...baseSteps.slice(1)]
       : baseSteps;
   const step = steps[Math.min(stepIndex, steps.length - 1)];
-  const progressTotal = steps.length - 1; // exclude success
-  const progressCurrent = Math.min(stepIndex + 1, progressTotal);
+  const progressTotal = Math.max(steps.length - 1, 1); // exclude success, never 0
+  const progressCurrent = Math.max(Math.min(stepIndex + 1, progressTotal), 1);
+  // Before a role is chosen the journey length is unknown — showing
+  // "Step 0 of 0" was a bug. The first screen shows no step counter.
+  const showProgress = step !== 'success' && Boolean(data.role);
 
   // Clear query params after initial launch so refresh resumes normally.
   useEffect(() => {
@@ -194,7 +197,7 @@ export default function SignupWizard() {
       case 'languages':
         return data.languages.length > 0 ? null : 'Please choose at least one language.';
       case 'prefs':
-        return data.mediums.length > 0 ? null : 'Please choose at least one way to talk.';
+        return null;
       case 'availability':
         return data.flexible || data.days.length > 0
           ? null
@@ -303,7 +306,7 @@ export default function SignupWizard() {
 
   return (
     <SignupLayout
-      progress={step === 'success' ? undefined : { current: progressCurrent, total: progressTotal }}
+      progress={showProgress ? { current: progressCurrent, total: progressTotal } : undefined}
       menuItems={menuItems}
     >
       <div ref={stepRef} key={stepIndex} className="signup-step-anim">
@@ -317,22 +320,22 @@ export default function SignupWizard() {
           >
             {([
               {
-                role: 'member' as Role,
-                Icon: MessagesSquare,
-                title: 'I would like someone to talk with',
-                text: 'Find a friendly Companion for regular phone or video conversations.',
+                role: 'coordinator' as Role,
+                Icon: Users,
+                title: 'I am arranging conversations for someone else',
+                text: 'Help a family member or someone you care for find regular companionship.',
               },
               {
                 role: 'companion' as Role,
                 Icon: HeartHandshake,
                 title: 'I would like to be a Companion',
-                text: 'Offer friendly conversations and earn money for your time.',
+                text: 'Offer friendly, regular conversations through the app.',
               },
               {
-                role: 'coordinator' as Role,
-                Icon: Users,
-                title: 'I am arranging conversations for someone else',
-                text: 'Help a family member or someone you care for find regular companionship.',
+                role: 'member' as Role,
+                Icon: MessagesSquare,
+                title: 'I would like someone to talk with',
+                text: 'Find a friendly Companion for regular conversations through the app.',
               },
             ]).map(({ role, Icon, title, text }) => (
               <button
@@ -580,21 +583,22 @@ export default function SignupWizard() {
                 {FLUENCY_OPTIONS.map((f) => <option key={f} value={f}>{f}</option>)}
               </select>
             </div>
-            <div>
-              <h4>Conversation methods you support</h4>
-              <ChipGroup ariaLabel="Conversation methods" options={MEDIUM_OPTIONS} selected={data.mediums} onToggle={(v) => toggle('mediums', v)} />
-            </div>
+            <p className="muted small" style={{ margin: 0 }}>
+              All conversations take place through the app — there is nothing else to set up.
+            </p>
           </SignupStep>
         )}
 
         {step === 'prefs' && (
           <SignupStep
-            title={data.role === 'coordinator' ? `How would ${memberName} prefer to talk?` : 'How would you prefer to talk?'}
+            title={data.role === 'coordinator' ? `${memberName}'s conversation preferences` : 'Your conversation preferences'}
             onBack={back}
             onNext={next}
             error={error}
           >
-            <ChipGroup ariaLabel="Conversation methods" options={MEDIUM_OPTIONS} selected={data.mediums} onToggle={(v) => toggle('mediums', v)} />
+            <p className="muted small" style={{ marginTop: 0 }}>
+              Conversations happen as friendly in-app calls — no phone numbers or other apps needed.
+            </p>
             <div className="mt-4">
               <h4>{data.role === 'coordinator' ? 'Preferred conversation length' : 'How long would you prefer conversations to be?'}</h4>
               <div className="row-wrap">
@@ -1023,7 +1027,7 @@ function ReviewStep({
             <ReviewRow label="Age" value={data.memberAgeRange || data.memberDob} />
             <ReviewRow label="Town" value={data.memberTown} />
             <ReviewRow label="Interests" value={interests.join(', ')} />
-            <ReviewRow label="Talks by" value={data.mediums.join(', ')} />
+            <ReviewRow label="Conversations" value="In-app conversation" />
             <ReviewRow label="Length" value={`${data.durationMins} minutes`} />
             <ReviewRow label="Availability" value={availability} />
             <ReviewRow label="Personality fit" value={data.personality} />
@@ -1064,7 +1068,7 @@ function ReviewStep({
             <ReviewRow label="Interests" value={interests.join(', ')} />
           </ReviewSection>
           <ReviewSection title="Conversations" onEdit={() => jumpTo(role === 'companion' ? 'languages' : 'prefs')}>
-            <ReviewRow label="Methods" value={data.mediums.join(', ')} />
+            <ReviewRow label="Conversations" value="In-app conversation" />
             {role === 'member' && <ReviewRow label="Length" value={`${data.durationMins} minutes`} />}
             {role === 'companion' && <ReviewRow label="Languages" value={`${data.languages.join(', ')} (${data.fluency})`} />}
           </ReviewSection>

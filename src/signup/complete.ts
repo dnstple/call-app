@@ -4,19 +4,11 @@ import { newId, setState, pushToast } from '../state/store';
 import { addCompletedSignup } from './storage';
 import type { SignupData } from './types';
 
-const MEDIUM_MAP: Record<string, Medium> = {
-  'Phone call': 'phone',
-  WhatsApp: 'whatsapp',
-  FaceTime: 'facetime',
-  Zoom: 'zoom',
-  'Another method': 'other',
-};
-
 const AVATAR_COLORS = ['#4c6ef5', '#0ca678', '#e8590c', '#9c36b5', '#1971c2', '#c2255c'];
 
-function mediums(labels: string[]): Medium[] {
-  const list = labels.map((l) => MEDIUM_MAP[l] ?? 'other');
-  return list.length > 0 ? [...new Set(list)] : ['phone'];
+/** Every conversation happens through the app; the only stored method is 'in_app'. */
+function mediums(_labels: string[]): Medium[] {
+  return ['in_app'];
 }
 
 function ageBandFromDob(dob: string): string {

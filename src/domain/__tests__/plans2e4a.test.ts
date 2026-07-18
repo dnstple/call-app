@@ -77,6 +77,7 @@ function plan(partial: Partial<ConversationPlanRow> = {}): ConversationPlanRow {
     communication_method: 'phone', per_conversation_price_minor: 900,
     weekly_price_minor: 2700, currency: 'GBP', status: 'active',
     allowance_purchase_id: 'pp1', pending_change: null, generated_until: null,
+    request_message: null, response_message: null,
     paused_at: null, ended_at: null, end_reason: null, created_at: '', updated_at: '',
     ...partial,
   };
@@ -187,7 +188,7 @@ describe('browser contract: no prices, credits, buyers or statuses', () => {
     });
     expect(mock.rpcCalls[0].fn).toBe('create_conversation_plan');
     expect(Object.keys(mock.rpcCalls[0].args).sort()).toEqual([
-      'p_companion', 'p_duration', 'p_frequency', 'p_member', 'p_method', 'p_slots',
+      'p_companion', 'p_duration', 'p_frequency', 'p_member', 'p_message', 'p_method', 'p_slots',
     ]);
     const raw = JSON.stringify(mock.rpcCalls[0].args).toLowerCase();
     for (const banned of ['price', 'credit', 'buyer', 'account', 'status', 'allowance', 'purchase', 'payment']) {
@@ -204,7 +205,7 @@ describe('browser contract: no prices, credits, buyers or statuses', () => {
 
   it('the companion accepts once and occurrences generate', async () => {
     const result = await acceptPlan('plan1');
-    expect(mock.rpcCalls[0]).toEqual({ fn: 'accept_plan', args: { p_plan: 'plan1' } });
+    expect(mock.rpcCalls[0]).toEqual({ fn: 'accept_plan', args: { p_plan: 'plan1', p_message: null } });
     expect(result).toEqual({
       planId: 'plan1', generated: 12, skipped: 0, retried: 0, generatedUntil: '2026-09-29T00:00:00Z',
     });

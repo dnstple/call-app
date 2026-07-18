@@ -436,6 +436,9 @@ export type ConversationPlanRow = {
   allowance_purchase_id: string;
   /** Material change awaiting Companion re-acceptance. */
   pending_change: PlanPendingChange | null;
+  /** Consent messages (NOT chat): requester → companion, and the reply. */
+  request_message: string | null;
+  response_message: string | null;
   generated_until: string | null;
   paused_at: string | null;
   ended_at: string | null;
@@ -500,6 +503,40 @@ export type PlanActionResultPayload = {
 };
 
 export type TrialState = 'available' | 'pending' | 'used';
+
+/** Safe Member profile for the plan's Companion — explicit fields only. */
+export type PlanMemberProfilePayload = {
+  plan_id: string;
+  first_name: string;
+  last_initial: string | null;
+  avatar_path: string | null;
+  avatar_color: string;
+  age_band: string;
+  region: string;
+  bio: string;
+  languages: string[];
+  interests: string[];
+  preferred_duration_minutes: number | null;
+  preferred_days: string[];
+  preferred_dayparts: string[];
+  conversation_style: string[];
+  accessibility_needs: string | null;
+  /** True when the Member requested the plan themselves. */
+  requested_by_is_member: boolean;
+  /** Coordinator first name, or the Member's own first name. Never a surname. */
+  requested_by_first_name: string;
+  requested_at: string;
+};
+
+export type SlotPreviewClassification = 'available' | 'one_off_conflict' | 'recurring_conflict';
+
+export type SlotPreviewPayload = {
+  day: number;
+  time: string;
+  occurrences: { starts_at: string; conflict: boolean }[];
+  conflicts: number;
+  classification: SlotPreviewClassification;
+};
 
 type Table<R> = {
   Row: R;
@@ -680,11 +717,29 @@ export type Database = {
           p_duration: number;
           p_method: string;
           p_slots: { day: number; time: string }[];
+          p_message?: string | null;
         };
         Returns: ConversationPlanRow;
       };
       extend_plan_bookings: { Args: { p_plan: string }; Returns: PlanGenerationResultPayload };
-      accept_plan: { Args: { p_plan: string }; Returns: PlanGenerationResultPayload };
+      accept_plan: {
+        Args: { p_plan: string; p_message?: string | null };
+        Returns: PlanGenerationResultPayload;
+      };
+      update_plan_request_message: {
+        Args: { p_plan: string; p_message: string | null };
+        Returns: ConversationPlanRow;
+      };
+      get_plan_member_profile: { Args: { p_plan: string }; Returns: PlanMemberProfilePayload };
+      preview_plan_schedule: {
+        Args: {
+          p_member: string;
+          p_companion: string;
+          p_duration: number;
+          p_slots: { day: number; time: string }[];
+        };
+        Returns: SlotPreviewPayload[];
+      };
       decline_plan: { Args: { p_plan: string; p_reason?: string | null }; Returns: ConversationPlanRow };
       pause_plan: { Args: { p_plan: string }; Returns: PlanActionResultPayload };
       resume_plan: { Args: { p_plan: string }; Returns: PlanGenerationResultPayload };

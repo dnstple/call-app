@@ -118,6 +118,7 @@ function planRow(partial: Partial<ConversationPlanRow> = {}): ConversationPlanRo
     communication_method: 'phone', per_conversation_price_minor: 900, weekly_price_minor: 2700,
     currency: 'GBP', status: 'active', allowance_purchase_id: 'pp1', pending_change: null,
     generated_until: null, paused_at: null, ended_at: null, end_reason: null,
+    request_message: null, response_message: null,
     created_at: '', updated_at: '',
     ...partial,
   };
@@ -284,25 +285,28 @@ describe('Home plans', () => {
     mock.tables.plan_schedule_slots = [
       { id: 's1', plan_id: 'plan1', iso_day: 2, local_time: '18:00:00', timezone: 'Europe/London', created_at: '' },
     ];
-    render(<CompanionPlanRequests />);
+    render(<MemoryRouter><CompanionPlanRequests /></MemoryRouter>);
     expect(await screen.findByText('Requests for regular conversations')).toBeTruthy();
-    expect(screen.getByText(/you’ll confirm this once/)).toBeTruthy();
+    expect(screen.getByText(/In-app conversations/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /Accept plan/ }));
+    // Accepting opens an optional reply box; confirming sends the RPC once.
+    fireEvent.click(await screen.findByRole('button', { name: /Confirm and accept/ }));
     await waitFor(() => expect(mock.rpcCalls.some((c) => c.fn === 'accept_plan')).toBe(true));
-    expect(mock.rpcCalls.find((c) => c.fn === 'accept_plan')!.args).toEqual({ p_plan: 'plan1' });
+    expect(mock.rpcCalls.find((c) => c.fn === 'accept_plan')!.args).toEqual({ p_plan: 'plan1', p_message: null });
   });
 
   it('the companion can decline a plan', async () => {
     signInAs([profileRow('companion', 'c1', 'Daniel')]);
     mock.tables.conversation_plans = [planRow({ status: 'requested' })];
-    render(<CompanionPlanRequests />);
-    fireEvent.click(await screen.findByRole('button', { name: /Decline/ }));
+    render(<MemoryRouter><CompanionPlanRequests /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button', { name: /^Decline$/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /Confirm decline/ }));
     await waitFor(() => expect(mock.rpcCalls.some((c) => c.fn === 'decline_plan')).toBe(true));
   });
 
   it('members never see the companion’s accept controls', async () => {
     mock.tables.conversation_plans = [planRow({ status: 'requested' })];
-    const { container } = render(<CompanionPlanRequests />); // signed in as the member
+    const { container } = render(<MemoryRouter><CompanionPlanRequests /></MemoryRouter>); // signed in as the member
     await waitFor(() => expect(container.textContent).toBe(''));
   });
 

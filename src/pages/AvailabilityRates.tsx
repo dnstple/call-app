@@ -539,7 +539,7 @@ function OffersEditor({
                 disabled={busy}
                 onClick={() =>
                   run(
-                    () => repo.createOffer(profileId, 'trial', { durationMinutes: 30, priceMinor: repo.poundsToMinor(trialPrice), supportedMethods: methods }),
+                    () => repo.createOffer(profileId, 'trial', { durationMinutes: 30, priceMinor: repo.poundsToMinor(trialPrice), supportedMethods: ['in_app'] }),
                     'Trial offer created',
                   )
                 }
@@ -595,7 +595,7 @@ function OffersEditor({
             disabled={busy}
             onClick={() =>
               run(
-                () => repo.createOffer(profileId, 'single', { durationMinutes: newDuration, priceMinor: repo.poundsToMinor(newPrice), supportedMethods: methods }),
+                () => repo.createOffer(profileId, 'single', { durationMinutes: newDuration, priceMinor: repo.poundsToMinor(newPrice), supportedMethods: ['in_app'] }),
                 'Offer added',
               )
             }

@@ -76,7 +76,7 @@ export const EMPTY_SIGNUP: SignupData = {
   photoDataUrl: '',
   headline: '', bio: '',
   interests: [], customInterest: '',
-  mediums: [], durationMins: 30,
+  mediums: ['In-app conversation'], durationMins: 30,
   days: [], dayparts: [], flexible: false, specificTimes: '',
   languages: ['English'], fluency: 'Fluent',
   prefAgeRange: '', prefLanguages: '', sameCompanion: '', topicsAvoid: '', comfortNotes: '', personality: '',
@@ -95,14 +95,18 @@ export const INTEREST_OPTIONS = [
   'Current affairs', 'General conversation',
 ];
 
-export const MEDIUM_OPTIONS = ['Phone call', 'WhatsApp', 'FaceTime', 'Zoom', 'Another method'];
+/** All conversations happen through the app — there is a single method. */
+export const MEDIUM_OPTIONS = ['In-app conversation'];
 
 export const DAY_OPTIONS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 export const DAYPART_OPTIONS = ['Morning', 'Afternoon', 'Evening'];
 
 export const DURATION_OPTIONS = [15, 30, 45, 60];
 
-export const AGE_RANGE_OPTIONS = ['50s', '60s', '70s', '80s', '90s', 'Prefer not to say'];
+/** Adults of every age are welcome (18+). Broad ranges protect privacy. */
+export const AGE_RANGE_OPTIONS = [
+  '18–29', '30s', '40s', '50s', '60s', '70s', '80s', '90s', '100+', 'Prefer not to say',
+];
 
 export const LANGUAGE_OPTIONS = ['English', 'Welsh', 'Punjabi', 'Urdu', 'Hindi', 'Gujarati', 'Italian', 'Polish', 'Yoruba', 'French'];
 

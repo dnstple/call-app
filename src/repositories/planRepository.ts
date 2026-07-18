@@ -18,7 +18,9 @@ import type {
   PlanActionResultPayload,
   PlanGenerationLogRow,
   PlanGenerationResultPayload,
+  PlanMemberProfilePayload,
   PlanScheduleSlotRow,
+  SlotPreviewPayload,
   TrialState,
 } from '../supabase/database.types';
 import { RepoError, type RepoErrorKind } from './profileRepository';
@@ -65,6 +67,8 @@ export type PlanErrorCode =
   | 'price_unavailable'
   | 'no_pending_change'
   | 'trial_used'
+  | 'recurring_conflict'
+  | 'message_locked'
   | 'network_failure'
   | 'unknown';
 
@@ -102,6 +106,15 @@ export function mapPlanError(e: any): PlanError {
   }
   if (msg.includes('no_pending_change')) {
     return new PlanError('There’s no plan change waiting.', 'conflict', 'no_pending_change');
+  }
+  if (msg.includes('recurring_conflict')) {
+    return new PlanError('One of those weekly times is no longer available every week — please choose a different regular time.', 'conflict', 'recurring_conflict');
+  }
+  if (msg.includes('message_locked')) {
+    return new PlanError('The message can no longer be changed.', 'conflict', 'message_locked');
+  }
+  if (msg.includes('under_18')) {
+    return new PlanError('You must be at least 18 to use this service.', 'validation', 'unauthorised');
   }
   if (msg.includes('trial_used')) {
     return new PlanError('The test call with this companion has already happened.', 'conflict', 'trial_used');
@@ -326,13 +339,21 @@ export function recommendSchedule(
  * validates every weekly time against their availability, and creates the
  * hidden allowance account atomically. Sends no prices or credits.
  */
+export const PLAN_MESSAGE_MAX = 1000;
+
 export async function createConversationPlan(
   memberProfileId: string,
   companionProfileId: string,
   input: PlanInput,
+  /** Optional consent message for the Companion (plain text, ≤1000). */
+  requestMessage?: string,
 ): Promise<ConversationPlanRow> {
   const invalid = validatePlanInput(input);
   if (invalid) throw invalid;
+  const message = requestMessage?.trim() ?? '';
+  if (message.length > PLAN_MESSAGE_MAX) {
+    throw new PlanError('Please keep your message under 1,000 characters.', 'validation', 'invalid_slots');
+  }
   const { data, error } = await getSupabaseClient().rpc('create_conversation_plan', {
     p_member: memberProfileId,
     p_companion: companionProfileId,
@@ -340,9 +361,71 @@ export async function createConversationPlan(
     p_duration: input.durationMinutes,
     p_method: input.communicationMethod,
     p_slots: input.slots,
+    p_message: message || null,
   });
   if (error) throw mapPlanError(error);
   return data as ConversationPlanRow;
+}
+
+/** Editable by the requester only while the plan is still requested. */
+export async function updatePlanRequestMessage(
+  planId: string,
+  message: string | null,
+): Promise<ConversationPlanRow> {
+  const { data, error } = await getSupabaseClient().rpc('update_plan_request_message', {
+    p_plan: planId,
+    p_message: message,
+  });
+  if (error) throw mapPlanError(error);
+  return data as ConversationPlanRow;
+}
+
+/**
+ * Safe Member profile for the plan's Companion. Explicit fields only —
+ * never surname, date of birth, email, phone, address or auth ids.
+ */
+export async function getPlanMemberProfile(planId: string): Promise<PlanMemberProfilePayload> {
+  const { data, error } = await getSupabaseClient().rpc('get_plan_member_profile', {
+    p_plan: planId,
+  });
+  if (error) throw mapPlanError(error);
+  return data as PlanMemberProfilePayload;
+}
+
+/**
+ * Four-week conflict preview for proposed weekly times. The server
+ * classifies each slot with the SAME overlap rule the exclusion
+ * constraints enforce: available / one_off_conflict / recurring_conflict.
+ */
+export async function previewPlanSchedule(
+  memberProfileId: string,
+  companionProfileId: string,
+  durationMinutes: number,
+  slots: PlanSlotInput[],
+): Promise<SlotPreviewPayload[]> {
+  const { data, error } = await getSupabaseClient().rpc('preview_plan_schedule', {
+    p_member: memberProfileId,
+    p_companion: companionProfileId,
+    p_duration: durationMinutes,
+    p_slots: slots,
+  });
+  if (error) throw mapPlanError(error);
+  return (data ?? []) as SlotPreviewPayload[];
+}
+
+/** A recurring conflict blocks the plan; one-offs are surfaced, not fatal. */
+export function hasRecurringConflict(preview: SlotPreviewPayload[]): boolean {
+  return preview.some((s) => s.classification === 'recurring_conflict');
+}
+
+export function oneOffConflicts(preview: SlotPreviewPayload[]): { day: number; time: string; startsAt: string }[] {
+  return preview
+    .filter((s) => s.classification === 'one_off_conflict')
+    .flatMap((s) =>
+      s.occurrences
+        .filter((o) => o.conflict)
+        .map((o) => ({ day: s.day, time: s.time, startsAt: o.starts_at })),
+    );
 }
 
 function toGenerationResult(p: PlanGenerationResultPayload): PlanGenerationResult {
@@ -355,9 +438,13 @@ function toGenerationResult(p: PlanGenerationResultPayload): PlanGenerationResul
   };
 }
 
-/** Companion accepts the plan once — occurrences generate immediately. */
-export async function acceptPlan(planId: string): Promise<PlanGenerationResult> {
-  const { data, error } = await getSupabaseClient().rpc('accept_plan', { p_plan: planId });
+/** Companion accepts the plan once — occurrences generate immediately.
+ *  Refused server-side if a weekly time has become a recurring conflict. */
+export async function acceptPlan(planId: string, message?: string): Promise<PlanGenerationResult> {
+  const { data, error } = await getSupabaseClient().rpc('accept_plan', {
+    p_plan: planId,
+    p_message: message?.trim() || null,
+  });
   if (error) throw mapPlanError(error);
   return toGenerationResult(data as PlanGenerationResultPayload);
 }
