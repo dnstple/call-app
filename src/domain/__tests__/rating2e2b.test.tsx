@@ -73,7 +73,7 @@ function accessRow(profileId: string, canBook: boolean): ProfileAccessRow {
   return {
     id: `a-${profileId}`, account_id: 'auth-user-1', profile_id: profileId,
     access_role: 'owner', can_edit: true, can_book: canBook,
-    can_view_private_details: true, can_receive_notifications: true,
+    can_view_private_details: true, can_receive_notifications: true, can_message: false,
     consent_status: 'not_required', created_at: '', updated_at: '',
   };
 }

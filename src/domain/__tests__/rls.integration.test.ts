@@ -1578,3 +1578,309 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
     expect(foreign.error).not.toBeNull();
   });
 });
+
+/* ============================================================
+ * Stage 2F2A: messaging foundations. Requires migration 0019.
+ * Fresh admin-created users (no emails), RUN_ID isolation, and the same
+ * afterAll cleanup as every other block.
+ * ============================================================ */
+describe.skipIf(!enabled)('2F2A messaging RLS (requires live Supabase)', () => {
+  let m: SupabaseClient; // member owner
+  let n: SupabaseClient; // companion owner
+  let o: SupabaseClient; // unrelated member owner
+  let p: SupabaseClient; // coordinator with an owner-less managed member
+  let mAccountId: string;
+  let nAccountId: string;
+  let pAccountId: string;
+  let mMemberId: string;
+  let nCompanionId: string;
+  let oMemberId: string;
+  let pManagedMemberId: string;
+  let conversationId: string;
+
+  beforeAll(async () => {
+    m = await signedInClient(`rls-m-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    n = await signedInClient(`rls-n-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    o = await signedInClient(`rls-o-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    p = await signedInClient(`rls-p-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    mAccountId = (await m.auth.getUser()).data.user!.id;
+    nAccountId = (await n.auth.getUser()).data.user!.id;
+    pAccountId = (await p.auth.getUser()).data.user!.id;
+
+    const mm = await m.rpc('complete_member_signup', { p_first_name: 'MsgMember' });
+    expect(mm.error).toBeNull();
+    mMemberId = mm.data.id;
+    const om = await o.rpc('complete_member_signup', { p_first_name: 'MsgOutsider' });
+    expect(om.error).toBeNull();
+    oMemberId = om.data.id;
+
+    const nc = await n.rpc('complete_companion_signup', {
+      p_first_name: 'MsgCompanion',
+      p_date_of_birth: '1990-01-01',
+    });
+    expect(nc.error).toBeNull();
+    nCompanionId = nc.data.id;
+    const rules = [1, 2, 3, 4, 5, 6, 7].map((day) => ({ day, start: '09:00', end: '18:00' }));
+    const av = await n.rpc('replace_companion_availability', {
+      p_profile: nCompanionId, p_timezone: 'Europe/London', p_rules: rules,
+    });
+    expect(av.error).toBeNull();
+    const trial = await n.from('conversation_offers').insert({
+      companion_profile_id: nCompanionId, offer_type: 'trial',
+      duration_minutes: 30, price_minor: 500, supported_methods: ['in_app'],
+    }).select('id').single();
+    expect(trial.error).toBeNull();
+
+    const pc = await p.rpc('complete_coordinator_signup', {
+      p_first_name: 'MsgCoordinator',
+      p_consent_confirmed: true,
+      p_member_first_name: 'MsgManagedMum',
+    });
+    expect(pc.error).toBeNull();
+    pManagedMemberId = (pc.data as { member_profile_id: string }).member_profile_id;
+
+    // Eligibility: one CONFIRMED test call for (mMember, nCompanion) and one
+    // for (pManagedMember, nCompanion).
+    const from = new Date().toISOString();
+    const to = new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString();
+    const s = await m.rpc('get_available_slots', {
+      p_companion: nCompanionId, p_offer: trial.data!.id, p_from: from, p_to: to,
+    });
+    expect(s.error).toBeNull();
+    const slots2f2 = (s.data ?? []) as { slot_start: string }[];
+    expect(slots2f2.length).toBeGreaterThan(4);
+
+    const b1 = await m.rpc('create_booking_request', {
+      p_member: mMemberId, p_offer: trial.data!.id,
+      p_starts_at: slots2f2[0].slot_start, p_method: 'in_app',
+    });
+    expect(b1.error).toBeNull();
+    expect((await n.rpc('accept_booking', { p_booking: b1.data.id })).error).toBeNull();
+
+    const single = await n.from('conversation_offers').insert({
+      companion_profile_id: nCompanionId, offer_type: 'single',
+      duration_minutes: 30, price_minor: 1500, supported_methods: ['in_app'],
+    }).select('id').single();
+    expect(single.error).toBeNull();
+    const b2 = await p.rpc('create_booking_request', {
+      p_member: pManagedMemberId, p_offer: single.data!.id,
+      p_starts_at: slots2f2[4].slot_start, p_method: 'in_app',
+    });
+    expect(b2.error).toBeNull();
+    expect((await n.rpc('accept_booking', { p_booking: b2.data.id })).error).toBeNull();
+  }, 120_000);
+
+  it('1+2. both participants get the SAME single thread, even concurrently', async () => {
+    const [c1, c2] = await Promise.all([
+      m.rpc('get_or_create_conversation', { p_member: mMemberId, p_companion: nCompanionId }),
+      n.rpc('get_or_create_conversation', { p_member: mMemberId, p_companion: nCompanionId }),
+    ]);
+    expect(c1.error).toBeNull();
+    expect(c2.error).toBeNull();
+    expect(c1.data.id).toBe(c2.data.id);
+    conversationId = c1.data.id;
+
+    const list = await m.from('conversations')
+      .select('id')
+      .eq('member_profile_id', mMemberId)
+      .eq('companion_profile_id', nCompanionId);
+    expect(list.data).toHaveLength(1); // duplicate creation is impossible
+  });
+
+  it('3. a pair with no qualifying booking or plan cannot open a thread', async () => {
+    const refused = await o.rpc('get_or_create_conversation', {
+      p_member: oMemberId, p_companion: nCompanionId,
+    });
+    expect(refused.error).not.toBeNull();
+    expect(String(refused.error!.message)).toContain('not_eligible');
+  });
+
+  it('7+8+9. valid send works; sender/timestamps are server-derived; bad bodies rejected', async () => {
+    const sent = await m.rpc('send_message', {
+      p_conversation: conversationId, p_body: '  Hello Daniel!  ',
+    });
+    expect(sent.error).toBeNull();
+    expect(sent.data.kind).toBe('user');
+    expect(sent.data.body).toBe('Hello Daniel!'); // server-trimmed
+    expect(sent.data.sender_account_id).toBe(mAccountId); // derived, not supplied
+    expect(sent.data.created_at).toBeTruthy(); // server clock
+
+    const reply = await n.rpc('send_message', {
+      p_conversation: conversationId, p_body: 'Hello Mary!',
+    });
+    expect(reply.error).toBeNull();
+    expect(reply.data.sender_account_id).toBe(nAccountId);
+
+    const empty = await m.rpc('send_message', { p_conversation: conversationId, p_body: '   ' });
+    expect(String(empty.error!.message)).toContain('empty_message');
+    const long = await m.rpc('send_message', {
+      p_conversation: conversationId, p_body: 'x'.repeat(2001),
+    });
+    expect(String(long.error!.message)).toContain('message_too_long');
+  });
+
+  it('4+5+6. participants read; outsiders and anonymous get nothing', async () => {
+    const mine = await m.from('messages').select('id, body').eq('conversation_id', conversationId);
+    expect(mine.error).toBeNull();
+    expect(mine.data!.length).toBeGreaterThanOrEqual(2);
+    const theirs = await n.from('conversations').select('id').eq('id', conversationId);
+    expect(theirs.data).toHaveLength(1);
+
+    // Unrelated account: no discovery, no reads, no sends, no existence leak.
+    const oConv = await o.from('conversations').select('id').eq('id', conversationId);
+    expect(oConv.data ?? []).toHaveLength(0);
+    const oMsgs = await o.from('messages').select('id').eq('conversation_id', conversationId);
+    expect(oMsgs.data ?? []).toHaveLength(0);
+    const oSend = await o.rpc('send_message', { p_conversation: conversationId, p_body: 'hi' });
+    expect(String(oSend.error!.message)).toContain('Conversation not found');
+    const oJoin = await o.rpc('get_or_create_conversation', {
+      p_member: mMemberId, p_companion: nCompanionId,
+    });
+    expect(String(oJoin.error!.message)).toContain('Conversation not found');
+
+    // Anonymous: nothing at all.
+    const anon = client();
+    const anonRead = await anon.from('messages').select('id').eq('conversation_id', conversationId);
+    expect(anonRead.data ?? []).toHaveLength(0);
+    const anonSend = await anon.rpc('send_message', { p_conversation: conversationId, p_body: 'hi' });
+    expect(anonSend.error).not.toBeNull();
+  });
+
+  it('10+11. no forged system messages; direct writes are all denied', async () => {
+    const forgedSystem = await m.from('messages').insert({
+      conversation_id: conversationId, kind: 'system', system_event: 'fake_event',
+    });
+    expect(forgedSystem.error).not.toBeNull();
+    const forgedUser = await m.from('messages').insert({
+      conversation_id: conversationId, kind: 'user', body: 'forged',
+      sender_account_id: nAccountId, // impersonation attempt
+    });
+    expect(forgedUser.error).not.toBeNull();
+
+    const existing = await m.from('messages').select('id').eq('conversation_id', conversationId).limit(1);
+    const targetId = existing.data![0].id;
+    const update = await m.from('messages').update({ body: 'edited' }).eq('id', targetId).select();
+    expect(update.data ?? []).toHaveLength(0); // append-only
+    const del = await m.from('messages').delete().eq('id', targetId).select();
+    expect(del.data ?? []).toHaveLength(0);
+    const still = await m.from('messages').select('id').eq('id', targetId);
+    expect(still.data).toHaveLength(1);
+
+    const convDelete = await m.from('conversations').delete().eq('id', conversationId).select();
+    expect(convDelete.data ?? []).toHaveLength(0); // one user cannot erase shared history
+  });
+
+  it('12+13. unread counts move correctly and read state is private per account', async () => {
+    // n has messages from m unread (sent above).
+    const nList = await n.rpc('list_conversations', {});
+    expect(nList.error).toBeNull();
+    const nSummary = (nList.data as { id: string; unread_count: number }[])
+      .find((c) => c.id === conversationId)!;
+    expect(nSummary.unread_count).toBeGreaterThanOrEqual(1);
+
+    const marked = await n.rpc('mark_conversation_read', { p_conversation: conversationId });
+    expect(marked.error).toBeNull();
+    expect(marked.data.account_id).toBe(nAccountId); // own row only
+    const nAfter = await n.rpc('list_conversations', {});
+    expect((nAfter.data as { id: string; unread_count: number }[])
+      .find((c) => c.id === conversationId)!.unread_count).toBe(0);
+
+    // n's marking did NOT touch m's read state: m still has n's reply unread.
+    const mList = await m.rpc('list_conversations', {});
+    expect((mList.data as { id: string; unread_count: number }[])
+      .find((c) => c.id === conversationId)!.unread_count).toBeGreaterThanOrEqual(1);
+
+    // Read-state rows are invisible across accounts and unwritable directly.
+    const nRows = await n.from('conversation_read_state').select('account_id')
+      .eq('conversation_id', conversationId);
+    expect(nRows.data!.every((r) => r.account_id === nAccountId)).toBe(true);
+    const forge = await n.from('conversation_read_state').update({ last_read_at: new Date().toISOString() })
+      .eq('conversation_id', conversationId).eq('account_id', mAccountId).select();
+    expect(forge.data ?? []).toHaveLength(0);
+  });
+
+  it('14. Coordinator access exists only with the explicit can_message permission', async () => {
+    // Eligible pair (confirmed booking exists), approved coordinator access —
+    // but WITHOUT can_message the conversation stays closed.
+    const before = await p.rpc('get_or_create_conversation', {
+      p_member: pManagedMemberId, p_companion: nCompanionId,
+    });
+    expect(String(before.error!.message)).toContain('Conversation not found');
+
+    // An unrelated account cannot grant themselves the permission.
+    const foreignGrant = await o.rpc('set_messaging_permission', {
+      p_profile: pManagedMemberId, p_account: (await o.auth.getUser()).data.user!.id, p_allowed: true,
+    });
+    expect(foreignGrant.error).not.toBeNull();
+
+    // The consent-confirmed coordinator of an owner-less member may enable
+    // their own messaging — an explicit, recorded action.
+    const grant = await p.rpc('set_messaging_permission', {
+      p_profile: pManagedMemberId, p_account: pAccountId, p_allowed: true,
+    });
+    expect(grant.error).toBeNull();
+    expect(grant.data.can_message).toBe(true);
+
+    const opened = await p.rpc('get_or_create_conversation', {
+      p_member: pManagedMemberId, p_companion: nCompanionId,
+    });
+    expect(opened.error).toBeNull();
+    // The Coordinator is NEVER recorded as a participant: the thread names
+    // the Member and Companion profiles, and messages carry the sending
+    // ACCOUNT — the coordinator's own — as a distinct field.
+    expect(opened.data.member_profile_id).toBe(pManagedMemberId);
+    expect(opened.data.companion_profile_id).toBe(nCompanionId);
+    const sent = await p.rpc('send_message', { p_conversation: opened.data.id, p_body: 'Hello from Mum’s coordinator' });
+    expect(sent.error).toBeNull();
+    expect(sent.data.sender_account_id).toBe(pAccountId);
+
+    // Revoking closes it again.
+    const revoke = await p.rpc('set_messaging_permission', {
+      p_profile: pManagedMemberId, p_account: pAccountId, p_allowed: false,
+    });
+    expect(revoke.error).toBeNull();
+    const closed = await p.from('conversations').select('id').eq('id', opened.data.id);
+    expect(closed.data ?? []).toHaveLength(0);
+  });
+
+  it('15+16. pagination is stable and the rate limit is server-enforced', async () => {
+    // Build volume without tripping either account's 30/minute budget yet.
+    for (let i = 0; i < 14; i += 1) {
+      const r = await m.rpc('send_message', { p_conversation: conversationId, p_body: `m-${i}` });
+      expect(r.error).toBeNull();
+    }
+    for (let i = 0; i < 18; i += 1) {
+      const r = await n.rpc('send_message', { p_conversation: conversationId, p_body: `n-${i}` });
+      expect(r.error).toBeNull();
+    }
+
+    // Cursor pagination: newest 30, then strictly older, no repeats.
+    const page1 = await m.from('messages').select('id, created_at')
+      .eq('conversation_id', conversationId)
+      .order('created_at', { ascending: false }).order('id', { ascending: false })
+      .limit(30);
+    expect(page1.data).toHaveLength(30);
+    const oldest = page1.data![page1.data!.length - 1];
+    const page2 = await m.from('messages').select('id, created_at')
+      .eq('conversation_id', conversationId)
+      .or(`created_at.lt.${oldest.created_at},and(created_at.eq.${oldest.created_at},id.lt.${oldest.id})`)
+      .order('created_at', { ascending: false }).order('id', { ascending: false })
+      .limit(30);
+    expect(page2.error).toBeNull();
+    expect(page2.data!.length).toBeGreaterThanOrEqual(4);
+    const ids = new Set([...page1.data!, ...page2.data!].map((r) => r.id));
+    expect(ids.size).toBe(page1.data!.length + page2.data!.length); // stable, no overlap
+
+    // Rate limit: m keeps sending until the server says stop (m has already
+    // sent ~16 this minute; the cap is 30 per rolling minute).
+    let limited = false;
+    for (let i = 0; i < 25 && !limited; i += 1) {
+      const r = await m.rpc('send_message', { p_conversation: conversationId, p_body: `burst-${i}` });
+      if (r.error) {
+        expect(String(r.error.message)).toContain('rate_limited');
+        limited = true;
+      }
+    }
+    expect(limited).toBe(true);
+  }, 120_000);
+});

@@ -64,7 +64,7 @@ function access(profileId: string, accessRole: ProfileAccessRow['access_role']):
     can_edit: true,
     can_book: true,
     can_view_private_details: true,
-    can_receive_notifications: true,
+    can_receive_notifications: true, can_message: false,
     consent_status: accessRole === 'coordinator' ? 'confirmed' : 'not_required',
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),

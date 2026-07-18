@@ -69,9 +69,53 @@ export type ProfileAccessRow = {
   can_book: boolean;
   can_view_private_details: boolean;
   can_receive_notifications: boolean;
+  /** 2F2A: explicit messaging permission for non-owner access. Default false. */
+  can_message: boolean;
   consent_status: AccessConsent;
   created_at: string;
   updated_at: string;
+};
+
+/* ---------------- Stage 2F2A: messaging ---------------- */
+
+export type MessageKind = 'user' | 'system';
+
+export type ConversationRow = {
+  id: string;
+  member_profile_id: string;
+  companion_profile_id: string;
+  created_at: string;
+  last_message_at: string | null;
+};
+
+export type MessageRow = {
+  id: string;
+  conversation_id: string;
+  sender_account_id: string | null;
+  kind: MessageKind;
+  body: string | null;
+  system_event: string | null;
+  system_payload: Record<string, unknown> | null;
+  deleted_at: string | null;
+  created_at: string;
+};
+
+export type ConversationReadStateRow = {
+  conversation_id: string;
+  account_id: string;
+  last_read_at: string;
+  updated_at: string;
+};
+
+export type ConversationSummaryPayload = {
+  id: string;
+  member_profile_id: string;
+  companion_profile_id: string;
+  member_name: string;
+  companion_name: string;
+  created_at: string;
+  last_message_at: string | null;
+  unread_count: number;
 };
 
 export type PrivateDetailsRow = {
@@ -573,6 +617,9 @@ export type Database = {
       package_purchases: Table<PackagePurchaseRow>;
       package_credit_ledger: Table<PackageLedgerRow>;
       conversation_plans: Table<ConversationPlanRow>;
+      conversations: Table<ConversationRow>;
+      messages: Table<MessageRow>;
+      conversation_read_state: Table<ConversationReadStateRow>;
       plan_schedule_slots: Table<PlanScheduleSlotRow>;
       plan_generation_log: Table<PlanGenerationLogRow>;
       platform_config: Table<{
@@ -775,6 +822,20 @@ export type Database = {
         Returns: ConversationPlanRow;
       };
       get_trial_state: { Args: { p_member: string; p_companion: string }; Returns: TrialState };
+      get_or_create_conversation: {
+        Args: { p_member: string; p_companion: string };
+        Returns: ConversationRow;
+      };
+      send_message: { Args: { p_conversation: string; p_body: string }; Returns: MessageRow };
+      mark_conversation_read: {
+        Args: { p_conversation: string; p_up_to?: string };
+        Returns: ConversationReadStateRow;
+      };
+      list_conversations: { Args: Record<string, never>; Returns: ConversationSummaryPayload[] };
+      set_messaging_permission: {
+        Args: { p_profile: string; p_account: string; p_allowed: boolean };
+        Returns: ProfileAccessRow;
+      };
       get_companion_public_reviews: {
         Args: { p_profile: string; p_limit?: number; p_offset?: number };
         Returns: PublicReviewRow[];
