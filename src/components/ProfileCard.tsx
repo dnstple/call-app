@@ -8,7 +8,7 @@ import { toggleFavourite } from '../state/actions';
 import { overallRating } from '../domain/ratings';
 import { generateSlots, nextAvailableLabel } from '../domain/availability';
 import { formatPence } from '../domain/commission';
-import { ProfilePhoto, RatingStars, VerificationBadge } from './ui';
+import { ProfilePhoto, RatingStars } from './ui';
 import { CardRatingSummary } from './CompanionReviews';
 import { isSupabaseMode } from '../config/dataMode';
 import { getMarketMeta } from '../repositories/profileRepository';
@@ -63,7 +63,16 @@ function CardPhoto({ user }: { user: User }) {
   return <img src={user.photoUrl} alt="" loading="lazy" onError={() => setFailed(true)} />;
 }
 
-/** Marketplace profile card — photo-led, one primary action. */
+/**
+ * Redesign Phase F — marketplace profile card.
+ *
+ * The WHOLE card opens the profile: pointer click anywhere, Enter/Space
+ * from the keyboard, a visible focus ring. The favourite control is a
+ * real nested button that stops propagation, so it never navigates. The
+ * "View profile" button stays as a visual affordance only. No status
+ * badges ("Profile active"/"New") — active discovery already implies an
+ * approved, complete profile with a real photo.
+ */
 export function ProfileCard({ user }: { user: User }) {
   const state = useAppState();
   const navigate = useNavigate();
@@ -74,9 +83,25 @@ export function ProfileCard({ user }: { user: User }) {
       ? generateSlots(state.availabilityRules, state.availabilityExceptions, state.bookings, user.id, 30, new Date(), 14)
       : [];
   const interests = user.interests.slice(0, 3);
+  const bioExcerpt = user.bio && user.bio.trim().length > 0
+    ? user.bio.trim().slice(0, 110) + (user.bio.trim().length > 110 ? '…' : '')
+    : null;
+  const open = () => navigate(`/people/${user.id}`);
 
   return (
-    <article className="card profile-card">
+    <article
+      className="card profile-card profile-card-clickable"
+      role="link"
+      tabIndex={0}
+      aria-label={`View ${user.firstName}'s profile`}
+      onClick={open}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          open();
+        }
+      }}
+    >
       <div className="photo-wrap">
         <CardPhoto user={user} />
         <FavButton user={user} className="fav" />
@@ -92,11 +117,14 @@ export function ProfileCard({ user }: { user: User }) {
             <RatingStars average={rating.average} reviewerCount={rating.reviewerCount} compact />
           )}
         </div>
-        <VerificationBadge state={user.verification} />
         <p className="muted" style={{ margin: 0 }}>{user.headline}</p>
-        <p className="faint simple-hide" style={{ margin: 0 }}>
-          Enjoys {interests.map((i) => i.toLowerCase()).join(', ')}
-        </p>
+        {user.region && <p className="faint small" style={{ margin: 0 }}>{user.region}</p>}
+        {bioExcerpt && <p className="faint small simple-hide" style={{ margin: 0 }}>{bioExcerpt}</p>}
+        {interests.length > 0 && (
+          <p className="faint small simple-hide" style={{ margin: 0 }}>
+            Enjoys {interests.map((i) => i.toLowerCase()).join(', ')}
+          </p>
+        )}
         {user.role === 'companion' && !isSupabaseMode() && (
           <p className="small" style={{ margin: 0 }}>
             {trial && (
@@ -122,16 +150,16 @@ export function ProfileCard({ user }: { user: User }) {
               {meta.minSinglePriceMinor !== null && (
                 <span className="muted">from {formatMinor(meta.minSinglePriceMinor)}</span>
               )}
-              {meta.acceptingNewMembers === false && (
-                <span className="muted"> · not taking new members</span>
-              )}
+              {meta.acceptingNewMembers === false
+                ? <span className="muted"> · not taking new members</span>
+                : <span style={{ color: 'var(--color-success-text)' }}> · accepting new members</span>}
             </p>
           );
         })()}
         <div style={{ marginTop: 'auto', paddingTop: 8 }}>
-          <button className="btn btn-secondary btn-small btn-block" onClick={() => navigate(`/people/${user.id}`)}>
+          <span className="btn btn-secondary btn-small btn-block" aria-hidden="true">
             View profile
-          </button>
+          </span>
         </div>
       </div>
     </article>

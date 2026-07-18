@@ -55,6 +55,22 @@ export async function prepareSession(bookingId: string): Promise<PreparedSession
   return data as PreparedSession;
 }
 
+/** Redesign Phase C — guest exchange: invitation token + access code in,
+ * restricted short-lived room token out. Anonymous by design; the server
+ * enforces hashing, expiry, revocation and attempt rate limits. */
+export async function prepareGuestSession(
+  invitationToken: string,
+  accessCode: string,
+): Promise<PreparedSession & { state: PreparedSession['state'] | 'invalid' | 'wrong_code' | 'rate_limited' }> {
+  const { data, error } = await getSupabaseClient().functions.invoke('livekit-token', {
+    body: { invitationToken, accessCode },
+  });
+  if (error || !data) {
+    throw new Error('We couldn’t check your invitation. Please try again.');
+  }
+  return data as PreparedSession & { state: 'invalid' };
+}
+
 /* ---------------- devices ---------------- */
 
 export interface MediaDeviceOption {

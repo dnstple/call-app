@@ -294,7 +294,45 @@ describe.skipIf(!enabled)('2C1 RLS + Storage (requires live Supabase)', () => {
     });
     expect(companion.error).toBeNull();
     dCompanionId = companion.data.id;
-  }, 45_000);
+
+    // 0026: discovery now requires a COMPLETE profile. Build the complete
+    // fixture the canonical way — upload a real avatar object, reference
+    // exactly that path, meet every server-validated field, then activate
+    // through the RPC (never by editing protected discoverability fields).
+    const png = new Blob([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])], { type: 'image/png' });
+    const avatarPath = `${dCompanionId}/${crypto.randomUUID()}.png`;
+    const avatarUp = await d.storage.from('profile-avatars').upload(avatarPath, png, { contentType: 'image/png' });
+    expect(avatarUp.error).toBeNull();
+    const completeBio =
+      'I have spent thirty years hosting a village book club and I love a proper unhurried '
+      + 'chat about novels, gardens, grandchildren and the shipping forecast. Warm, patient '
+      + 'and a very good listener.';
+    expect(completeBio.trim().length).toBeGreaterThanOrEqual(120);
+    const detail = await d.from('profiles')
+      .update({ avatar_path: avatarPath, bio: completeBio })
+      .eq('id', dCompanionId)
+      .select('id');
+    expect(detail.error).toBeNull();
+    expect(detail.data).toHaveLength(1);
+    const setupAvail = await d.rpc('replace_companion_availability', {
+      p_profile: dCompanionId,
+      p_timezone: 'Europe/London',
+      p_rules: [{ day: 3, start: '10:00', end: '16:00' }],
+    });
+    expect(setupAvail.error).toBeNull();
+    // A 45-minute offer so the 2C2 offer tests' 30-minute inserts and the
+    // min-price assertion (1000) are unaffected.
+    const setupOffer = await d.from('conversation_offers').insert({
+      companion_profile_id: dCompanionId,
+      offer_type: 'single',
+      duration_minutes: 45,
+      price_minor: 2000,
+      supported_methods: ['in_app'],
+    });
+    expect(setupOffer.error).toBeNull();
+    const activated = await d.rpc('activate_companion_profile', { p_profile: dCompanionId });
+    expect(activated.error).toBeNull();
+  }, 60_000);
 
   it('signup persisted role + private data readable only by the owner', async () => {
     const own = await c.from('profile_private_details').select('email, phone').eq('profile_id', cMemberId);
@@ -328,6 +366,38 @@ describe.skipIf(!enabled)('2C1 RLS + Storage (requires live Supabase)', () => {
     expect(hidden.data ?? []).toHaveLength(0);
     await d.from('profiles').update({ visibility: 'public' }).eq('id', dCompanionId); // restore
   });
+
+  it('0026: an incomplete companion stays hidden and cannot self-activate', async () => {
+    // Dedicated INCOMPLETE fixture: no photo, thin bio, no availability,
+    // no offers. Completeness rules must hold regardless of test order.
+    const inc = await signedInClient(`rls-inc-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    const made = await inc.rpc('complete_companion_signup', {
+      p_first_name: 'IncompleteIvy',
+      p_date_of_birth: '1992-03-01',
+      p_headline: 'Hi',
+      p_bio: 'Too short',
+    });
+    expect(made.error).toBeNull();
+    const incId = made.data.id as string;
+
+    // Never discoverable (no photo, bio < 120 chars).
+    const view = await c.from('discoverable_companions').select('id').eq('id', incId);
+    expect(view.data ?? []).toHaveLength(0);
+
+    // The canonical activation RPC refuses while incomplete.
+    const refused = await inc.rpc('activate_companion_profile', { p_profile: incId });
+    expect(refused.error).not.toBeNull();
+    expect(String(refused.error!.message)).toContain('incomplete_profile');
+
+    // And the browser cannot escalate discoverability fields directly:
+    // hide, then try to flip public again — the guard trigger blocks it.
+    await inc.from('profiles').update({ visibility: 'private' }).eq('id', incId);
+    const escalate = await inc.from('profiles').update({ visibility: 'public' }).eq('id', incId);
+    expect(escalate.error).not.toBeNull();
+    expect(String(escalate.error!.message)).toContain('incomplete_profile');
+    const still = await c.from('discoverable_companions').select('id').eq('id', incId);
+    expect(still.data ?? []).toHaveLength(0);
+  }, 45_000);
 
   it('companion cannot self-verify in companion_profiles', async () => {
     await d.from('companion_profiles').update({ verification_status: 'verified' }).eq('profile_id', dCompanionId);
@@ -1690,11 +1760,17 @@ describe.skipIf(!enabled)('2F2A messaging RLS (requires live Supabase)', () => {
   });
 
   it('3. a pair with no qualifying booking or plan cannot open a thread', async () => {
+    // 0027: the GENERIC call never creates an introduction — it refuses,
+    // and no conversation row (not even an empty pending one) appears.
     const refused = await o.rpc('get_or_create_conversation', {
       p_member: oMemberId, p_companion: nCompanionId,
     });
     expect(refused.error).not.toBeNull();
     expect(String(refused.error!.message)).toContain('not_eligible');
+    const rows = await o.from('conversations').select('id')
+      .eq('member_profile_id', oMemberId)
+      .eq('companion_profile_id', nCompanionId);
+    expect(rows.data ?? []).toHaveLength(0);
   });
 
   it('0021/0022: the eligible coordinator pair was materialised WITHOUT any manual call', async () => {
@@ -1979,4 +2055,225 @@ describe.skipIf(!enabled)('2F2A messaging RLS (requires live Supabase)', () => {
     }
     expect(limited).toBe(true);
   }, 120_000);
+});
+
+/* ============================================================
+ * 0025/0027 — pre-booking message requests (live).
+ *
+ * Isolated pairs (q↔r, q2↔r) so no earlier fixture can pollute the
+ * eligibility assertions and none of these threads touch the o↔n pair
+ * that the strict-eligibility tests above rely on. Same Admin-created
+ * users, RUN_ID isolation and afterAll cleanup as every other block.
+ * ============================================================ */
+describe.skipIf(!enabled)('0025/0027 message requests (requires live Supabase)', () => {
+  let q: SupabaseClient;  // member owner sending an introduction
+  let q2: SupabaseClient; // second member owner (concurrency + activation)
+  let r: SupabaseClient;  // companion receiving introductions
+  let qAccountId: string;
+  let qMemberId: string;
+  let q2MemberId: string;
+  let rCompanionId: string;
+  let rOfferId: string;
+  let introConversationId: string;
+
+  beforeAll(async () => {
+    q = await signedInClient(`rls-q-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    q2 = await signedInClient(`rls-q2-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    r = await signedInClient(`rls-r-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    qAccountId = (await q.auth.getUser()).data.user!.id;
+
+    const qm = await q.rpc('complete_member_signup', { p_first_name: 'ReqMember' });
+    expect(qm.error).toBeNull();
+    qMemberId = qm.data.id;
+    const q2m = await q2.rpc('complete_member_signup', { p_first_name: 'ReqMemberTwo' });
+    expect(q2m.error).toBeNull();
+    q2MemberId = q2m.data.id;
+
+    const rc = await r.rpc('complete_companion_signup', {
+      p_first_name: 'ReqCompanion', p_date_of_birth: '1988-04-04',
+    });
+    expect(rc.error).toBeNull();
+    rCompanionId = rc.data.id;
+    const av = await r.rpc('replace_companion_availability', {
+      p_profile: rCompanionId, p_timezone: 'Europe/London',
+      p_rules: [1, 2, 3, 4, 5, 6, 7].map((day) => ({ day, start: '09:00', end: '18:00' })),
+    });
+    expect(av.error).toBeNull();
+    const offer = await r.from('conversation_offers').insert({
+      companion_profile_id: rCompanionId, offer_type: 'single',
+      duration_minutes: 30, price_minor: 1200, supported_methods: ['in_app'],
+    }).select('id').single();
+    expect(offer.error).toBeNull();
+    rOfferId = offer.data!.id;
+  }, 120_000);
+
+  it('no booking, plan or introduction → no conversation at all', async () => {
+    const rows = await q.from('conversations').select('id')
+      .eq('member_profile_id', qMemberId).eq('companion_profile_id', rCompanionId);
+    expect(rows.data ?? []).toHaveLength(0);
+    const refused = await q.rpc('get_or_create_conversation', {
+      p_member: qMemberId, p_companion: rCompanionId,
+    });
+    expect(String(refused.error!.message)).toContain('not_eligible');
+  });
+
+  it('a requested (never accepted) plan creates no conversation', async () => {
+    const plan = await q.rpc('create_conversation_plan', {
+      p_member: qMemberId, p_companion: rCompanionId, p_frequency: 1,
+      p_duration: 30, p_method: 'in_app',
+      p_slots: [{ day: 2, time: '10:00' }],
+    });
+    expect(plan.error).toBeNull(); // status: requested — nobody accepted
+    const rows = await q.from('conversations').select('id')
+      .eq('member_profile_id', qMemberId).eq('companion_profile_id', rCompanionId);
+    expect(rows.data ?? []).toHaveLength(0);
+  });
+
+  it('ONE introduction atomically creates ONE pending thread with ONE message', async () => {
+    const sent = await q.rpc('send_message_request', {
+      p_member: qMemberId, p_companion: rCompanionId,
+      p_body: '  Hello — I would love to arrange conversations for my mother.  ',
+    });
+    expect(sent.error).toBeNull();
+    expect(sent.data.kind).toBe('user');
+    expect(sent.data.body).toBe('Hello — I would love to arrange conversations for my mother.');
+    expect(sent.data.sender_account_id).toBe(qAccountId); // the Coordinator, never the Member
+
+    const rows = await q.from('conversations')
+      .select('id, status, requested_by_account_id')
+      .eq('member_profile_id', qMemberId).eq('companion_profile_id', rCompanionId);
+    expect(rows.data).toHaveLength(1);
+    expect(rows.data![0].status).toBe('request_pending');
+    expect(rows.data![0].requested_by_account_id).toBe(qAccountId);
+    introConversationId = rows.data![0].id;
+
+    const msgs = await q.from('messages').select('id, kind')
+      .eq('conversation_id', introConversationId).eq('kind', 'user');
+    expect(msgs.data).toHaveLength(1);
+  });
+
+  it('no second message while pending — through either write path', async () => {
+    const again = await q.rpc('send_message_request', {
+      p_member: qMemberId, p_companion: rCompanionId, p_body: 'One more thing…',
+    });
+    expect(String(again.error!.message)).toContain('request_pending');
+    const direct = await q.rpc('send_message', {
+      p_conversation: introConversationId, p_body: 'One more thing…',
+    });
+    expect(String(direct.error!.message)).toContain('request_pending');
+    const msgs = await q.from('messages').select('id')
+      .eq('conversation_id', introConversationId).eq('kind', 'user');
+    expect(msgs.data).toHaveLength(1); // STILL exactly one
+  });
+
+  it('the Companion sees the request; unrelated and anonymous users see nothing', async () => {
+    const forCompanion = await r.from('conversations').select('id, status').eq('id', introConversationId);
+    expect(forCompanion.data).toHaveLength(1);
+    expect(forCompanion.data![0].status).toBe('request_pending');
+
+    const unrelated = await q2.from('conversations').select('id').eq('id', introConversationId);
+    expect(unrelated.data ?? []).toHaveLength(0);
+    const anon = client();
+    const anonRead = await anon.from('conversations').select('id').eq('id', introConversationId);
+    expect(anonRead.data ?? []).toHaveLength(0);
+    const anonRespond = await anon.rpc('respond_to_message_request', {
+      p_conversation: introConversationId, p_accept: true,
+    });
+    expect(anonRespond.error).not.toBeNull();
+  });
+
+  it('pending: Companion cannot reply by message; decline closes; only the Companion reopens', async () => {
+    const replyWhilePending = await r.rpc('send_message', {
+      p_conversation: introConversationId, p_body: 'Hello!',
+    });
+    expect(String(replyWhilePending.error!.message)).toContain('request_pending');
+
+    // The requester cannot forge acceptance.
+    const forged = await q.rpc('respond_to_message_request', {
+      p_conversation: introConversationId, p_accept: true,
+    });
+    expect(forged.error).not.toBeNull();
+
+    // Decline → permanent for the requester.
+    const declined = await r.rpc('respond_to_message_request', {
+      p_conversation: introConversationId, p_accept: false,
+    });
+    expect(declined.error).toBeNull();
+    expect(declined.data.status).toBe('declined');
+    const afterDecline = await q.rpc('send_message', {
+      p_conversation: introConversationId, p_body: 'Please?',
+    });
+    expect(String(afterDecline.error!.message)).toContain('request_declined');
+    const reRequest = await q.rpc('send_message_request', {
+      p_member: qMemberId, p_companion: rCompanionId, p_body: 'Please reconsider?',
+    });
+    expect(String(reRequest.error!.message)).toContain('request_declined');
+
+    // Only the Companion reopens — accepting from declined unlocks chat.
+    const reopened = await r.rpc('respond_to_message_request', {
+      p_conversation: introConversationId, p_accept: true,
+    });
+    expect(reopened.error).toBeNull();
+    expect(reopened.data.status).toBe('active');
+    const companionReply = await r.rpc('send_message', {
+      p_conversation: introConversationId, p_body: 'Happy to chat after all!',
+    });
+    expect(companionReply.error).toBeNull();
+    const requesterReply = await q.rpc('send_message', {
+      p_conversation: introConversationId, p_body: 'Wonderful, thank you.',
+    });
+    expect(requesterReply.error).toBeNull();
+  });
+
+  it('concurrent introductions cannot duplicate the thread or the intro message', async () => {
+    const [r1, r2] = await Promise.all([
+      q2.rpc('send_message_request', {
+        p_member: q2MemberId, p_companion: rCompanionId, p_body: 'Introduction A',
+      }),
+      q2.rpc('send_message_request', {
+        p_member: q2MemberId, p_companion: rCompanionId, p_body: 'Introduction B',
+      }),
+    ]);
+    const successes = [r1, r2].filter((x) => x.error === null);
+    expect(successes.length).toBeGreaterThanOrEqual(1); // one wins…
+    const rows = await q2.from('conversations').select('id, status')
+      .eq('member_profile_id', q2MemberId).eq('companion_profile_id', rCompanionId);
+    expect(rows.data).toHaveLength(1); // …but the pair NEVER duplicates
+    const msgs = await q2.from('messages').select('id')
+      .eq('conversation_id', rows.data![0].id).eq('kind', 'user');
+    expect(msgs.data).toHaveLength(1); // and only one intro exists
+  });
+
+  it('a qualifying confirmed booking activates the SAME thread (never a duplicate)', async () => {
+    const before = await q2.from('conversations').select('id, status')
+      .eq('member_profile_id', q2MemberId).eq('companion_profile_id', rCompanionId);
+    expect(before.data).toHaveLength(1);
+    const threadId = before.data![0].id;
+    expect(before.data![0].status).toBe('request_pending');
+
+    const from = new Date().toISOString();
+    const to = new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString();
+    const s = await q2.rpc('get_available_slots', {
+      p_companion: rCompanionId, p_offer: rOfferId, p_from: from, p_to: to,
+    });
+    expect(s.error).toBeNull();
+    const slot = (s.data ?? [])[2] as { slot_start: string };
+    const booking = await q2.rpc('create_booking_request', {
+      p_member: q2MemberId, p_offer: rOfferId,
+      p_starts_at: slot.slot_start, p_method: 'in_app',
+    });
+    expect(booking.error).toBeNull();
+
+    // Requested alone changes nothing…
+    const pending = await q2.from('conversations').select('status').eq('id', threadId).single();
+    expect(pending.data!.status).toBe('request_pending');
+
+    // …confirmation activates the SAME thread.
+    expect((await r.rpc('accept_booking', { p_booking: booking.data.id })).error).toBeNull();
+    const after = await q2.from('conversations').select('id, status')
+      .eq('member_profile_id', q2MemberId).eq('companion_profile_id', rCompanionId);
+    expect(after.data).toHaveLength(1);
+    expect(after.data![0].id).toBe(threadId);
+    expect(after.data![0].status).toBe('active');
+  }, 60_000);
 });

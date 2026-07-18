@@ -39,6 +39,7 @@ import { MessageActionButton } from '../messaging/MessageAction';
 import { IN_APP_CALL_EXPLAINER, IN_APP_CALL_LABEL } from '../components/FlowModal';
 import { RatingPanel } from '../components/RatingPanel';
 import { BookingCreditPanel } from '../components/BookingCreditBadge';
+import { GuestInvitationPanel } from '../components/GuestInvitationPanel';
 
 const STATUS_BADGE: Record<string, string> = {
   requested: 'badge-neutral',
@@ -241,6 +242,14 @@ export default function BookingDetail() {
           )}
         </div>
       </section>
+
+      {/* Redesign Phase C: guest access for the managed Member. Only the
+          member-side (Coordinator) sees this; the server re-checks. */}
+      {booking.status === 'confirmed' && !ended && isRequesterSide && !isCompanionSide && (
+        <section className="section-tight">
+          <GuestInvitationPanel bookingId={booking.id} memberName={booking.member_first_name} />
+        </section>
+      )}
 
       {/* Pending alternative time */}
       {proposal && booking.status === 'change_proposed' && (

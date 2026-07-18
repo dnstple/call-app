@@ -24,6 +24,7 @@ import { MEDIUM_LABELS } from '../domain/format';
 import { formatPence } from '../domain/commission';
 import { ChipGroup, Modal, ProfilePhoto, RatingStars, VerificationBadge } from '../components/ui';
 import { roleLabel } from '../components/Shell';
+import { CompanionCompletionChecklist } from '../components/CompletionChecklist';
 import type { Medium, User } from '../types';
 
 const INTEREST_OPTIONS = [
@@ -210,6 +211,13 @@ export default function MyProfile() {
               );
             })}
           </div>
+        </section>
+      )}
+
+      {/* Redesign Phase F: server-checked completion checklist. */}
+      {supabase && editable && me.role === 'companion' && (
+        <section className="section-tight">
+          <CompanionCompletionChecklist profileId={me.id} />
         </section>
       )}
 

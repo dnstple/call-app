@@ -17,6 +17,7 @@ import {
   visibleBookings,
 } from '../state/selectors';
 import { ConversationRow, NextConversationCard } from '../components/ConversationRow';
+import { ManagingContext } from '../components/ManagingContext';
 import { ProfileCardCompact } from '../components/ProfileCard';
 import { EmptyState, ProfilePhoto, RatingStars } from '../components/ui';
 import { remainingCredits } from '../domain/packages';
@@ -24,6 +25,37 @@ import { formatDate } from '../domain/format';
 import { overallRating } from '../domain/ratings';
 import { formatPence } from '../domain/commission';
 import type { Booking } from '../types';
+
+/** Live countdown to the next conversation (minute granularity). */
+function Countdown({ to }: { to: string }) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => tick((n) => n + 1), 60_000);
+    return () => clearInterval(t);
+  }, []);
+  const mins = Math.max(0, Math.round((new Date(to).getTime() - Date.now()) / 60_000));
+  if (mins === 0) return <strong>starting now</strong>;
+  if (mins < 60) return <strong>in {mins} min{mins === 1 ? '' : 's'}</strong>;
+  const hours = Math.floor(mins / 60);
+  if (hours < 48) return <strong>in {hours} hour{hours === 1 ? '' : 's'}</strong>;
+  return <strong>in {Math.round(hours / 24)} days</strong>;
+}
+
+/** Companion Home: compact availability snapshot — no giant cards. */
+function CompanionAvailabilitySnapshot() {
+  return (
+    <section className="section-tight" aria-label="Your availability">
+      <div className="row between wrap" style={{ gap: 8 }}>
+        <h2 className="section-label">Availability</h2>
+        <Link to="/availability" className="btn btn-ghost btn-small">Edit availability</Link>
+      </div>
+      <p className="muted small" style={{ margin: 0 }}>
+        Your weekly hours, notice period and whether you’re accepting new Members
+        are managed in Availability &amp; rates.
+      </p>
+    </section>
+  );
+}
 
 export default function Home() {
   const state = useAppState();
@@ -112,142 +144,152 @@ export default function Home() {
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
 
-  // Supabase mode: a genuinely fresh account — intentional empty states only.
-  // No seeded conversations, packages, ratings, notifications or favourites.
+  // Supabase mode — Redesign Phase E: an ACTION dashboard, not a second
+  // Conversations page. One needs-attention section, one next-conversation
+  // hero, a compact glance, role-specific support. Full schedule lives in
+  // /conversations.
   if (isSupabaseMode()) {
+    const attention = [
+      ...real.needsConfirmation.map((b) => ({ b, why: 'Confirm how it went' })),
+      ...real.proposed.map((b) => ({ b, why: 'A new time was proposed' })),
+      ...real.requests.map((b) => ({
+        b,
+        why: me.role === 'companion' ? 'New booking request' : 'Awaiting the Companion’s reply',
+      })),
+    ];
+    const nextUp = [...real.confirmed]
+      .filter((b) => new Date(b.ends_at).getTime() > Date.now())
+      .sort((a, b) => a.starts_at.localeCompare(b.starts_at));
+    const hero = nextUp[0];
+    const glance = nextUp.slice(hero ? 1 : 0, (hero ? 1 : 0) + 3);
+
     return (
       <div>
         <header className="page-header">
           <h1>{greeting}, {me.firstName}</h1>
+          <ManagingContext />
         </header>
 
-        {/* 2E4D priority order.
-            Member/Coordinator: next conversation → schedule issues →
-            pending requests → active plans → Explore when nothing exists.
-            Companion: plan requests → schedule issues → upcoming →
-            profile reminder only when genuinely nothing is happening. */}
-        {isSupabaseConfigured() && me.role === 'companion' && <CompanionPlanRequests />}
-
-        {me.role !== 'companion' && real.confirmed.length > 0 && (
-          <section className="section-tight" aria-label="Upcoming conversations">
-            <h2>Up next</h2>
+        {/* Needs attention — hidden entirely when nothing needs action. */}
+        {attention.length > 0 && (
+          <section className="section-tight" aria-label="Needs attention">
+            <h2 className="section-label">Needs attention</h2>
             <div className="stack-list">
-              {real.confirmed.map((b) => (
-                <SupabaseBookingRow key={b.id} booking={b} />
-              ))}
-            </div>
-          </section>
-        )}
-
-        {real.needsConfirmation.length > 0 && (
-          <section className="section-tight" aria-label="Waiting for your confirmation">
-            <h2>How did it go?</h2>
-            <p className="muted" style={{ marginTop: 0 }}>
-              These conversations have ended — please confirm what happened.
-            </p>
-            <div className="stack-list">
-              {real.needsConfirmation.map((b) => (
-                <SupabaseBookingRow key={b.id} booking={b} />
-              ))}
-            </div>
-          </section>
-        )}
-
-        {real.proposed.length > 0 && (
-          <section className="section-tight" aria-label="Awaiting your reply">
-            <h2>New time proposed</h2>
-            <div className="stack-list">
-              {real.proposed.map((b) => (
-                <SupabaseBookingRow key={b.id} booking={b} />
-              ))}
-            </div>
-          </section>
-        )}
-
-        {real.requests.length > 0 && (
-          <section className="section-tight" aria-label="Pending requests">
-            <h2>{me.role === 'companion' ? 'Incoming requests' : 'Pending requests'}</h2>
-            <div className="stack-list">
-              {real.requests.map((b) => (
-                <SupabaseBookingRow key={b.id} booking={b} />
-              ))}
-            </div>
-          </section>
-        )}
-
-        {me.role === 'companion' && real.confirmed.length > 0 && (
-          <section className="section-tight" aria-label="Upcoming conversations">
-            <h2>Up next</h2>
-            <div className="stack-list">
-              {real.confirmed.map((b) => (
-                <SupabaseBookingRow key={b.id} booking={b} />
-              ))}
-            </div>
-          </section>
-        )}
-
-        {isSupabaseConfigured() && me.role !== 'companion' && <ConversationPlans />}
-
-        {planActivity > 0 && (
-          <p className="muted" style={{ margin: '4px 0 0' }}>
-            <Link to="/plans">Manage your conversation plans</Link>
-          </p>
-        )}
-
-        {!hasRealActivity && me.role !== 'companion' ? (
-          <section className="card card-feature">
-            <div className="col" style={{ gap: 8 }}>
-              <h2 style={{ margin: 0 }}>
-                {me.role === 'coordinator' && focusMember
-                  ? `Find a Companion for ${focusMember.firstName}`
-                  : 'Find your first Companion'}
-              </h2>
-              <p className="muted" style={{ margin: 0 }}>
-                {me.role === 'coordinator'
-                  ? 'Explore suitable Companions and arrange their first conversation.'
-                  : 'Explore people with shared interests and arrange a conversation when you are ready.'}
-              </p>
-              <div className="row wrap mt-4" style={{ gap: 12 }}>
-                <Link to="/explore" className="btn btn-primary">
-                  <Compass size={18} aria-hidden="true" /> Explore Companions
-                </Link>
-                <Link to="/profile" className="btn btn-ghost">Complete your profile</Link>
-              </div>
-            </div>
-          </section>
-        ) : !hasRealActivity ? (
-          <section className="card card-feature">
-            <div className="col" style={{ gap: 8 }}>
-              <h2 style={{ margin: 0 }}>Your Companion profile is ready</h2>
-              <p className="muted" style={{ margin: 0 }}>
-                Your conversation requests and upcoming calls will appear here.
-              </p>
-              <div className="row wrap mt-4" style={{ gap: 12 }}>
-                <button className="btn btn-primary" onClick={() => navigate(`/people/${me.id}`)}>
-                  <UserRound size={18} aria-hidden="true" /> View my public profile
-                </button>
-                <Link to="/profile" className="btn btn-ghost">Finish profile details</Link>
-              </div>
-            </div>
-          </section>
-        ) : null}
-
-        {me.role === 'coordinator' && managedMembers(state, me.id).length > 0 && (
-          <section className="section-tight" aria-label="People you arrange for">
-            <h2>People you arrange for</h2>
-            <div className="stack-list">
-              {managedMembers(state, me.id).map((m) => (
-                <div key={m.id} className="card card-tight row">
-                  <ProfilePhoto user={m} size={48} />
-                  <span className="col grow" style={{ gap: 2 }}>
-                    <span className="bold">{m.firstName} {m.lastName}</span>
-                    <span className="faint">No conversations yet — Explore is the place to start.</span>
+              {attention.slice(0, 4).map(({ b, why }) => (
+                <div key={b.id} className="agenda-row" style={{ cursor: 'default' }}>
+                  <span className="col grow" style={{ gap: 2, minWidth: 0 }}>
+                    <span className="bold">
+                      {me.role === 'companion' ? b.member_first_name : b.companion_first_name}
+                      {' · '}
+                      {new Date(b.starts_at).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}
+                    </span>
+                    <span className="faint small">{why}</span>
                   </span>
+                  <span className="pill pill-attention">{why.includes('request') || why.includes('reply') ? 'Request' : 'Action'}</span>
+                  <Link to={`/conversations/${b.id}`} className="btn btn-secondary btn-small">
+                    {b.status === 'change_proposed' ? 'Review change' : b.status === 'requested' && me.role === 'companion' ? 'Respond' : 'Open'}
+                  </Link>
                 </div>
               ))}
             </div>
           </section>
         )}
+
+        {/* Companion: plan requests keep their dedicated decision cards. */}
+        {isSupabaseConfigured() && me.role === 'companion' && <CompanionPlanRequests />}
+
+        {/* Next conversation hero */}
+        {hero ? (
+          <section className="card card-feature col section-tight" style={{ gap: 10 }} aria-label="Next conversation">
+            <span className="faint small" style={{ textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 700 }}>
+              Next conversation
+            </span>
+            <div className="row wrap" style={{ gap: 12, alignItems: 'baseline' }}>
+              <span className="bold" style={{ fontSize: '1.35em' }}>
+                {me.role === 'companion'
+                  ? hero.member_first_name
+                  : `${hero.member_first_name} & ${hero.companion_first_name}`}
+              </span>
+              <span className="pill pill-info">{hero.plan_id ? 'Weekly plan' : hero.is_trial ? 'Trial' : 'One-off'}</span>
+            </div>
+            <p style={{ margin: 0 }}>
+              {new Date(hero.starts_at).toLocaleString('en-GB', {
+                weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit',
+              })}{' '}
+              · {hero.duration_minutes} minutes · <Countdown to={hero.starts_at} />
+            </p>
+            <div className="row wrap" style={{ gap: 8 }}>
+              <Link to={`/calls/${hero.id}`} className="btn btn-primary btn-small">
+                <Phone size={16} aria-hidden="true" /> {me.role === 'companion' ? 'Join when open' : 'Open call room'}
+              </Link>
+              <Link to={`/conversations/${hero.id}`} className="btn btn-secondary btn-small">
+                Manage conversation
+              </Link>
+            </div>
+            {me.role !== 'companion' && (
+              <p className="faint small" style={{ margin: 0 }}>
+                Guest link and access code for {hero.member_first_name} live in “Manage conversation”.
+              </p>
+            )}
+          </section>
+        ) : attention.length === 0 && !hasRealActivity ? (
+          me.role !== 'companion' ? (
+            <section className="card card-feature section-tight">
+              <div className="col" style={{ gap: 8 }}>
+                <h2 style={{ margin: 0 }}>
+                  {me.role === 'coordinator' && focusMember
+                    ? `Find a Companion for ${focusMember.firstName}`
+                    : 'Find your first Companion'}
+                </h2>
+                <p className="muted" style={{ margin: 0 }}>
+                  Explore suitable Companions, send an introduction and arrange a first conversation.
+                </p>
+                <div className="row wrap mt-4" style={{ gap: 12 }}>
+                  <Link to="/explore" className="btn btn-primary">
+                    <Compass size={18} aria-hidden="true" /> Explore Companions
+                  </Link>
+                </div>
+              </div>
+            </section>
+          ) : (
+            <section className="card card-feature section-tight">
+              <div className="col" style={{ gap: 8 }}>
+                <h2 style={{ margin: 0 }}>Your Companion profile is ready</h2>
+                <p className="muted" style={{ margin: 0 }}>
+                  Introductions, requests and upcoming calls will appear here.
+                </p>
+                <div className="row wrap mt-4" style={{ gap: 12 }}>
+                  <button className="btn btn-primary" onClick={() => navigate(`/people/${me.id}`)}>
+                    <UserRound size={18} aria-hidden="true" /> View my public profile
+                  </button>
+                  <Link to="/profile" className="btn btn-ghost">Finish profile details</Link>
+                </div>
+              </div>
+            </section>
+          )
+        ) : null}
+
+        {/* Compact glance — the FULL schedule lives in Conversations. */}
+        {glance.length > 0 && (
+          <section className="section-tight" aria-label="Coming up">
+            <div className="row between">
+              <h2 className="section-label">Coming up</h2>
+              <Link to="/conversations" className="btn btn-ghost btn-small">Full schedule</Link>
+            </div>
+            <div className="stack-list">
+              {glance.map((b) => (
+                <SupabaseBookingRow key={b.id} booking={b} />
+              ))}
+            </div>
+          </section>
+        )}
+        {(hero || glance.length > 0) && glance.length === 0 && (
+          <p className="muted small"><Link to="/conversations">See your full schedule in Conversations</Link></p>
+        )}
+
+        {/* Role-specific supporting info */}
+        {isSupabaseConfigured() && me.role !== 'companion' && planActivity > 0 && <ConversationPlans />}
+        {me.role === 'companion' && <CompanionAvailabilitySnapshot />}
       </div>
     );
   }

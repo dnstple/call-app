@@ -53,6 +53,10 @@ export function systemEventCopy(
         : 'The plan schedule changed.';
     case 'plan_ended':
       return 'The plan has ended.';
+    case 'guest_invitation_created':
+      return 'A guest call invitation was created for this conversation.';
+    case 'guest_invitation_revoked':
+      return 'The guest call invitation was withdrawn.';
     default:
       // Safe fallback for event types this build doesn't know yet.
       return 'The conversation was updated.';

@@ -1,4 +1,5 @@
-import { HashRouter, Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { HashRouter, Link, Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
+import { useAccountRole } from './state/managedMember';
 import { lazy, Suspense, useEffect, type ReactNode } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Shell } from './components/Shell';
@@ -10,10 +11,11 @@ import Conversations from './pages/Conversations';
 import BookingDetail from './pages/BookingDetail';
 const CallRoom = lazy(() => import('./pages/CallRoom'));
 const PlanMemberProfile = lazy(() => import('./pages/PlanMemberProfile'));
-const PlansPage = lazy(() => import('./pages/PlansPage'));
 const MessagesPage = lazy(() => import('./pages/MessagesPage'));
 const PlanDetail = lazy(() => import('./pages/PlanDetail'));
 const Notifications = lazy(() => import('./pages/Notifications'));
+const MembersPage = lazy(() => import('./pages/MembersPage'));
+const GuestJoin = lazy(() => import('./pages/GuestJoin'));
 import Settings from './pages/Settings';
 import AvailabilityRates from './pages/AvailabilityRates';
 import SignupWizard from './signup/SignupWizard';
@@ -95,6 +97,22 @@ function Protected({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+/** Explore guard: Companions get a neutral redirect home (route AND nav). */
+function CoordinatorOnly({ children }: { children: ReactNode }) {
+  const role = useAccountRole();
+  if (role === 'companion') return <Navigate to="/" replace />;
+  return <>{children}</>;
+}
+
+function PlanRedirect() {
+  const { planId } = useParams();
+  return <Navigate to={`/conversations/plans/${planId}`} replace />;
+}
+function PlanMemberRedirect() {
+  const { planId } = useParams();
+  return <Navigate to={`/conversations/plans/${planId}/member`} replace />;
+}
+
 function AppRoutes() {
   return (
     <Routes>
@@ -105,6 +123,24 @@ function AppRoutes() {
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/auth/callback" element={<AuthCallbackPage />} />
+
+      {/* Guest call join — anonymous, isolated from the app shell and
+          session. A managed Member's only surface. */}
+      <Route
+        path="/join/:token"
+        element={
+          <Suspense
+            fallback={
+              <div className="row" style={{ justifyContent: 'center', padding: 48 }}>
+                <Loader2 size={22} aria-hidden="true" />
+                <span className="visually-hidden">Loading</span>
+              </div>
+            }
+          >
+            <GuestJoin />
+          </Suspense>
+        }
+      />
 
       {/* Sign-up wizard renders outside the main shell */}
       <Route path="/signup" element={<SignupWizard />} />
@@ -127,18 +163,23 @@ function AppRoutes() {
               >
               <Routes>
                 <Route path="/" element={<Home />} />
-                <Route path="/explore" element={<Explore />} />
+                {/* Explore is Coordinator-only: Companions get a neutral redirect. */}
+                <Route path="/explore" element={<CoordinatorOnly><Explore /></CoordinatorOnly>} />
                 <Route path="/people/:id" element={<ProfileDetail />} />
                 <Route path="/profile" element={<MyProfile />} />
+                <Route path="/members" element={<MembersPage />} />
                 <Route path="/conversations" element={<Conversations />} />
                 <Route path="/conversations/:bookingId" element={<BookingDetail />} />
                 {/* Documented boundary for in-app calling (not built yet). */}
                 <Route path="/calls/:bookingId" element={<CallRoom />} />
                 <Route path="/messages" element={<MessagesPage />} />
                 <Route path="/messages/:conversationId" element={<MessagesPage />} />
-                <Route path="/plans" element={<PlansPage />} />
-                <Route path="/plans/:planId" element={<PlanDetail />} />
-                <Route path="/plans/:planId/member" element={<PlanMemberProfile />} />
+                {/* Plans are unified into Conversations; old links keep working. */}
+                <Route path="/plans" element={<Navigate to="/conversations" replace />} />
+                <Route path="/plans/:planId" element={<PlanRedirect />} />
+                <Route path="/conversations/plans/:planId" element={<PlanDetail />} />
+                <Route path="/conversations/plans/:planId/member" element={<PlanMemberProfile />} />
+                <Route path="/plans/:planId/member" element={<PlanMemberRedirect />} />
                 <Route path="/notifications" element={<Notifications />} />
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/availability" element={<AvailabilityRates />} />

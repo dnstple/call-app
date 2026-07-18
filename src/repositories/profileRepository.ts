@@ -281,7 +281,12 @@ export async function listDiscoverableCompanions(q: ExploreQuery): Promise<Explo
       query = query.order('first_name', { ascending: true });
       break;
     case 'completeness':
-      query = query.order('profile_completion_percentage', { ascending: false, nullsFirst: false });
+      // Redesign Phase F: the ONE server-defined Explore ordering — most
+      // complete profiles first, then newest, stable id tiebreak.
+      query = query
+        .order('profile_completion_percentage', { ascending: false, nullsFirst: false })
+        .order('joined_at', { ascending: false })
+        .order('id', { ascending: true });
       break;
     default:
       query = query.order('joined_at', { ascending: false });

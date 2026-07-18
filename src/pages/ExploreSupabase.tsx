@@ -35,8 +35,10 @@ export default function ExploreSupabase() {
   const [duration, setDuration] = useState(0);
   const [day, setDay] = useState(0); // ISO 1–7
   const [daypart, setDaypart] = useState<'' | 'morning' | 'afternoon' | 'evening'>('');
-  const [sort, setSort] = useState<Sort>('newest');
   const [filtersOpen, setFiltersOpen] = useState(false);
+  // Redesign Phase F: no user-facing sort. One server-defined ordering —
+  // most complete profiles first, then newest, with a stable id tiebreak.
+  const sort: Sort = 'completeness';
 
   const [catalogue, setCatalogue] = useState<InterestRow[]>([]);
   const [results, setResults] = useState<User[]>([]);
@@ -136,14 +138,6 @@ export default function ExploreSupabase() {
             <button className="btn btn-secondary btn-small" onClick={() => setFiltersOpen(true)}>
               <SlidersHorizontal size={18} aria-hidden="true" /> Filters
             </button>
-            <label>
-              <span className="visually-hidden">Sort Companions</span>
-              <select className="quiet" value={sort} onChange={(e) => setSort(e.target.value as Sort)} aria-label="Sort Companions">
-                <option value="newest">Newest</option>
-                <option value="alphabetical">A to Z</option>
-                <option value="completeness">Most complete profiles</option>
-              </select>
-            </label>
           </div>
         </div>
 

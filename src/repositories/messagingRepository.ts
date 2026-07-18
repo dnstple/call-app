@@ -13,6 +13,7 @@
  */
 import { getSupabaseClient } from '../supabase/client';
 import { isSupabaseMode } from '../config/dataMode';
+import { getAuthSnapshot } from '../state/authBridge';
 import { RepoError, type RepoErrorKind } from './profileRepository';
 import type {
   ConversationLastMessage,
@@ -31,6 +32,9 @@ export const MESSAGES_PAGE_SIZE = 30;
 
 /* ---------------- domain types ---------------- */
 
+/** Phase D — the conversation carries the introduction lifecycle. */
+export type ConversationStatus = 'request_pending' | 'active' | 'declined';
+
 export interface ConversationSummary {
   id: string;
   memberProfileId: string;
@@ -43,6 +47,10 @@ export interface ConversationSummary {
   unreadCount: number;
   /** 2F2C: inline preview — the inbox is ONE server call, never N+1. */
   lastMessage: ConversationLastMessage | null;
+  /** Phase D: request lifecycle. */
+  status: ConversationStatus;
+  /** True when THIS account sent the pending introduction. */
+  requestedByMe: boolean;
 }
 
 export interface ChatMessage {
@@ -105,6 +113,15 @@ function mapMessagingError(e: any): MessagingError {
   // while the UI keeps its neutral copy. Never shipped behaviour.
   if (import.meta.env?.DEV) console.warn('[messaging]', e?.code ?? '', e?.message ?? '');
   const msg = String(e?.message ?? '').toLowerCase();
+  if (msg.includes('request_pending')) {
+    return new MessagingError(
+      'Your introduction has been sent — the Companion needs to accept before the conversation continues.',
+      'conflict', 'request_pending',
+    );
+  }
+  if (msg.includes('request_declined')) {
+    return new MessagingError('This introduction was closed.', 'conflict', 'request_declined');
+  }
   if (msg.includes('not_eligible')) {
     return new MessagingError(
       'Messaging opens after a confirmed conversation or an accepted plan.',
@@ -168,6 +185,69 @@ export function validateMessageBody(body: string): MessagingError | null {
  * grant: the profile owner, or a consent-confirmed coordinator of an
  * owner-less profile setting their OWN permission.
  */
+/**
+ * 0027 — the atomic pre-booking introduction: creates/reuses the pair
+ * thread, sets it request_pending and stores the single introductory
+ * message in ONE server operation. The generic getOrCreateConversation
+ * never creates introductions.
+ */
+export async function sendMessageRequest(
+  memberProfileId: string,
+  companionProfileId: string,
+  body: string,
+): Promise<ChatMessage> {
+  const invalid = validateMessageBody(body);
+  if (invalid) throw invalid;
+  if (!isSupabaseMode()) {
+    const t = mockThreadFor(memberProfileId, companionProfileId);
+    if (t.messages.length === 0) {
+      t.status = 'request_pending';
+      t.requestedByMe = true;
+    }
+    mockCounter += 1;
+    const msg: ChatMessage = {
+      id: `mock-message-${String(mockCounter).padStart(6, '0')}`,
+      conversationId: t.row.id,
+      senderAccountId: MOCK_ACCOUNT,
+      kind: 'user',
+      body: body.trim(),
+      systemEvent: null,
+      systemPayload: null,
+      createdAt: new Date().toISOString(),
+      senderRole: 'member',
+      senderName: 'You',
+    };
+    t.messages.push(msg);
+    t.row.last_message_at = msg.createdAt;
+    return msg;
+  }
+  const { data, error } = await getSupabaseClient().rpc('send_message_request', {
+    p_member: memberProfileId,
+    p_companion: companionProfileId,
+    p_body: body.trim(),
+  });
+  if (error) throw mapMessagingError(error);
+  return rowToMessage(data as MessageRow);
+}
+
+/** Phase D — the Companion's decision on an introduction. Accept reopens
+ * even a declined thread (the Companion owns that choice); decline is
+ * permanent for the requester. */
+export async function respondToMessageRequest(
+  conversationId: string,
+  accept: boolean,
+): Promise<void> {
+  if (!isSupabaseMode()) {
+    mockRespondToRequest(conversationId, accept);
+    return;
+  }
+  const { error } = await getSupabaseClient().rpc('respond_to_message_request', {
+    p_conversation: conversationId,
+    p_accept: accept,
+  });
+  if (error) throw mapMessagingError(error);
+}
+
 export async function setMessagingPermission(
   profileId: string,
   accountId: string,
@@ -187,7 +267,20 @@ export const supabaseMessagingRepository: MessagingRepository = {
   async listConversations() {
     const { data, error } = await getSupabaseClient().rpc('list_conversations', {});
     if (error) throw mapMessagingError(error);
-    return ((data ?? []) as ConversationSummaryPayload[]).map((c) => ({
+    const rows = (data ?? []) as ConversationSummaryPayload[];
+    // Phase D: statuses ride on the RLS-scoped conversations table (the
+    // 0023 inbox RPC predates the request lifecycle). One extra query.
+    const statuses = new Map<string, { status: ConversationStatus; requestedBy: string | null }>();
+    if (rows.length > 0) {
+      const { data: convRows } = await getSupabaseClient()
+        .from('conversations')
+        .select('id, status, requested_by_account_id');
+      for (const r of (convRows ?? []) as { id: string; status?: ConversationStatus; requested_by_account_id?: string | null }[]) {
+        statuses.set(r.id, { status: r.status ?? 'active', requestedBy: r.requested_by_account_id ?? null });
+      }
+    }
+    const uid = getAuthSnapshot().userId;
+    return rows.map((c) => ({
       id: c.id,
       memberProfileId: c.member_profile_id,
       companionProfileId: c.companion_profile_id,
@@ -197,6 +290,8 @@ export const supabaseMessagingRepository: MessagingRepository = {
       lastMessageAt: c.last_message_at,
       unreadCount: Number(c.unread_count),
       lastMessage: c.last_message ?? null,
+      status: statuses.get(c.id)?.status ?? 'active',
+      requestedByMe: Boolean(uid) && statuses.get(c.id)?.requestedBy === uid,
     }));
   },
 
@@ -284,6 +379,16 @@ interface MockThread {
   messages: ChatMessage[];
   lastReadAt: Map<string, string>;
   listeners: Set<(m: ChatMessage) => void>;
+  /** Phase D: request lifecycle (mock threads default to active). */
+  status?: ConversationStatus;
+  requestedByMe?: boolean;
+}
+
+/** Mock-mode acceptance/decline (keeps the UI explorable offline). */
+function mockRespondToRequest(conversationId: string, accept: boolean): void {
+  const t = mockThreads.get(conversationId);
+  if (!t) return;
+  t.status = accept ? 'active' : 'declined';
 }
 
 const mockThreads = new Map<string, MockThread>();
@@ -409,6 +514,8 @@ export const mockMessagingRepository: MessagingRepository = {
           created_at: last.createdAt,
           mine: last.senderAccountId === MOCK_ACCOUNT,
         } : null,
+        status: t.status ?? 'active',
+        requestedByMe: t.requestedByMe ?? false,
       };
     });
   },

@@ -1,24 +1,42 @@
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { Bell, CalendarHeart, Compass, Home, MessageCircle, Phone, Settings, UserRound } from 'lucide-react';
+import {
+  Bell, CalendarHeart, ChevronDown, Compass, LogOut, MessageCircle,
+  Home as HomeIcon, Settings as SettingsIcon, UserRound, Users,
+} from 'lucide-react';
 import { useAppState } from '../state/store';
-import { activeMember, currentUser, managedMembers, settingsFor, unreadCount } from '../state/selectors';
-import { switchActiveMember, switchIdentity } from '../state/actions';
+import { currentUser, managedMembers, settingsFor, unreadCount } from '../state/selectors';
+import { switchIdentity } from '../state/actions';
 import { DEMO_IDENTITIES } from '../data/seed';
 import { getDataMode, isSupabaseMode } from '../config/dataMode';
 import { useAuth } from '../auth/AuthProvider';
+import { useAccountRole } from '../state/managedMember';
 import { useUnreadTotal } from '../messaging/hooks';
 import { useUnreadNotifications } from '../messaging/NotificationsSupabase';
 import { ToastStack } from './ui';
 
-const NAV = [
-  { to: '/', label: 'Home', Icon: Home },
-  { to: '/explore', label: 'Explore', Icon: Compass },
-  { to: '/messages', label: 'Messages', Icon: MessageCircle },
-  { to: '/plans', label: 'Conversation plans', Icon: CalendarHeart },
-  { to: '/conversations', label: 'Conversations', Icon: Phone },
-  { to: '/profile', label: 'Profile', Icon: UserRound },
-];
+/**
+ * Redesign Phase B — role-based navigation.
+ * Coordinator: Home, Explore, Messages, Conversations, Members.
+ * Companion:   Home, Messages, Conversations, Profile (no Explore).
+ * Solo member (mock demo): Home, Explore, Messages, Conversations, Profile.
+ * Settings is always last. Conversation Plans is folded into Conversations.
+ */
+type NavItem = { to: string; label: string; Icon: typeof HomeIcon };
+
+export function navForRole(role: string): NavItem[] {
+  const home = { to: '/', label: 'Home', Icon: HomeIcon };
+  const explore = { to: '/explore', label: 'Explore', Icon: Compass };
+  const messages = { to: '/messages', label: 'Messages', Icon: MessageCircle };
+  const conversations = { to: '/conversations', label: 'Conversations', Icon: CalendarHeart };
+  if (role === 'companion') {
+    return [home, messages, conversations, { to: '/profile', label: 'Profile', Icon: UserRound }];
+  }
+  if (role === 'coordinator') {
+    return [home, explore, messages, conversations, { to: '/members', label: 'Members', Icon: Users }];
+  }
+  return [home, explore, messages, conversations, { to: '/profile', label: 'Profile', Icon: UserRound }];
+}
 
 const NEW_USER_VALUE = '__start-signup';
 
@@ -30,12 +48,13 @@ export function Shell({ children }: { children: ReactNode }) {
   const settings = settingsFor(state, me.id);
   const auth = useAuth();
   const supabase = isSupabaseMode();
-  // 2F2B: unread messages badge on the Messages nav item. Active in mock
-  // mode and for signed-in Supabase sessions; RLS scopes what it can see.
+  const accountRole = useAccountRole();
+
   const unreadMessages = useUnreadTotal(!supabase || auth.status === 'authenticated');
-  // 2F2C: the bell shows REAL notification unreads in Supabase mode.
   const unreadNotifications = useUnreadNotifications(supabase && auth.status === 'authenticated');
   const bellCount = supabase ? unreadNotifications : unread;
+
+  const nav = navForRole(supabase ? accountRole : me.role);
 
   const navBadge = (to: string) =>
     to === '/messages' && unreadMessages > 0 ? (
@@ -54,10 +73,16 @@ export function Shell({ children }: { children: ReactNode }) {
     root.dataset.simple = a.simpleMode ? 'true' : 'false';
   }, [settings.accessibility]);
 
-  const managed = me.role === 'coordinator' ? managedMembers(state, me.id) : [];
-  const focusMember = activeMember(state);
+  // The identity area shows ONLY the authenticated account holder.
+  const ownedProfile = auth.profiles.find((p) => p.access.access_role === 'owner')?.profile;
+  const accountName = supabase
+    ? `${ownedProfile?.first_name ?? ''} ${ownedProfile?.last_name ?? ''}`.trim()
+      || auth.user?.email
+      || 'Your account'
+    : `${me.firstName} ${me.lastName}`.trim();
 
-  // Mock mode: demo trio plus sign-up-created accounts (prototype switching).
+  // Mock mode keeps its prototype identity switcher (there is no real auth
+  // to display); Supabase mode shows the account menu with no switching.
   const signupIdentities = (state.signupUserIds ?? [])
     .map((id) => state.users.find((u) => u.id === id))
     .filter((u): u is NonNullable<typeof u> => Boolean(u))
@@ -77,14 +102,14 @@ export function Shell({ children }: { children: ReactNode }) {
           <div className="brand">
             <div className="name">App Name</div>
           </div>
-          {NAV.map(({ to, label, Icon }) => (
+          {nav.map(({ to, label, Icon }) => (
             <NavLink key={to} to={to} end={to === '/'}>
               <Icon size={20} aria-hidden="true" /> {label}
               {navBadge(to)}
             </NavLink>
           ))}
           <NavLink to="/settings">
-            <Settings size={20} aria-hidden="true" /> Settings
+            <SettingsIcon size={20} aria-hidden="true" /> Settings
           </NavLink>
         </nav>
 
@@ -92,25 +117,7 @@ export function Shell({ children }: { children: ReactNode }) {
           <header className="topbar">
             <span className="brand-mobile">App Name</span>
 
-            {!supabase && me.role === 'coordinator' && managed.length > 0 && (
-              <label className="row" style={{ gap: 6 }}>
-                <span className="faint simple-hide">For</span>
-                <select
-                  className="quiet"
-                  aria-label="Choose which person you are arranging conversations for"
-                  value={focusMember?.id ?? ''}
-                  onChange={(e) => switchActiveMember(e.target.value)}
-                >
-                  {managed.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.firstName}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-
-            {!supabase ? (
+            {!supabase && (
               /* Mock mode only: prototype identity switcher (development control). */
               <label className="simple-hide">
                 <span className="visually-hidden">Demo identity switcher</span>
@@ -136,33 +143,18 @@ export function Shell({ children }: { children: ReactNode }) {
                   <option value={NEW_USER_VALUE}>+ Start as a new user…</option>
                 </select>
               </label>
-            ) : (
-              /* Supabase mode: only profiles this account can access — no impersonation. */
-              auth.profiles.length > 0 && (
-                <label>
-                  <span className="visually-hidden">Switch active profile</span>
-                  <select
-                    className="quiet"
-                    value={auth.activeProfileId ?? ''}
-                    onChange={(e) => auth.setActiveProfile(e.target.value)}
-                    aria-label="Switch active profile"
-                    style={{ maxWidth: 200 }}
-                  >
-                    {auth.profiles.map(({ profile, access }) => (
-                      <option key={profile.id} value={profile.id}>
-                        {profile.first_name} — {roleLabel(profile.role)}
-                        {access.access_role === 'coordinator' ? ' (managed)' : ''}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )
             )}
 
             <NavLink to="/notifications" className="icon-btn" aria-label={`Notifications, ${bellCount} unread`}>
               <Bell size={22} aria-hidden="true" />
               {bellCount > 0 && <span className="notif-dot">{bellCount}</span>}
             </NavLink>
+
+            <AccountMenu
+              name={accountName}
+              role={roleLabel(supabase ? accountRole : me.role)}
+              onSignOut={supabase ? () => void auth.signOut() : undefined}
+            />
           </header>
 
           <main className="page">{children}</main>
@@ -170,7 +162,7 @@ export function Shell({ children }: { children: ReactNode }) {
       </div>
 
       <nav className="bottomnav" aria-label="Primary mobile">
-        {NAV.filter((n) => n.to !== '/plans').map(({ to, label, Icon }) => (
+        {nav.map(({ to, label, Icon }) => (
           <NavLink key={to} to={to} end={to === '/'}>
             <span style={{ position: 'relative' }}>
               <Icon size={22} aria-hidden="true" />
@@ -182,6 +174,52 @@ export function Shell({ children }: { children: ReactNode }) {
       </nav>
 
       <ToastStack />
+    </div>
+  );
+}
+
+/** Top-right identity: the authenticated account holder ONLY — no
+ * profile switching, no managed-member impersonation. */
+function AccountMenu({ name, role, onSignOut }: { name: string; role: string; onSignOut?: () => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [open]);
+
+  return (
+    <div className="account-menu" ref={ref}>
+      <button
+        className="account-menu-trigger"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span className="col" style={{ gap: 0, alignItems: 'flex-end' }}>
+          <span className="account-name">{name}</span>
+          <span className="account-role">{role}</span>
+        </span>
+        <ChevronDown size={16} aria-hidden="true" />
+      </button>
+      {open && (
+        <div className="account-menu-pop" role="menu">
+          <button role="menuitem" onClick={() => { setOpen(false); navigate('/settings'); }}>
+            <SettingsIcon size={16} aria-hidden="true" /> Settings
+          </button>
+          {onSignOut && (
+            <button role="menuitem" onClick={() => { setOpen(false); onSignOut(); }}>
+              <LogOut size={16} aria-hidden="true" /> Sign out
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -278,24 +278,27 @@ describe('wizard: choosing between offers and package credits', () => {
 });
 
 describe('booking rows and credit states', () => {
-  it('12+13. package bookings show “Package credit — no payment”, never a payable price', () => {
+  it('12+13. redesign: booking rows never expose funding phrases or prices', () => {
+    // Payment/funding source is secondary detail (it lives in the booking
+    // detail payment summary) — never the visible conversation type.
     render(
       <MemoryRouter>
         <SupabaseBookingRow booking={myBooking()} />
       </MemoryRouter>,
     );
-    expect(screen.getByText(/Package credit — no payment/)).toBeTruthy();
+    expect(screen.queryByText(/Package credit — no payment/)).toBeNull();
     expect(screen.queryByText(/£/)).toBeNull();
   });
 
-  it('19. ordinary offer bookings are unchanged (price still shown)', () => {
+  it('19. ordinary offer rows show the conversation type, not the price', () => {
     render(
       <MemoryRouter>
         <SupabaseBookingRow booking={myBooking({ booking_source: 'single_offer', package_purchase_id: null, offer_id: 'o1' })} />
       </MemoryRouter>,
     );
-    expect(screen.getByText(/£9\.00/)).toBeTruthy();
     expect(screen.queryByText(/Package credit/)).toBeNull();
+    expect(screen.queryByText(/£9\.00/)).toBeNull();
+    expect(screen.getByText(/One-off|Trial|Weekly plan/)).toBeTruthy();
   });
 
   it('14. BookingDetail panel shows the reserved state from the server', async () => {

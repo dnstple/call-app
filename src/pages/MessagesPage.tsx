@@ -11,6 +11,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, MessageCircle, Send } from 'lucide-react';
 import {
+  announceMessagesChanged,
   counterpartName,
   onBehalfOfName,
   useConversations,
@@ -21,6 +22,7 @@ import {
 } from '../messaging/hooks';
 import {
   MESSAGE_MAX_LENGTH,
+  respondToMessageRequest,
   type ChatMessage,
 } from '../repositories/messagingRepository';
 import { EmptyState } from '../components/ui';
@@ -77,6 +79,12 @@ function ConversationListItem({ conversation, viewer, selected }: {
             <span className="msg-item-preview">
               {conversation.preview ?? (conversation.lastMessageAt ? 'View conversation' : 'Say hello')}
             </span>
+            {conversation.status === 'request_pending' && (
+              <span className="pill pill-attention">Request</span>
+            )}
+            {conversation.status === 'declined' && (
+              <span className="pill pill-neutral">Closed</span>
+            )}
             {unread && (
               <span className="msg-unread-badge" aria-label={`${conversation.unreadCount} unread`}>
                 {conversation.unreadCount}
@@ -119,12 +127,40 @@ function ConversationList({ selectedId }: { selectedId: string | null }) {
       />
     );
   }
+  // Phase D: the Companion sees introductions in their own clearly
+  // labelled section, never mixed silently into active chats.
+  const isCompanionViewer = (c: ConversationWithPreview) =>
+    viewer.profileIds.has(c.companionProfileId) && !viewer.profileIds.has(c.memberProfileId);
+  const requests = conversations.filter(
+    (c) => isCompanionViewer(c) && (c.status === 'request_pending' || c.status === 'declined'),
+  );
+  const normal = conversations.filter((c) => !requests.includes(c));
+
   return (
-    <ul className="msg-list" aria-label="Conversations">
-      {conversations.map((c) => (
-        <ConversationListItem key={c.id} conversation={c} viewer={viewer} selected={c.id === selectedId} />
-      ))}
-    </ul>
+    <div className="col" style={{ gap: 4 }}>
+      {requests.length > 0 && (
+        <section aria-label="Message requests">
+          <h2 className="msg-section-label">
+            Message requests
+            {requests.some((r) => r.status === 'request_pending') && (
+              <span className="msg-unread-badge" aria-label={`${requests.filter((r) => r.status === 'request_pending').length} pending requests`}>
+                {requests.filter((r) => r.status === 'request_pending').length}
+              </span>
+            )}
+          </h2>
+          <ul className="msg-list">
+            {requests.map((c) => (
+              <ConversationListItem key={c.id} conversation={c} viewer={viewer} selected={c.id === selectedId} />
+            ))}
+          </ul>
+        </section>
+      )}
+      <ul className="msg-list" aria-label="Conversations">
+        {normal.map((c) => (
+          <ConversationListItem key={c.id} conversation={c} viewer={viewer} selected={c.id === selectedId} />
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -356,13 +392,97 @@ function Thread({ conversationId, summary, viewer, onBack }: {
         </div>
       </div>
 
-      <MessageComposer
-        onSend={thread.send}
-        sending={thread.sending}
-        disabled={thread.unavailable}
-        error={thread.sendError}
-        onClearError={thread.clearSendError}
-      />
+      {/* Phase D: request lifecycle replaces / gates the composer. */}
+      {summary && summary.status !== 'active' ? (
+        <RequestStatePanel summary={summary} viewer={viewer} threadUnavailable={thread.unavailable} />
+      ) : (
+        <MessageComposer
+          onSend={thread.send}
+          sending={thread.sending}
+          disabled={thread.unavailable}
+          error={thread.sendError}
+          onClearError={thread.clearSendError}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Pending / declined introduction states, per side. Acceptance is the
+ * ONLY path to an open thread — the browser can't forge it. */
+function RequestStatePanel({ summary, viewer, threadUnavailable }: {
+  summary: ConversationWithPreview;
+  viewer: ViewerContext;
+  threadUnavailable: boolean;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const companionSide =
+    viewer.profileIds.has(summary.companionProfileId) && !viewer.profileIds.has(summary.memberProfileId);
+
+  const respond = async (accept: boolean) => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await respondToMessageRequest(summary.id, accept);
+      announceMessagesChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Something went wrong. Please try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (threadUnavailable) return null;
+
+  if (companionSide) {
+    return (
+      <div className="msg-request-panel" role="group" aria-label="Message request decision">
+        {summary.status === 'request_pending' ? (
+          <>
+            <p className="small" style={{ margin: 0 }}>
+              <strong>{summary.memberName}</strong>’s coordinator would like to start a conversation.
+              Accept to reply, or decline to close the request.
+            </p>
+            <div className="row" style={{ gap: 8 }}>
+              <button className="btn btn-primary btn-small" disabled={busy} onClick={() => void respond(true)}>
+                Accept
+              </button>
+              <button className="btn btn-secondary btn-small" disabled={busy} onClick={() => void respond(false)}>
+                Decline
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="small muted" style={{ margin: 0 }}>
+              You declined this introduction. Only you can reopen it.
+            </p>
+            <button className="btn btn-secondary btn-small" disabled={busy} onClick={() => void respond(true)}>
+              Reopen and accept
+            </button>
+          </>
+        )}
+        {error && <p className="small" role="alert" style={{ color: 'var(--color-danger-text)', margin: 0 }}>{error}</p>}
+      </div>
+    );
+  }
+
+  // Requester side: honest waiting / closed states, composer disabled.
+  return (
+    <div className="msg-request-panel" role="status">
+      {summary.status === 'request_pending' ? (
+        <p className="small muted" style={{ margin: 0 }}>
+          <strong>Message request sent.</strong> {summary.companionName} needs to accept your
+          introduction before you can continue the conversation.
+        </p>
+      ) : (
+        <p className="small muted" style={{ margin: 0 }}>
+          This introduction was closed. You’ll be able to message
+          {' '}{summary.companionName} after a confirmed conversation together.
+        </p>
+      )}
     </div>
   );
 }

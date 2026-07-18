@@ -192,15 +192,15 @@ describe('signup corrections', () => {
     );
   }
 
-  it('1. role cards appear in the required order: coordinator, companion, member', () => {
+  it('1. role cards: coordinator first, companion second — member path removed', () => {
     const view = renderSignup();
     const text = view.container.textContent ?? '';
     const coordinator = text.indexOf('I am arranging conversations for someone else');
     const companion = text.indexOf('I would like to be a Companion');
-    const member = text.indexOf('I would like someone to talk with');
     expect(coordinator).toBeGreaterThan(-1);
     expect(companion).toBeGreaterThan(coordinator);
-    expect(member).toBeGreaterThan(companion);
+    // Redesign: managed Members do not create logins.
+    expect(text).not.toContain('I would like someone to talk with');
   });
 
   it('2. role-card copy mentions the app, never phone or video services', () => {
@@ -208,7 +208,6 @@ describe('signup corrections', () => {
     const text = view.container.textContent ?? '';
     expect(text).toContain('Help a family member or someone you care for find regular companionship.');
     expect(text).toContain('Offer friendly, regular conversations through the app.');
-    expect(text).toContain('Find a friendly Companion for regular conversations through the app.');
     expect(text).not.toMatch(/phone|WhatsApp|FaceTime|Zoom|video/i);
   });
 

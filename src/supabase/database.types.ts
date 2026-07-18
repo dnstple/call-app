@@ -86,6 +86,11 @@ export type ConversationRow = {
   companion_profile_id: string;
   created_at: string;
   last_message_at: string | null;
+  /** Phase D (0025): introduction lifecycle. Optional until deployed. */
+  status?: 'request_pending' | 'active' | 'declined';
+  requested_by_account_id?: string | null;
+  accepted_at?: string | null;
+  declined_at?: string | null;
 };
 
 export type MessageRow = {
@@ -890,6 +895,33 @@ export type Database = {
       };
       mark_notification_read: { Args: { p_notification: string }; Returns: NotificationRow };
       mark_all_notifications_read: { Args: Record<string, never>; Returns: number };
+      /* Redesign Phase C — guest call invitations (raw secrets returned once). */
+      create_guest_invitation: {
+        Args: { p_booking: string };
+        Returns: { invitation_id: string; token: string; code: string; expires_at: string };
+      };
+      revoke_guest_invitation: { Args: { p_booking: string }; Returns: null };
+      get_guest_invitation_status: {
+        Args: { p_booking: string };
+        Returns: { has_active: boolean; created_at?: string; expires_at?: string; first_joined_at?: string | null };
+      };
+      validate_guest_invitation: {
+        Args: { p_token: string };
+        Returns: Record<string, unknown>;
+      };
+      /* Redesign Phase F — companion completeness. */
+      activate_companion_profile: { Args: { p_profile: string }; Returns: { active: boolean } };
+      companion_completion_checklist: { Args: { p_profile: string }; Returns: Record<string, unknown> };
+      /* Redesign Phase D — introduction requests. */
+      respond_to_message_request: {
+        Args: { p_conversation: string; p_accept: boolean };
+        Returns: ConversationRow;
+      };
+      /* 0027 — the atomic introduction (thread + single intro message). */
+      send_message_request: {
+        Args: { p_member: string; p_companion: string; p_body: string };
+        Returns: MessageRow;
+      };
       get_companion_public_reviews: {
         Args: { p_profile: string; p_limit?: number; p_offset?: number };
         Returns: PublicReviewRow[];

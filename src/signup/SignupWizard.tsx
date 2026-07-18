@@ -46,6 +46,11 @@ import { isSupabaseMode } from '../config/dataMode';
 import { useAuth } from '../auth/AuthProvider';
 import { AuthAppError } from '../auth/authErrors';
 
+/** Member self-signup is out of the primary product flow (managed Members
+ * have no login). Kept as a flag, not deleted — the schema still supports
+ * linking a Member account later. */
+const MEMBER_SELF_SIGNUP_ENABLED = false;
+
 const SAMPLE_BIO =
   'I grew up around here and love hearing how the area has changed. I enjoy long walks, old films and a proper natter about anything from family recipes to famous matches. I’m a patient listener and I always keep an eye on the time so calls end when you want them to.';
 
@@ -318,12 +323,15 @@ export default function SignupWizard() {
             error={error}
             nextDisabled={!data.role}
           >
+            {/* Redesign: the Member signup path is removed from the primary
+                chooser — managed Members need no login. The schema keeps
+                member-account linking possible behind this flag for later. */}
             {([
               {
                 role: 'coordinator' as Role,
                 Icon: Users,
                 title: 'I am arranging conversations for someone else',
-                text: 'Help a family member or someone you care for find regular companionship.',
+                text: 'Help a family member or someone you care for find regular companionship. They won’t need their own account.',
               },
               {
                 role: 'companion' as Role,
@@ -331,12 +339,12 @@ export default function SignupWizard() {
                 title: 'I would like to be a Companion',
                 text: 'Offer friendly, regular conversations through the app.',
               },
-              {
+              ...(MEMBER_SELF_SIGNUP_ENABLED ? [{
                 role: 'member' as Role,
                 Icon: MessagesSquare,
                 title: 'I would like someone to talk with',
                 text: 'Find a friendly Companion for regular conversations through the app.',
-              },
+              }] : []),
             ]).map(({ role, Icon, title, text }) => (
               <button
                 key={role}

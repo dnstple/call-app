@@ -25,15 +25,34 @@
   --color-disabled-bg: #eeeae5;
   --color-disabled-text: #aaa39d;
 
-  /* Semantic */
-  --color-success-bg: #e7f1eb;
+  /* Named palette (Redesign Phase G) — warm, low-saturation, distinctive.
+     Semantic tokens below map onto these; components use ONLY semantic
+     tokens, so the palette can evolve from this block alone. */
+  --palette-terracotta: #b65c3f;      /* restrained secondary emphasis */
+  --palette-terracotta-soft: #f6e3dc;
+  --palette-sage: #5f7d64;            /* confirmed / ready / positive */
+  --palette-sage-soft: #e7f1eb;
+  --palette-dusty-blue: #5b7896;      /* informational states */
+  --palette-dusty-blue-soft: #e9eef5;
+  --palette-amber: #a06b1c;           /* attention required */
+  --palette-amber-soft: #f7eedb;
+  --palette-soft-red: #913d38;        /* destructive / blocked only */
+  --palette-soft-red-soft: #f7e5e3;
+  --palette-charcoal: #201c19;
+  --palette-warm-grey: #6f6a65;
+
+  /* Semantic — colour is never the only status signal (labels/pills carry
+     text), contrast targets AA on their soft backgrounds. */
+  --color-success-bg: var(--palette-sage-soft);
   --color-success-text: #315e49;
-  --color-warning-bg: #f7eedb;
+  --color-warning-bg: var(--palette-amber-soft);
   --color-warning-text: #825718;
-  --color-danger-bg: #f7e5e3;
-  --color-danger-text: #913d38;
+  --color-danger-bg: var(--palette-soft-red-soft);
+  --color-danger-text: var(--palette-soft-red);
   --color-info-bg: #e9eef5;
-  --color-info-text: #465f78;
+  --color-info-text: #465f78;         /* dusty blue */
+  --color-secondary-emphasis: var(--palette-terracotta);
+  --color-secondary-emphasis-bg: var(--palette-terracotta-soft);
 
   /* Legacy aliases (used throughout components) */
   --background: var(--color-background);
@@ -157,7 +176,9 @@ button { font-family: inherit; }
 .between { justify-content: space-between; }
 .grow { flex: 1 1 auto; min-width: 0; }
 .wrap { flex-wrap: wrap; }
-.stack-list { display: flex; flex-direction: column; gap: var(--space-3); }
+.stack-list { display: flex; flex-direction: column; gap: var(--space-4); }
+/* Belt-and-braces: keep tiles separated even where a parent resets gap. */
+.stack-list > * + * { margin-top: 0; }
 .section { margin-top: var(--space-7); }
 .section-tight { margin-top: var(--space-6); }
 
@@ -721,3 +742,122 @@ table.plain th { color: var(--color-text-secondary); font-weight: 600; }
   .msg-item-preview { max-width: 46vw; }
 }
 
+
+/* ---------- Redesign Phase B: account identity + managing context ---------- */
+.account-menu { position: relative; margin-left: auto; }
+.topbar .icon-btn { margin-left: auto; }
+.topbar .account-menu { margin-left: 0; }
+.account-menu-trigger {
+  display: flex; align-items: center; gap: 8px;
+  background: none; border: 1px solid transparent; border-radius: var(--radius-s);
+  padding: 4px 10px; cursor: pointer; color: var(--color-text-primary);
+}
+.account-menu-trigger:hover { background: var(--color-surface-muted); }
+.account-menu-trigger:focus-visible { outline: 2px solid var(--color-brand-strong); outline-offset: 2px; }
+.account-name { font-weight: 700; font-size: 0.92em; line-height: 1.2; }
+.account-role { font-size: 0.78em; color: var(--color-text-secondary); line-height: 1.2; }
+.account-menu-pop {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 60;
+  background: var(--color-surface); border: 1px solid var(--color-border);
+  border-radius: var(--radius-m); box-shadow: var(--shadow-2);
+  min-width: 170px; padding: 6px; display: flex; flex-direction: column;
+}
+.account-menu-pop button {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  background: none; border: none; border-radius: var(--radius-s);
+  padding: 9px 10px; cursor: pointer; font-size: 0.95em; text-align: left;
+  color: var(--color-text-primary);
+}
+.account-menu-pop button:hover { background: var(--color-surface-muted); }
+.managing-context {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin: 2px 0 0; color: var(--color-text-secondary); font-size: 0.95em;
+}
+
+/* ---------- Redesign Phase C: guest join + invitation panel ---------- */
+.guest-shell {
+  min-height: 100dvh; display: flex; align-items: center; justify-content: center;
+  padding: 24px; background: var(--color-background);
+}
+.guest-card {
+  width: 100%; max-width: 460px; background: var(--color-surface);
+  border: 1px solid var(--color-border); border-radius: var(--radius-l);
+  box-shadow: var(--shadow-1); padding: 28px;
+}
+.guest-title { font-size: 1.3em; margin: 0; }
+.guest-self-video { width: 160px; border-radius: var(--radius-m); align-self: center; }
+.guest-remote-media { display: flex; flex-direction: column; gap: 8px; align-items: center; }
+.guest-remote-video { width: 100%; max-height: 320px; border-radius: var(--radius-m); }
+.guest-secret-box {
+  background: var(--color-brand-subtle); border: 1px dashed var(--color-brand);
+  border-radius: var(--radius-m); padding: 12px;
+}
+.guest-secret {
+  background: var(--color-surface); border: 1px solid var(--color-border);
+  border-radius: 6px; padding: 2px 8px; font-size: 0.85em; word-break: break-all;
+}
+.pill {
+  display: inline-flex; align-items: center; gap: 4px; border-radius: 999px;
+  padding: 2px 10px; font-size: 0.78em; font-weight: 600;
+}
+.pill-ready { background: var(--color-success-bg); color: var(--color-success-text); }
+.pill-attention { background: var(--color-warning-bg); color: var(--color-warning-text); }
+.pill-blocked { background: var(--color-danger-bg); color: var(--color-danger-text); }
+.pill-info { background: var(--color-info-bg); color: var(--color-info-text); }
+.pill-neutral { background: var(--color-surface-muted); color: var(--color-text-secondary); }
+
+/* ---------- Redesign Phase D: message requests ---------- */
+.msg-section-label {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 0.85em; font-weight: 700; color: var(--color-text-secondary);
+  margin: 8px 12px 4px; text-transform: uppercase; letter-spacing: 0.04em;
+}
+.msg-request-panel {
+  display: flex; flex-direction: column; gap: 8px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-brand-subtle);
+  padding: 12px 16px;
+}
+
+/* ---------- Redesign Phase E: agenda + date strip + section labels ---------- */
+.section-label {
+  font-size: 0.85em; font-weight: 700; color: var(--color-text-secondary);
+  text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 8px;
+}
+.agenda-row {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  background: var(--color-surface); border: 1px solid var(--color-border);
+  border-radius: var(--radius-m); padding: 10px 14px; cursor: pointer;
+  text-align: left; color: inherit; font: inherit; transition: border-color var(--motion), background var(--motion);
+}
+.agenda-row:hover { border-color: var(--color-border-strong); background: var(--color-surface-muted); }
+.agenda-row:focus-visible { outline: 2px solid var(--color-brand-strong); outline-offset: 2px; }
+.agenda-time {
+  display: flex; flex-direction: column; align-items: center; min-width: 62px;
+  font-weight: 800; font-size: 1.05em; color: var(--color-text-primary);
+}
+.agenda-duration { font-size: 0.7em; font-weight: 500; color: var(--color-text-muted); }
+.date-strip { display: flex; gap: 6px; width: 100%; overflow-x: auto; padding-bottom: 4px; }
+.date-strip-day {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  flex: 1 1 0; min-width: 44px; padding: 8px 6px; border-radius: var(--radius-m);
+  border: 1px solid var(--color-border); background: var(--color-surface);
+  cursor: pointer; font: inherit; color: inherit;
+}
+.date-strip-day.selected { border-color: var(--color-brand-strong); background: var(--color-brand-subtle); }
+.date-strip-day:focus-visible { outline: 2px solid var(--color-brand-strong); outline-offset: 2px; }
+.date-strip-day .dow { font-size: 0.72em; color: var(--color-text-secondary); text-transform: uppercase; }
+.date-strip-day .dom { font-weight: 800; }
+.date-strip-count {
+  min-width: 18px; height: 18px; border-radius: 999px; font-size: 0.7em; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--color-info-bg); color: var(--color-info-text);
+}
+.date-strip-count.attention { background: var(--color-warning-bg); color: var(--color-warning-text); }
+
+/* ---------- Redesign Phase F: clickable profile cards ---------- */
+.profile-card-clickable { cursor: pointer; transition: box-shadow var(--motion), border-color var(--motion); }
+.profile-card-clickable:hover { box-shadow: var(--shadow-2); border-color: var(--color-border-strong); }
+.profile-card-clickable:focus-visible { outline: 3px solid var(--color-brand-strong); outline-offset: 2px; }
+.profile-card .photo-wrap { aspect-ratio: 4 / 3; overflow: hidden; }
+.profile-card .photo-wrap img { width: 100%; height: 100%; object-fit: cover; }

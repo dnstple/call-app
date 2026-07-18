@@ -46,9 +46,92 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
+/**
+ * Redesign Phase C — guest branch. An anonymous managed Member exchanges
+ * a valid invitation token + access code for a short-lived, restricted
+ * guest_member room token. The database RPC enforces hashing, expiry,
+ * revocation and code-attempt rate limiting; joining never consumes the
+ * invitation (reconnect grace), which stays valid until call end + 30 min.
+ */
+async function handleGuestJoin(body: Record<string, unknown>): Promise<Response> {
+  const invitationToken = typeof body?.invitationToken === 'string' ? body.invitationToken : null;
+  const accessCode = typeof body?.accessCode === 'string' ? body.accessCode : '';
+  if (!invitationToken) return json({ state: 'invalid' }, 200);
+
+  // Service-role client: exchange_guest_invitation is locked to service_role.
+  const admin = createClient(
+    Deno.env.get('SUPABASE_URL')!,
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    { auth: { persistSession: false } },
+  );
+  const { data: result, error } = await admin.rpc('exchange_guest_invitation', {
+    p_token: invitationToken,
+    p_code: accessCode,
+  });
+  if (error) return json({ state: 'invalid' }, 200);
+  const r = result as { ok?: boolean; reason?: string; booking_id?: string; invitation_id?: string };
+  if (!r?.ok) {
+    // Neutral states only — nothing about other bookings leaks.
+    if (r?.reason === 'rate_limited') return json({ state: 'rate_limited' }, 429);
+    if (r?.reason === 'wrong_code') return json({ state: 'wrong_code' }, 200);
+    return json({ state: 'invalid' }, 200);
+  }
+
+  // Time window (server clock): guests join slightly early and reconnect
+  // within the grace window after the end.
+  const { data: booking } = await admin
+    .from('bookings')
+    .select('id, status, starts_at, ends_at')
+    .eq('id', r.booking_id!)
+    .maybeSingle();
+  if (!booking || booking.status !== 'confirmed') return json({ state: 'invalid' }, 200);
+  const now = Date.now();
+  const opensAt = Date.parse(booking.starts_at) - 15 * 60_000;
+  const closesAt = Date.parse(booking.ends_at) + ROOM_CLOSE_AFTER_END_MINUTES * 60_000;
+  if (now < opensAt) return json({ state: 'too_early', opensAt: new Date(opensAt).toISOString() }, 200);
+  if (now > closesAt) return json({ state: 'ended' }, 200);
+
+  const apiKey = Deno.env.get('LIVEKIT_API_KEY');
+  const apiSecret = Deno.env.get('LIVEKIT_API_SECRET');
+  const serverUrl = Deno.env.get('LIVEKIT_URL');
+  if (!apiKey || !apiSecret || !serverUrl) return json({ state: 'invalid' }, 200);
+
+  const token = new AccessToken(apiKey, apiSecret, {
+    identity: `guest_member-${r.invitation_id}`,
+    name: 'Guest',
+    ttl: TOKEN_TTL_SECONDS,
+  });
+  token.addGrant({
+    room: `booking-${booking.id}`,
+    roomJoin: true,
+    canPublish: true,
+    canSubscribe: true,
+    canPublishData: false,
+    // The narrowest grant: one room, publish/subscribe, nothing else.
+  });
+  return json({
+    state: 'joinable',
+    serverUrl,
+    token: await token.toJwt(),
+    room: `booking-${booking.id}`,
+    viewerSide: 'guest_member',
+  }, 200);
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST') return json({ state: 'unauthorised' }, 405);
+
+  // Guest branch: an invitation token instead of an authenticated session.
+  let parsedBody: Record<string, unknown> = {};
+  try {
+    parsedBody = await req.clone().json();
+  } catch {
+    parsedBody = {};
+  }
+  if (typeof parsedBody?.invitationToken === 'string') {
+    return handleGuestJoin(parsedBody);
+  }
 
   // 1. A valid authenticated Supabase session is required.
   const authHeader = req.headers.get('Authorization') ?? '';

@@ -42,22 +42,23 @@ describe('app smoke test', () => {
     cleanup();
   });
 
-  it('renders the sign-up role step with all three role cards', () => {
+  it('renders the sign-up role step with coordinator + companion cards (no member login path)', () => {
     window.location.hash = '#/signup';
     render(<App />);
     expect(screen.getAllByText(/How will you use the app\?/i).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/I would like someone to talk with/i).length).toBeGreaterThan(0);
+    // Redesign: managed Members have no login — the member card is gone.
+    expect(screen.queryByText(/I would like someone to talk with/i)).toBeNull();
     expect(screen.getAllByText(/I would like to be a Companion/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/arranging conversations for someone else/i).length).toBeGreaterThan(0);
     cleanup();
   });
 
-  it('advances into the Member flow after choosing a role', () => {
+  it('advances into the Coordinator flow after choosing a role', () => {
     window.location.hash = '#/signup';
     render(<App />);
-    fireEvent.click(screen.getByText(/I would like someone to talk with/i));
+    fireEvent.click(screen.getByText(/arranging conversations for someone else/i));
     fireEvent.click(screen.getByText(/^Continue$/));
-    expect(screen.getAllByText(/Your details/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Your details|About you/i).length).toBeGreaterThan(0);
     cleanup();
   });
 });
