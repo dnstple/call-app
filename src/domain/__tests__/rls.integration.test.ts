@@ -1,15 +1,20 @@
 /**
- * RLS integration tests — run against a REAL Supabase project (local stack or
- * a dedicated dev project with both migrations applied and email
- * confirmations disabled for test signups).
+ * RLS integration tests — run against a REAL Supabase project (local stack
+ * or a dedicated dev project with all migrations applied).
  *
  *   SUPABASE_TEST_URL=http://127.0.0.1:54321 \
  *   SUPABASE_TEST_ANON_KEY=<anon key> \
+ *   SUPABASE_TEST_SERVICE_ROLE_KEY=<service-role key> \
  *   npx vitest run rls.integration
  *
- * Without those variables the suite is skipped (this repo has no database).
- * These tests are the Stage 2B security acceptance evidence — do not consider
- * the milestone verified until they pass against your project.
+ * The service-role key is REQUIRED (and server-side only — this file never
+ * ships in the bundle): test users are created through the Admin API with
+ * email_confirm, so NO confirmation email is ever generated and no real
+ * mailbox is ever addressed. Without all three variables the suite is
+ * skipped (this repo has no database).
+ *
+ * These tests are the Stage 2B security acceptance evidence — do not
+ * consider the milestone verified until they pass against your project.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
@@ -19,12 +24,45 @@ const testEnv =
   (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {};
 const url = testEnv.SUPABASE_TEST_URL;
 const anonKey = testEnv.SUPABASE_TEST_ANON_KEY;
-const enabled = Boolean(url && anonKey);
+/** Server-only. Required: user setup goes through the Admin API. */
+const serviceKey =
+  testEnv.SUPABASE_TEST_SERVICE_ROLE_KEY ?? testEnv.SUPABASE_SERVICE_ROLE_KEY;
+const enabled = Boolean(url && anonKey && serviceKey);
+if (url && anonKey && !serviceKey) {
+  // eslint-disable-next-line no-console
+  console.warn(
+    '[rls.integration] SUPABASE_TEST_SERVICE_ROLE_KEY is not set — the live '
+    + 'suite is SKIPPED. Admin-created test users are required so no '
+    + 'authentication emails are ever sent.',
+  );
+}
 
-// Unique per run so stale test users never collide; the domain must be one
-// Supabase accepts (reserved TLDs like .test are rejected), configurable via
-// SUPABASE_TEST_EMAIL_DOMAIN.
-const TEST_EMAIL_DOMAIN = testEnv.SUPABASE_TEST_EMAIL_DOMAIN ?? 'example.com';
+// Test emails default to the reserved, non-deliverable example.com. A
+// different domain may be supplied via SUPABASE_TEST_EMAIL_DOMAIN, but
+// common public providers are refused — fabricated addresses there belong
+// to real people and bounce (which is exactly what triggered Supabase's
+// high-bounce warning). Only a deliberately named unsafe override opens
+// that door.
+const BLOCKED_PUBLIC_EMAIL_DOMAINS = [
+  'gmail.com', 'googlemail.com', 'outlook.com', 'hotmail.com', 'live.com',
+  'yahoo.com', 'icloud.com', 'aol.com', 'proton.me', 'protonmail.com',
+];
+function resolveTestEmailDomain(): string {
+  const requested = (testEnv.SUPABASE_TEST_EMAIL_DOMAIN ?? 'example.com').toLowerCase();
+  const unsafeOverride =
+    testEnv.SUPABASE_TEST_ALLOW_PUBLIC_EMAIL_DOMAIN_UNSAFE === 'true';
+  if (enabled && BLOCKED_PUBLIC_EMAIL_DOMAINS.includes(requested) && !unsafeOverride) {
+    throw new Error(
+      `SUPABASE_TEST_EMAIL_DOMAIN=${requested} is a public email provider — `
+      + 'test addresses there reach (or bounce off) real mailboxes. Use the '
+      + 'default example.com, or set '
+      + 'SUPABASE_TEST_ALLOW_PUBLIC_EMAIL_DOMAIN_UNSAFE=true if you truly '
+      + 'must.',
+    );
+  }
+  return requested;
+}
+const TEST_EMAIL_DOMAIN = resolveTestEmailDomain();
 /**
  * ONE run identifier for the whole test process. Every account email and
  * every test-authored record that could be looked up by name carries it,
@@ -37,9 +75,6 @@ const EMAIL_A = `rls-a-${suffix}@${TEST_EMAIL_DOMAIN}`;
 const EMAIL_B = `rls-b-${suffix}@${TEST_EMAIL_DOMAIN}`;
 const PASSWORD = 'test-password-123';
 
-/** Optional: enables post-run cleanup of THIS run's users only. */
-const serviceKey =
-  testEnv.SUPABASE_TEST_SERVICE_ROLE_KEY ?? testEnv.SUPABASE_SERVICE_ROLE_KEY;
 /** auth user ids created by this run — the only thing cleanup may touch. */
 const runUserIds: string[] = [];
 
@@ -47,18 +82,38 @@ function client(): SupabaseClient {
   return createClient(url!, anonKey!, { auth: { persistSession: false } });
 }
 
+/** Server-only Admin client, used ONLY for user setup and post-run cleanup —
+ * never inside an RLS assertion, and never in any frontend code path. */
+function adminClient(): SupabaseClient {
+  return createClient(url!, serviceKey!, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+
+/**
+ * Create a pre-confirmed test user through the Admin API (email_confirm:
+ * true → Supabase generates NO confirmation email and contacts no mailbox),
+ * then sign in through the ordinary anon client so every subsequent request
+ * runs exactly like a real browser session under RLS.
+ */
 async function signedInClient(email: string): Promise<SupabaseClient> {
+  const created = await adminClient().auth.admin.createUser({
+    email,
+    password: PASSWORD,
+    email_confirm: true,
+  });
+  if (created.error && !/already/i.test(created.error.message)) {
+    throw new Error(`Could not create test user via Admin API: ${created.error.message}`);
+  }
+  if (created.data?.user?.id) runUserIds.push(created.data.user.id);
+
   const c = client();
-  const up = await c.auth.signUp({ email, password: PASSWORD });
-  if (up.error && !up.error.message.includes('already registered')) throw up.error;
   const { error } = await c.auth.signInWithPassword({ email, password: PASSWORD });
   if (error) {
-    throw new Error(
-      `Could not sign in test user (${error.message}). Ensure email confirmations are disabled for the test project.`,
-    );
+    throw new Error(`Could not sign in admin-created test user (${error.message}).`);
   }
   const uid = (await c.auth.getUser()).data.user?.id;
-  if (uid) runUserIds.push(uid);
+  if (uid && !runUserIds.includes(uid)) runUserIds.push(uid);
   return c;
 }
 
@@ -67,12 +122,11 @@ describe.skipIf(!enabled)('RLS integration (requires live Supabase)', () => {
   // service-role admin API, strictly AFTER every assertion has finished.
   // accounts.id references auth.users ON DELETE CASCADE (0002), so each
   // user's test data goes with them. Cleanup never participates in — and
-  // cannot bypass — any RLS assertion; without a service key it is skipped
-  // and RUN_ID-scoped fixtures still keep runs isolated.
+  // cannot bypass — any RLS assertion.
   afterAll(async () => {
-    if (!serviceKey || runUserIds.length === 0) return;
-    const admin = createClient(url!, serviceKey, { auth: { persistSession: false } });
-    for (const id of runUserIds) {
+    if (runUserIds.length === 0) return;
+    const admin = adminClient();
+    for (const id of [...new Set(runUserIds)]) {
       await admin.auth.admin.deleteUser(id).catch(() => undefined);
     }
   }, 60_000);
