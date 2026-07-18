@@ -214,7 +214,7 @@ export default function ProfileDetail() {
         </div>
       </header>
 
-      {/* Stage 2E4B — the test call, then ongoing companionship: the
+      {/* Stage 2E4B — the trial conversation, then ongoing companionship: the
           primary actions of the product, above everything else. */}
       {supabase && user.role === 'companion' && (
         <CompanionPlanHero

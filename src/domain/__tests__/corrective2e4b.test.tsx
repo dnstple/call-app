@@ -256,8 +256,8 @@ describe('test-call flow', () => {
   it('6. opens directly at date & time selection', async () => {
     renderTestCall();
     expect(await screen.findByRole('grid')).toBeTruthy();
-    expect(screen.getByText(/One-time test call/)).toBeTruthy();
-    expect(screen.getByText(/30 minutes · £5\.00 · No commitment/)).toBeTruthy();
+    expect(screen.getAllByText(/Trial conversation/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/30 minutes · £5\.00/)).toBeTruthy();
   });
 
   it('7. never offers package credits, bundles or pay-per-conversation choices', async () => {
@@ -286,25 +286,26 @@ describe('test-call flow', () => {
     expect(screen.getByText('Mary Test')).toBeTruthy();
   });
 
-  it('9+11+28. payment step is honest and in-app, then books the real trial', async () => {
+  it('9+11+28. 2G2: the Supabase pay step is the REAL paid flow — never prototype copy', async () => {
     renderTestCall();
     await screen.findByRole('grid');
     fireEvent.click(screen.getByRole('button', { name: '18:00' }));
     fireEvent.click(screen.getByRole('button', { name: /Continue/ }));
     fireEvent.click(await screen.findByRole('button', { name: /Continue/ }));
 
-    expect(await screen.findByText(/Prototype payment — no payment will be taken/)).toBeTruthy();
-    expect(screen.getByText(IN_APP_CALL_LABEL)).toBeTruthy();
+    // The paid quote path drives this step now. This harness has no Edge
+    // Function, so the HONEST failure state (with retry) must appear —
+    // never prototype-payment wording and never an unpaid fallback.
+    expect(await screen.findByRole('button', { name: 'Try again' })).toBeTruthy();
     const view = screen.getByRole('dialog');
-    // Nothing may claim a payment happened (honest negatives like
-    // "nothing is charged today" are fine and deliberate).
-    expect(view.textContent).not.toMatch(/payment succeeded|paid successfully|card charged|charged your|receipt/i);
-
-    fireEvent.click(screen.getByRole('button', { name: /Request test call/ }));
-    await waitFor(() => expect(mock.rpcCalls.some((c) => c.fn === 'create_booking_request')).toBe(true));
-    const call = mock.rpcCalls.find((c) => c.fn === 'create_booking_request')!;
-    expect(call.args.p_method).toBe('in_app');
-    expect(call.args.p_offer).toBe('o-trial');
+    expect(view.textContent).not.toMatch(/Prototype payment|no payment will be taken|Card payments arrive/i);
+    expect(view.textContent).toContain(IN_APP_CALL_LABEL);
+    // Without a quote the paid action stays disabled…
+    const pay = screen.getByRole('button', { name: /Pay and request conversation/ }) as HTMLButtonElement;
+    expect(pay.disabled).toBe(true);
+    // …and the legacy unpaid booking RPC is never reachable from here.
+    fireEvent.click(pay);
+    expect(mock.rpcCalls.some((c) => c.fn === 'create_booking_request')).toBe(false);
   });
 
   it('10. trial states drive the profile hero (pending / used come from the server)', async () => {
@@ -315,7 +316,7 @@ describe('test-call flow', () => {
         <CompanionPlanHero companion={companion} offers={[trialOffer, singleOffer]} acceptingNewMembers />
       </MemoryRouter>,
     );
-    expect(await screen.findByText(/Test call requested/)).toBeTruthy();
+    expect(await screen.findByText(/Trial conversation requested/)).toBeTruthy();
     pending.unmount();
 
     mock.rpcResults.get_trial_state = { data: 'used', error: null };

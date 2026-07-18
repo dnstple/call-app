@@ -2277,3 +2277,240 @@ describe.skipIf(!enabled)('0025/0027 message requests (requires live Supabase)',
     expect(after.data![0].status).toBe('active');
   }, 60_000);
 });
+
+/* ============================================================
+ * 2G2 — paid requests, credit and financial isolation (live).
+ * Deterministic database finalisation (service-role RPC) stands in for
+ * Stripe webhooks — no real Stripe calls inside this suite.
+ * ============================================================ */
+describe.skipIf(!enabled)('2G2 paid requests (requires live Supabase)', () => {
+  let w: SupabaseClient;  // coordinator with managed member
+  let w2: SupabaseClient; // unrelated coordinator
+  let x: SupabaseClient;  // companion owner
+  let wAccountId: string;
+  let w2AccountId: string;
+  let wMemberId: string;
+  let w2MemberId: string;
+  let xCompanionId: string;
+  let trialOfferId: string;
+  let singleOfferId: string;
+  let slotA: string;
+  let slotB: string;
+  let slotC: string;
+
+  beforeAll(async () => {
+    w = await signedInClient(`rls-w-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    w2 = await signedInClient(`rls-w2-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    x = await signedInClient(`rls-x-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    wAccountId = (await w.auth.getUser()).data.user!.id;
+    w2AccountId = (await w2.auth.getUser()).data.user!.id;
+
+    const wc = await w.rpc('complete_coordinator_signup', {
+      p_first_name: 'PayCoord', p_consent_confirmed: true, p_member_first_name: 'PayMum',
+    });
+    expect(wc.error).toBeNull();
+    wMemberId = (wc.data as { member_profile_id: string }).member_profile_id;
+    const w2c = await w2.rpc('complete_coordinator_signup', {
+      p_first_name: 'OtherCoord', p_consent_confirmed: true, p_member_first_name: 'OtherMum',
+    });
+    expect(w2c.error).toBeNull();
+    w2MemberId = (w2c.data as { member_profile_id: string }).member_profile_id;
+
+    const xc = await x.rpc('complete_companion_signup', {
+      p_first_name: 'PayCompanion', p_date_of_birth: '1985-05-05',
+    });
+    expect(xc.error).toBeNull();
+    xCompanionId = xc.data.id;
+    expect((await x.rpc('replace_companion_availability', {
+      p_profile: xCompanionId, p_timezone: 'Europe/London',
+      p_rules: [1, 2, 3, 4, 5, 6, 7].map((day) => ({ day, start: '09:00', end: '18:00' })),
+    })).error).toBeNull();
+    const trial = await x.from('conversation_offers').insert({
+      companion_profile_id: xCompanionId, offer_type: 'trial',
+      duration_minutes: 30, price_minor: 700, supported_methods: ['in_app'],
+    }).select('id').single();
+    trialOfferId = trial.data!.id;
+    const single = await x.from('conversation_offers').insert({
+      companion_profile_id: xCompanionId, offer_type: 'single',
+      duration_minutes: 30, price_minor: 1400, supported_methods: ['in_app'],
+    }).select('id').single();
+    singleOfferId = single.data!.id;
+
+    const s = await w.rpc('get_available_slots', {
+      p_companion: xCompanionId, p_offer: singleOfferId,
+      p_from: new Date().toISOString(),
+      p_to: new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString(),
+    });
+    const slots = (s.data ?? []) as { slot_start: string }[];
+    expect(slots.length).toBeGreaterThan(6);
+    slotA = slots[0].slot_start;
+    slotB = slots[2].slot_start;
+    slotC = slots[4].slot_start;
+  }, 120_000);
+
+  it('1+2+3+8+9+10. quotes are caller-scoped, server-priced, config-driven', async () => {
+    const q = await w.rpc('quote_paid_request', {
+      p_member: wMemberId, p_companion: xCompanionId, p_offer: trialOfferId,
+    });
+    expect(q.error).toBeNull();
+    expect(q.data.subtotal_minor).toBe(700);          // server-derived price
+    expect(q.data.trial_fee_waived).toBe(true);       // first-five allowance
+    expect(q.data.service_fee_minor).toBe(0);
+    expect(Number(q.data.commission_rate_pct)).toBe(0); // trial commission 0%
+    const q2 = await w.rpc('quote_paid_request', {
+      p_member: wMemberId, p_companion: xCompanionId, p_offer: singleOfferId,
+    });
+    expect(Number(q2.data.commission_rate_pct)).toBe(5); // one-off 5%
+
+    // Another coordinator's member → neutral refusal; companions can't buy.
+    const foreign = await w.rpc('quote_paid_request', {
+      p_member: w2MemberId, p_companion: xCompanionId, p_offer: trialOfferId,
+    });
+    expect(String(foreign.error!.message)).toContain('not_found');
+    const compQuote = await x.rpc('quote_paid_request', {
+      p_member: wMemberId, p_companion: xCompanionId, p_offer: trialOfferId,
+    });
+    expect(compQuote.error).not.toBeNull();
+  });
+
+  it('4. the managed Member never receives a Stripe Customer', async () => {
+    const admin = adminClient();
+    const rows = await admin.from('stripe_customers').select('account_id');
+    expect((rows.data ?? []).some((r) => r.account_id === wMemberId)).toBe(false);
+  });
+
+  it('14+15+16+17+20. credit: private, member-flexible, coordinator-locked, no-Stripe when covering', async () => {
+    const admin = adminClient();
+    // Service-role credit issue (support adjustment fixture).
+    const issued = await admin.rpc('issue_account_credit', {
+      p_account: wAccountId, p_amount: 5000, p_source_type: 'support_adjustment',
+      p_source: null, p_reason: 'live test credit', p_idempotency: `credit-${suffix}-w`,
+    });
+    expect(issued.error).toBeNull();
+
+    // Private to the owner.
+    expect((await w.from('credit_ledger').select('id')).data!.length).toBeGreaterThan(0);
+    expect((await w2.from('credit_ledger').select('id')).data ?? []).toHaveLength(0);
+
+    // Credit fully covers the trial → atomic success, NO card, booking funded.
+    const created = await w.rpc('create_paid_request', {
+      p_member: wMemberId, p_companion: xCompanionId, p_offer: trialOfferId,
+      p_starts_at: slotA, p_idempotency: `order-${suffix}-a`,
+    });
+    expect(created.error).toBeNull();
+    expect(created.data.status).toBe('succeeded');
+    expect(created.data.card_amount_minor).toBe(0);
+
+    // Duplicate idempotency key → the SAME order, no second charge/booking.
+    const replay = await w.rpc('create_paid_request', {
+      p_member: wMemberId, p_companion: xCompanionId, p_offer: trialOfferId,
+      p_starts_at: slotA, p_idempotency: `order-${suffix}-a`,
+    });
+    expect(replay.data.order_id).toBe(created.data.order_id);
+
+    // 13. the pair is now permanently used for trials.
+    const again = await w.rpc('quote_paid_request', {
+      p_member: wMemberId, p_companion: xCompanionId, p_offer: trialOfferId,
+    });
+    expect(String(again.error!.message)).toContain('not_eligible');
+  });
+
+  it('21+22+23+26. unfunded orders are invisible; finalisation exposes ONE booking, idempotently', async () => {
+    const admin = adminClient();
+    // One-off with credit remaining → part credit, part "card" (pending).
+    const created = await w.rpc('create_paid_request', {
+      p_member: wMemberId, p_companion: xCompanionId, p_offer: singleOfferId,
+      p_starts_at: slotB, p_idempotency: `order-${suffix}-b`,
+    });
+    expect(created.error).toBeNull();
+    const orderId = created.data.order_id as string;
+    const bookingsBefore = await x.from('bookings').select('id')
+      .eq('companion_profile_id', xCompanionId).eq('starts_at', slotB);
+    if (created.data.status !== 'succeeded') {
+      // Pending card shortfall: the Companion sees NOTHING yet.
+      expect(bookingsBefore.data ?? []).toHaveLength(0);
+      // Browsers cannot finalise…
+      const forged = await w.rpc('finalize_paid_order', {
+        p_order: orderId, p_outcome: 'succeeded', p_intent: null,
+      });
+      expect(forged.error).not.toBeNull();
+      // …the service role can, exactly once.
+      expect((await admin.rpc('finalize_paid_order', {
+        p_order: orderId, p_outcome: 'succeeded', p_intent: null,
+      })).error).toBeNull();
+      expect((await admin.rpc('finalize_paid_order', {
+        p_order: orderId, p_outcome: 'succeeded', p_intent: null,
+      })).error).toBeNull(); // replay is a no-op
+    }
+    const funded = await x.from('bookings').select('id, status')
+      .eq('companion_profile_id', xCompanionId).eq('starts_at', slotB);
+    expect(funded.data).toHaveLength(1);
+    expect(funded.data![0].status).toBe('requested');
+  });
+
+  it('27+28+29. decline credits the FULL total exactly once — never a card refund', async () => {
+    const admin = adminClient();
+    const before = await w.rpc('get_credit_summary');
+    const beforeMinor = Number(before.data.available_minor);
+
+    const funded = await x.from('bookings').select('id')
+      .eq('companion_profile_id', xCompanionId).eq('starts_at', slotB).single();
+    expect((await x.rpc('decline_booking', { p_booking: funded.data!.id })).error).toBeNull();
+
+    const order = await w.from('payment_orders').select('status, total_minor')
+      .eq('idempotency_key', `order-${suffix}-b`).single();
+    expect(order.data!.status).toBe('credited'); // not refunded
+    const after = await w.rpc('get_credit_summary');
+    expect(Number(after.data.available_minor)).toBe(beforeMinor + order.data!.total_minor);
+
+    // Coordinator receives the credit notification, not a "refund".
+    const notes = await w.from('notifications').select('type, body').eq('type', 'credit_issued');
+    expect((notes.data ?? []).length).toBeGreaterThanOrEqual(1);
+    expect(notes.data![0].body).not.toMatch(/refund/i);
+  });
+
+  it('24. payment failure releases the reserved credit', async () => {
+    const admin = adminClient();
+    const before = Number((await w.rpc('get_credit_summary')).data.available_minor);
+    const created = await w.rpc('create_paid_request', {
+      p_member: wMemberId, p_companion: xCompanionId, p_offer: singleOfferId,
+      p_starts_at: slotC, p_idempotency: `order-${suffix}-c`,
+    });
+    expect(created.error).toBeNull();
+    if (created.data.status === 'succeeded') return; // credit covered everything
+    expect((await admin.rpc('finalize_paid_order', {
+      p_order: created.data.order_id, p_outcome: 'failed', p_intent: null,
+    })).error).toBeNull();
+    const after = Number((await w.rpc('get_credit_summary')).data.available_minor);
+    expect(after).toBe(before); // reservation fully returned
+  });
+
+  it('30+31+32+33+34. financial isolation holds for everyone else', async () => {
+    // Unrelated coordinator sees nothing of w's money.
+    expect((await w2.from('payment_orders').select('id')).data ?? []).toHaveLength(0);
+    // The companion sees neither card nor credit records.
+    expect((await x.from('stripe_customers').select('*')).data ?? []).toHaveLength(0);
+    expect((await x.from('credit_ledger').select('*')).data ?? []).toHaveLength(0);
+    // Anonymous: nothing at all.
+    const anon = client();
+    expect((await anon.from('payment_orders').select('id')).data ?? []).toHaveLength(0);
+    expect((await anon.from('credit_ledger').select('id')).data ?? []).toHaveLength(0);
+    // Browsers cannot write authoritative rows.
+    const forgedOrder = await w.from('payment_orders').insert({
+      coordinator_account_id: wAccountId, order_type: 'one_off', subtotal_minor: 1,
+      total_minor: 1, commission_rate_pct: 0, idempotency_key: `forged-${suffix}`,
+    });
+    expect(forgedOrder.error).not.toBeNull();
+    const forgedCredit = await w.from('credit_ledger').insert({
+      coordinator_account_id: wAccountId, entry_type: 'credit', source_type: 'support_adjustment',
+      amount_minor: 100000, remaining_minor: 100000, reason: 'forged',
+      idempotency_key: `forged-credit-${suffix}`, expires_at: new Date().toISOString(),
+    });
+    expect(forgedCredit.error).not.toBeNull();
+    // Service-role helpers are unreachable from sessions.
+    expect((await w.rpc('issue_account_credit', {
+      p_account: wAccountId, p_amount: 100, p_source_type: 'support_adjustment',
+      p_source: null, p_reason: 'x', p_idempotency: `forged-issue-${suffix}`,
+    })).error).not.toBeNull();
+  });
+});

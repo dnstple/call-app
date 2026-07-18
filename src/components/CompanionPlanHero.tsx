@@ -145,20 +145,20 @@ export function CompanionPlanHero({
 
       {/* 1. The one-time test call — no commitment, disappears once used. */}
       {showTrialCard && (
-        <div className="card card-tight row between wrap" style={{ gap: 10 }} aria-label="Test call">
+        <div className="card card-tight row between wrap" style={{ gap: 10 }} aria-label="Trial conversation">
           <div className="col" style={{ gap: 2 }}>
             <span className="row bold" style={{ gap: 8 }}>
-              <Sparkles size={16} aria-hidden="true" /> Book a test call
+              <Sparkles size={16} aria-hidden="true" /> Book a trial conversation
             </span>
             <span className="faint">
               {trialOffer!.duration_minutes} minutes · {formatMinor(trialOffer!.price_minor)} · No commitment
             </span>
           </div>
           {trial === 'pending' ? (
-            <span className="badge badge-neutral">Test call requested</span>
+            <span className="badge badge-neutral">Trial conversation requested</span>
           ) : (
             <button className="btn btn-secondary btn-small" onClick={() => setTrialOpen(true)}>
-              Book a test call
+              Book a trial conversation
             </button>
           )}
         </div>

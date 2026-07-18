@@ -176,6 +176,93 @@ Deno.serve(async (req) => {
       });
     }
 
+    // ---------- 2G2: paid trial / one-off requests ----------
+    if (action === 'quote_paid_request') {
+      const { data, error } = await authed.rpc('quote_paid_request', {
+        p_member: body.memberProfileId, p_companion: body.companionProfileId, p_offer: body.offerId,
+      });
+      if (error) return json({ error: 'quote_failed', detail: error.message }, 200);
+      return json({ ok: true, quote: data });
+    }
+
+    if (action === 'create_paid_request') {
+      // Server-side order first (credit reserved, prices snapshotted).
+      const { data: created, error } = await authed.rpc('create_paid_request', {
+        p_member: body.memberProfileId, p_companion: body.companionProfileId,
+        p_offer: body.offerId, p_starts_at: body.startsAt,
+        p_idempotency: body.idempotencyKey,
+      });
+      if (error) return json({ error: 'request_failed', detail: error.message }, 200);
+      const order = created as { order_id: string; status: string; card_amount_minor: number };
+      // Credit-only orders finalised atomically — NO PaymentIntent exists.
+      if (order.status === 'succeeded' || order.card_amount_minor === 0) {
+        return json({ ok: true, orderId: order.order_id, state: 'succeeded', fundedByCreditOnly: true });
+      }
+      const { customerId } = await ensureCustomer();
+      const { data: cust } = await admin.from('stripe_customers')
+        .select('default_payment_method_id').eq('account_id', user.id).maybeSingle();
+      if (!cust?.default_payment_method_id) {
+        return json({ ok: false, orderId: order.order_id, state: 'payment_method_required' }, 200);
+      }
+      try {
+        const intent = await stripe.paymentIntents.create(
+          {
+            amount: order.card_amount_minor,
+            currency: 'gbp',
+            customer: customerId,
+            payment_method: cust.default_payment_method_id,
+            off_session: true,
+            confirm: true,
+            metadata: { payment_order_id: order.order_id, account_id: user.id },
+          },
+          { idempotencyKey: `order-${order.order_id}` },
+        );
+        // The webhook — never this response — finalises the order.
+        return json({ ok: true, orderId: order.order_id, state: intent.status });
+      } catch (err) {
+        const stripeErr = err as { code?: string; raw?: { payment_intent?: { id?: string } } };
+        if (stripeErr.code === 'authentication_required') {
+          // Hosted confirmation path: a payment-mode Checkout Session for
+          // the exact card shortfall (no frontend SDK needed).
+          const allowed = (Deno.env.get('APP_ORIGINS') ?? 'http://localhost:5173')
+            .split(',').map((s) => s.trim()).filter(Boolean);
+          const requested = typeof body.origin === 'string' ? body.origin : '';
+          const origin = allowed.includes(requested) ? requested : allowed[0];
+          const session = await stripe.checkout.sessions.create(
+            {
+              mode: 'payment',
+              customer: customerId,
+              line_items: [{
+                price_data: {
+                  currency: 'gbp', unit_amount: order.card_amount_minor,
+                  product_data: { name: 'Conversation request' },
+                },
+                quantity: 1,
+              }],
+              payment_intent_data: { metadata: { payment_order_id: order.order_id } },
+              metadata: { payment_order_id: order.order_id },
+              success_url: `${origin}/#/conversations?payment=success`,
+              cancel_url: `${origin}/#/conversations?payment=cancelled`,
+            },
+            { idempotencyKey: `order-session-${order.order_id}` },
+          );
+          return json({ ok: true, orderId: order.order_id, state: 'requires_action', url: session.url });
+        }
+        // Card declined etc. → release the reservation via finalisation.
+        await admin.rpc('finalize_paid_order', {
+          p_order: order.order_id, p_outcome: 'failed', p_intent: null,
+        });
+        return json({ ok: false, orderId: order.order_id, state: 'failed' }, 200);
+      }
+    }
+
+    if (action === 'payment_state') {
+      const { data: row } = await authed.from('payment_orders')
+        .select('id, status, card_amount_minor, credit_applied_minor, total_minor')
+        .eq('id', body.orderId).maybeSingle();
+      return json({ ok: true, order: row ?? null });
+    }
+
     return json({ error: 'unknown_action' }, 400);
   } catch (e) {
     return json({ error: 'stripe_error', detail: e instanceof Error ? e.message : 'unknown' }, 200);

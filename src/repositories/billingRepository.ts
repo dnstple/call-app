@@ -61,6 +61,78 @@ export async function createSetupSession(): Promise<string | null> {
   return (data as { url?: string }).url ?? null;
 }
 
+/* ---------------- 2G2: paid requests ---------------- */
+
+export interface PaidRequestQuote {
+  type: 'trial' | 'one_off';
+  subtotalMinor: number;
+  serviceFeeMinor: number;
+  trialFeeWaived: boolean;
+  creditAppliedMinor: number;
+  cardAmountMinor: number;
+  totalMinor: number;
+  durationMinutes: number;
+}
+
+export async function quotePaidRequest(
+  memberProfileId: string, companionProfileId: string, offerId: string,
+): Promise<PaidRequestQuote> {
+  const { data, error } = await getSupabaseClient().functions.invoke('stripe-payments', {
+    body: { action: 'quote_paid_request', memberProfileId, companionProfileId, offerId },
+  });
+  const q = (data as { quote?: Record<string, unknown>; error?: string; detail?: string }) ?? {};
+  if (error || q.error || !q.quote) {
+    throw new Error(String(q.detail ?? 'We couldn’t price this conversation just now.'));
+  }
+  const r = q.quote;
+  return {
+    type: r.type as 'trial' | 'one_off',
+    subtotalMinor: Number(r.subtotal_minor),
+    serviceFeeMinor: Number(r.service_fee_minor),
+    trialFeeWaived: Boolean(r.trial_fee_waived),
+    creditAppliedMinor: Number(r.credit_applied_minor),
+    cardAmountMinor: Number(r.card_amount_minor),
+    totalMinor: Number(r.total_minor),
+    durationMinutes: Number(r.duration_minutes),
+  };
+}
+
+export interface PaidRequestResult {
+  orderId: string;
+  state: string; // succeeded | processing | requires_action | payment_method_required | failed
+  url?: string;  // hosted authentication, when required
+  fundedByCreditOnly?: boolean;
+}
+
+export async function createPaidRequest(input: {
+  memberProfileId: string; companionProfileId: string; offerId: string;
+  startsAt: string; idempotencyKey: string;
+}): Promise<PaidRequestResult> {
+  const { data, error } = await getSupabaseClient().functions.invoke('stripe-payments', {
+    body: {
+      action: 'create_paid_request',
+      memberProfileId: input.memberProfileId,
+      companionProfileId: input.companionProfileId,
+      offerId: input.offerId,
+      startsAt: input.startsAt,
+      idempotencyKey: input.idempotencyKey,
+      origin: window.location.origin,
+    },
+  });
+  const r = (data as PaidRequestResult & { error?: string; detail?: string }) ?? { orderId: '', state: 'failed' };
+  if (error || r.error) throw new Error(String(r.detail ?? 'We couldn’t take your payment. Please try again.'));
+  return r;
+}
+
+/** Safe payment-order state (RLS: the coordinator's own orders only). */
+export async function getPaymentOrderState(orderId: string): Promise<string | null> {
+  const { data, error } = await getSupabaseClient().functions.invoke('stripe-payments', {
+    body: { action: 'payment_state', orderId },
+  });
+  if (error || !data) return null;
+  return ((data as { order?: { status?: string } }).order?.status) ?? null;
+}
+
 export async function removePaymentMethod(): Promise<boolean> {
   const { data, error } = await getSupabaseClient().functions.invoke('stripe-payments', {
     body: { action: 'remove_payment_method' },

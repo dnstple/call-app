@@ -180,15 +180,15 @@ describe('Companion profile hero', () => {
 
   it('offers the one-time test call while it is available', async () => {
     render(<CompanionPlanHero companion={companion} offers={[trialOffer, singleOffer]} acceptingNewMembers />);
-    expect(await screen.findByRole('button', { name: /Book a test call/ })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: /Book a trial conversation/ })).toBeTruthy();
     expect(screen.getByText(/30 minutes · £5\.00 · No commitment/)).toBeTruthy();
   });
 
   it('shows “Test call requested” while one is pending', async () => {
     mock.rpcResults.get_trial_state = { data: 'pending', error: null };
     render(<CompanionPlanHero companion={companion} offers={[trialOffer, singleOffer]} acceptingNewMembers />);
-    expect(await screen.findByText(/Test call requested/)).toBeTruthy();
-    expect(screen.queryByRole('button', { name: /Book a test call/ })).toBeNull();
+    expect(await screen.findByText(/Trial conversation requested/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Book a trial conversation/ })).toBeNull();
   });
 
   it('hides the test call permanently once used — plans remain', async () => {

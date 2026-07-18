@@ -8,8 +8,14 @@
  * sends members, companions, durations or prices as authority — only ids,
  * a start time and a method. No payment is taken anywhere.
  */
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import {
+  createPaidRequest,
+  getPaymentOrderState,
+  quotePaidRequest,
+  type PaidRequestQuote,
+} from '../repositories/billingRepository';
 import { ArrowLeft, CalendarDays, Loader2, Package, X } from 'lucide-react';
 import type { ConversationOfferRow } from '../supabase/database.types';
 import type { User } from '../types';
@@ -220,20 +226,83 @@ export function SupabaseBookingWizard({
   const durationMinutes =
     selection?.kind === 'offer' ? selection.offer.duration_minutes : selection?.pack.purchase.duration_minutes;
 
+  // 2G2: server-derived quote for offer selections at the review step.
+  const [quote, setQuote] = useState<PaidRequestQuote | null>(null);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [payState, setPayState] = useState<string | null>(null);
+  // ONE idempotency key per attempt (member+offer+slot): refresh, double
+  // click and Stripe returns all reuse it — one order, one charge.
+  const idempotencyRef = useRef<string>('');
+  useEffect(() => {
+    if (step !== 'review' || !selection || selection.kind !== 'offer' || !slot || !member) return;
+    idempotencyRef.current = `req-${member.id}-${selection.offer.id}-${slot.startsAt}`;
+    setQuote(null);
+    setQuoteError(null);
+    setPayState(null);
+    quotePaidRequest(member.id, companion.id, selection.offer.id)
+      .then(setQuote)
+      .catch((e) => setQuoteError(e instanceof Error ? e.message : 'We couldn’t price this conversation just now.'));
+  }, [step, selection, slot, member, companion.id]);
+
+  const submitPaid = useCallback(async () => {
+    if (!selection || selection.kind !== 'offer' || !slot || !member) return;
+    const result = await createPaidRequest({
+      memberProfileId: member.id,
+      companionProfileId: companion.id,
+      offerId: selection.offer.id,
+      startsAt: slot.startsAt,
+      idempotencyKey: idempotencyRef.current,
+    });
+    if (result.state === 'payment_method_required') {
+      setPayState('payment_method_required');
+      setSubmitting(false);
+      return;
+    }
+    if (result.state === 'requires_action' && result.url) {
+      setPayState('redirecting');
+      window.location.href = result.url; // Stripe-hosted authentication
+      return;
+    }
+    if (result.state === 'failed') {
+      setError('Your payment didn’t go through. No request was sent — please try again.');
+      setSubmitting(false);
+      return;
+    }
+    // Poll the safe order state until the WEBHOOK confirms funding.
+    setPayState('confirming');
+    for (let i = 0; i < 20; i += 1) {
+      const status = await getPaymentOrderState(result.orderId);
+      if (status === 'succeeded') {
+        setPayState('succeeded');
+        setSubmitting(false);
+        setTimeout(() => {
+          onClose();
+          navigate('/conversations');
+        }, 1600);
+        return;
+      }
+      if (status === 'failed' || status === 'expired') {
+        setPayState(null);
+        setError('Your payment didn’t go through. No request was sent — please try again.');
+        setSubmitting(false);
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+    // Still pending: honest holding state (webhook may land shortly).
+    setSubmitting(false);
+  }, [selection, slot, member, companion.id, navigate, onClose]);
+
   const submit = useCallback(async () => {
     if (!selection || !slot || !member || submitting) return; // duplicate-click protection
     setSubmitting(true);
     setError(null);
     try {
-      const booking =
-        selection.kind === 'offer'
-          ? await createBookingRequest({
-              memberProfileId: member.id,
-              offerId: selection.offer.id,
-              startsAt: slot.startsAt,
-              communicationMethod: method,
-            })
-          : await createPackageBookingRequest(selection.pack.purchase.id, slot.startsAt, method);
+      if (selection.kind === 'offer') {
+        await submitPaid();
+        return;
+      }
+      const booking = await createPackageBookingRequest(selection.pack.purchase.id, slot.startsAt, method);
       onClose();
       navigate(`/conversations/${booking.id}`);
     } catch (e) {
@@ -406,20 +475,60 @@ export function SupabaseBookingWizard({
           </div>
 
           {selection.kind === 'offer' ? (
-            <div className="card card-tight col" style={{ gap: 4 }}>
-              <div className="row between">
-                <span className="muted">Conversation price</span>
-                <span className="bold">{formatMinor(selection.offer.price_minor)}</span>
-              </div>
-              {fee && (
-                <div className="row between">
-                  <span className="muted">Estimated platform fee ({fee.ratePct}%)</span>
-                  <span>{formatMinor(fee.feeMinor)}</span>
-                </div>
+            /* 2G2: the complete SERVER-derived quote before any submission. */
+            <div className="card card-tight col" style={{ gap: 4 }} aria-label="Payment summary">
+              {quote === null && !quoteError && (
+                <span className="row" style={{ gap: 8 }}>
+                  <Loader2 size={16} aria-hidden="true" />
+                  <span className="muted">Calculating your total…</span>
+                </span>
               )}
-              <p className="faint" style={{ margin: '6px 0 0' }}>
-                No payment will be taken yet. Payments will be added in a later stage.
-              </p>
+              {quoteError && <p className="small" role="alert" style={{ margin: 0, color: 'var(--color-danger-text)' }}>{quoteError}</p>}
+              {quote && (
+                <>
+                  <div className="row between">
+                    <span className="muted">Conversation price</span>
+                    <span className="bold">{formatMinor(quote.subtotalMinor)}</span>
+                  </div>
+                  <div className="row between">
+                    <span className="muted">Service fee</span>
+                    <span>
+                      {quote.trialFeeWaived
+                        ? <span className="pill pill-ready">Trial service fee waived</span>
+                        : formatMinor(quote.serviceFeeMinor)}
+                    </span>
+                  </div>
+                  {quote.creditAppliedMinor > 0 && (
+                    <div className="row between">
+                      <span className="muted">Account credit applied</span>
+                      <span>−{formatMinor(quote.creditAppliedMinor)}</span>
+                    </div>
+                  )}
+                  <div className="row between">
+                    <span className="muted">Card amount</span>
+                    <span className="bold">{formatMinor(quote.cardAmountMinor)}</span>
+                  </div>
+                  <div className="row between" style={{ borderTop: '1px solid var(--color-border)', paddingTop: 6 }}>
+                    <span className="bold">Total</span>
+                    <span className="bold">{formatMinor(quote.totalMinor)}</span>
+                  </div>
+                </>
+              )}
+              {payState === 'payment_method_required' && (
+                <p className="small" role="alert" style={{ margin: '6px 0 0' }}>
+                  A saved payment method is needed first.{' '}
+                  <Link to="/settings">Add payment method</Link> — your selections
+                  here are kept while you do.
+                </p>
+              )}
+              {payState === 'confirming' && (
+                <p className="small" role="status" style={{ margin: '6px 0 0' }}>Payment is being confirmed.</p>
+              )}
+              {payState === 'succeeded' && (
+                <p className="small" role="status" style={{ margin: '6px 0 0', color: 'var(--color-success-text)' }}>
+                  Payment received. Waiting for the Companion’s response.
+                </p>
+              )}
             </div>
           ) : (
             <div className="card card-tight col" style={{ gap: 4 }}>
@@ -437,8 +546,18 @@ export function SupabaseBookingWizard({
             <button className="btn btn-ghost" onClick={() => setStep('time')} disabled={submitting}>
               <ArrowLeft size={16} aria-hidden="true" /> Back
             </button>
-            <button className="btn btn-primary" onClick={() => void submit()} disabled={submitting || !method}>
-              {submitting ? 'Sending…' : 'Send request'}
+            <button
+              className="btn btn-primary"
+              onClick={() => void submit()}
+              disabled={submitting || !method || (selection.kind === 'offer' && !quote)}
+            >
+              {submitting
+                ? 'Processing…'
+                : selection.kind !== 'offer'
+                  ? 'Send request'
+                  : quote && quote.cardAmountMinor === 0
+                    ? 'Use credit and request conversation'
+                    : 'Pay and request conversation'}
             </button>
           </div>
         </div>

@@ -86,13 +86,15 @@ Deno.serve(async (req) => {
       case 'checkout.session.completed': {
         const session = event.data.object as Stripe.Checkout.Session;
         const orderId = session.metadata?.payment_order_id;
-        if (orderId) {
-          await admin.from('payment_orders').update({
-            status: 'succeeded',
-            stripe_payment_intent_id: typeof session.payment_intent === 'string' ? session.payment_intent : null,
-            updated_at: new Date().toISOString(),
-          }).eq('id', orderId).eq('provider', 'stripe_test');
-          result = 'order_succeeded';
+        if (orderId && session.mode === 'payment') {
+          // 2G2: exactly-once finalisation (order lock inside the RPC)
+          // creates the funded booking and completes credit consumption.
+          await admin.rpc('finalize_paid_order', {
+            p_order: orderId,
+            p_outcome: 'succeeded',
+            p_intent: typeof session.payment_intent === 'string' ? session.payment_intent : null,
+          });
+          result = 'order_finalised';
         }
         break;
       }
@@ -100,12 +102,10 @@ Deno.serve(async (req) => {
         const pi = event.data.object as Stripe.PaymentIntent;
         const orderId = pi.metadata?.payment_order_id;
         if (orderId && pi.currency?.toUpperCase() === 'GBP') {
-          await admin.from('payment_orders').update({
-            status: 'succeeded',
-            stripe_payment_intent_id: pi.id,
-            updated_at: new Date().toISOString(),
-          }).eq('id', orderId).eq('provider', 'stripe_test');
-          result = 'order_succeeded';
+          await admin.rpc('finalize_paid_order', {
+            p_order: orderId, p_outcome: 'succeeded', p_intent: pi.id,
+          });
+          result = 'order_finalised';
         }
         break;
       }
@@ -114,12 +114,10 @@ Deno.serve(async (req) => {
         const pi = event.data.object as Stripe.PaymentIntent;
         const orderId = pi.metadata?.payment_order_id;
         if (orderId) {
-          await admin.from('payment_orders').update({
-            status: 'failed',
-            failure_reason: pi.last_payment_error?.code ?? event.type,
-            updated_at: new Date().toISOString(),
-          }).eq('id', orderId).eq('provider', 'stripe_test')
-            .in('status', ['pending', 'requires_action', 'processing']);
+          // Releases the credit reservation and frees the slot hold.
+          await admin.rpc('finalize_paid_order', {
+            p_order: orderId, p_outcome: 'failed', p_intent: pi.id,
+          });
           result = 'order_failed';
         }
         break;
