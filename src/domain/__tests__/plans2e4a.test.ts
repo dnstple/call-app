@@ -77,6 +77,7 @@ function plan(partial: Partial<ConversationPlanRow> = {}): ConversationPlanRow {
     communication_method: 'phone', per_conversation_price_minor: 900,
     weekly_price_minor: 2700, currency: 'GBP', status: 'active',
     allowance_purchase_id: 'pp1', pending_change: null, generated_until: null,
+    pause_reason: null, resume_on: null,
     request_message: null, response_message: null,
     paused_at: null, ended_at: null, end_reason: null, created_at: '', updated_at: '',
     ...partial,
@@ -240,7 +241,7 @@ describe('material changes require Companion re-acceptance', () => {
 
   it('accepting a change regenerates the window', async () => {
     const result = await acceptPlanChange('plan1');
-    expect(mock.rpcCalls[0]).toEqual({ fn: 'accept_plan_change', args: { p_plan: 'plan1' } });
+    expect(mock.rpcCalls[0]).toEqual({ fn: 'accept_plan_change', args: { p_plan: 'plan1', p_message: null } });
     expect(result.generated).toBe(12);
   });
 
@@ -260,7 +261,7 @@ describe('material changes require Companion re-acceptance', () => {
 describe('occurrence-level actions never require re-acceptance', () => {
   it('pause cancels future occurrences (credits release server-side)', async () => {
     const result = await pausePlan('plan1');
-    expect(mock.rpcCalls[0]).toEqual({ fn: 'pause_plan', args: { p_plan: 'plan1' } });
+    expect(mock.rpcCalls[0]).toEqual({ fn: 'pause_plan', args: { p_plan: 'plan1', p_reason: null, p_resume_on: null } });
     expect(result.cancelled).toBe(6);
     expect(result.status).toBe('paused');
   });

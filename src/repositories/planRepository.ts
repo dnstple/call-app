@@ -69,6 +69,9 @@ export type PlanErrorCode =
   | 'trial_used'
   | 'recurring_conflict'
   | 'message_locked'
+  | 'reschedule_closed'
+  | 'issue_not_found'
+  | 'already_resolved'
   | 'network_failure'
   | 'unknown';
 
@@ -112,6 +115,15 @@ export function mapPlanError(e: any): PlanError {
   }
   if (msg.includes('message_locked')) {
     return new PlanError('The message can no longer be changed.', 'conflict', 'message_locked');
+  }
+  if (msg.includes('reschedule_closed')) {
+    return new PlanError('Changes close two hours before a conversation starts.', 'conflict', 'reschedule_closed');
+  }
+  if (msg.includes('issue_not_found')) {
+    return new PlanError('We couldn’t find that scheduling issue — it may already be sorted.', 'not_found', 'issue_not_found');
+  }
+  if (msg.includes('already_resolved')) {
+    return new PlanError('This conversation has already been rearranged.', 'conflict', 'already_resolved');
   }
   if (msg.includes('under_18')) {
     return new PlanError('You must be at least 18 to use this service.', 'validation', 'unauthorised');
@@ -471,8 +483,17 @@ export async function extendPlanBookings(planId: string): Promise<PlanGeneration
 
 /* ---------------- Occurrence-level actions (no re-acceptance) ---------------- */
 
-export async function pausePlan(planId: string): Promise<PlanActionResultPayload> {
-  const { data, error } = await getSupabaseClient().rpc('pause_plan', { p_plan: planId });
+export async function pausePlan(
+  planId: string,
+  reason?: string,
+  /** Optional planned resume date, yyyy-mm-dd (informational). */
+  resumeOn?: string,
+): Promise<PlanActionResultPayload> {
+  const { data, error } = await getSupabaseClient().rpc('pause_plan', {
+    p_plan: planId,
+    p_reason: reason?.trim() || null,
+    p_resume_on: resumeOn || null,
+  });
   if (error) throw mapPlanError(error);
   return data as PlanActionResultPayload;
 }
@@ -520,16 +541,60 @@ export async function proposePlanChange(
   return data as ConversationPlanRow;
 }
 
-export async function acceptPlanChange(planId: string): Promise<PlanActionResultPayload> {
-  const { data, error } = await getSupabaseClient().rpc('accept_plan_change', { p_plan: planId });
+export async function acceptPlanChange(
+  planId: string,
+  message?: string,
+): Promise<PlanActionResultPayload> {
+  const { data, error } = await getSupabaseClient().rpc('accept_plan_change', {
+    p_plan: planId,
+    p_message: message?.trim() || null,
+  });
   if (error) throw mapPlanError(error);
   return data as PlanActionResultPayload;
 }
 
-export async function declinePlanChange(planId: string): Promise<ConversationPlanRow> {
-  const { data, error } = await getSupabaseClient().rpc('decline_plan_change', { p_plan: planId });
+export async function declinePlanChange(
+  planId: string,
+  message?: string,
+): Promise<ConversationPlanRow> {
+  const { data, error } = await getSupabaseClient().rpc('decline_plan_change', {
+    p_plan: planId,
+    p_message: message?.trim() || null,
+  });
   if (error) throw mapPlanError(error);
   return data as ConversationPlanRow;
+}
+
+/* ---------------- Occurrence-level management (2E4D) ---------------- */
+
+/** Deliberately skip ONE generated conversation. Allowance is released and
+ * the occurrence is never regenerated. Respects the two-hour cutoff. */
+export async function skipPlanOccurrence(bookingId: string): Promise<PlanActionResultPayload> {
+  const { data, error } = await getSupabaseClient().rpc('skip_plan_occurrence', {
+    p_booking: bookingId,
+  });
+  if (error) throw mapPlanError(error);
+  return data as PlanActionResultPayload;
+}
+
+/**
+ * Choose a replacement time for an occurrence that couldn't be scheduled.
+ * The SERVER re-checks availability, notice, horizon, the two-hour cutoff
+ * and both diaries; a second resolution of the same issue is refused.
+ */
+export async function resolvePlanOccurrence(
+  planId: string,
+  intendedStart: string,
+  newStart: string,
+): Promise<{ planId: string; bookingId: string; startsAt: string }> {
+  const { data, error } = await getSupabaseClient().rpc('resolve_plan_occurrence', {
+    p_plan: planId,
+    p_intended_start: intendedStart,
+    p_new_start: newStart,
+  });
+  if (error) throw mapPlanError(error);
+  const d = data as { plan_id: string; booking_id: string; starts_at: string };
+  return { planId: d.plan_id, bookingId: d.booking_id, startsAt: d.starts_at };
 }
 
 /* ---------------- Reads ---------------- */

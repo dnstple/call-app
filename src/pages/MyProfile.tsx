@@ -54,6 +54,8 @@ export default function MyProfile() {
     if (supabase) getInterests().then(setCatalogue).catch(() => setCatalogue([]));
   }, [supabase]);
 
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+
   async function onAvatarChosen(file: File | undefined) {
     if (!file || avatarBusy) return;
     const problem = validateAvatarFile(file);
@@ -61,6 +63,10 @@ export default function MyProfile() {
       pushToast(problem, 'danger');
       return;
     }
+    // Instant preview while the photo processes and uploads; the temporary
+    // object URL is always revoked. On failure the previous photo remains.
+    const preview = URL.createObjectURL(file);
+    setAvatarPreview(preview);
     setAvatarBusy(true);
     try {
       await uploadAvatar(me.id, file);
@@ -70,6 +76,8 @@ export default function MyProfile() {
       pushToast(e instanceof RepoError ? e.message : 'We couldn’t upload that image.', 'danger');
     } finally {
       setAvatarBusy(false);
+      setAvatarPreview(null);
+      URL.revokeObjectURL(preview);
     }
   }
 
@@ -82,7 +90,17 @@ export default function MyProfile() {
       </div>
 
       <header className="row wrap" style={{ gap: 24, alignItems: 'flex-start' }}>
-        <ProfilePhoto user={me} size={120} radius={24} />
+        {avatarPreview ? (
+          <img
+            src={avatarPreview}
+            alt=""
+            width={120}
+            height={120}
+            style={{ borderRadius: 24, objectFit: 'cover', opacity: 0.7 }}
+          />
+        ) : (
+          <ProfilePhoto user={me} size={120} radius={24} />
+        )}
         <div className="col grow" style={{ gap: 6 }}>
           <h1 style={{ margin: 0 }}>{me.firstName} {me.lastName}</h1>
           <div className="muted">{roleLabel(me.role)} · {me.region}</div>
@@ -98,7 +116,7 @@ export default function MyProfile() {
               </button>
               {supabase && (
                 <label className="btn btn-ghost btn-small" style={{ cursor: 'pointer' }}>
-                  {avatarBusy ? 'Uploading…' : 'Change photo'}
+                  {avatarBusy ? 'Processing & uploading…' : 'Change photo'}
                   <input
                     type="file"
                     accept="image/jpeg,image/png,image/webp"

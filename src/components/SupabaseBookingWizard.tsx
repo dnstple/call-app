@@ -328,11 +328,11 @@ export function SupabaseBookingWizard({
           {packages === null ? (
             <div className="row" style={{ gap: 10 }}>
               <Loader2 size={16} aria-hidden="true" />
-              <span className="faint">Checking your packages…</span>
+              <span className="faint">Checking your remaining conversations…</span>
             </div>
           ) : packages.length > 0 ? (
             <div>
-              <div className="bold mb-2">Use a package credit</div>
+              <div className="bold mb-2">Use a conversation you already have</div>
               <div className="col" style={{ gap: 8 }}>
                 {packages.map((p) => (
                   <label key={p.purchase.id} className="card card-tight row between" style={{ cursor: 'pointer' }}>
@@ -356,7 +356,7 @@ export function SupabaseBookingWizard({
                         </span>
                       </span>
                     </span>
-                    <span className="badge badge-neutral">1 credit</span>
+                    <span className="badge badge-neutral">1 conversation</span>
                   </label>
                 ))}
               </div>
@@ -425,7 +425,7 @@ export function SupabaseBookingWizard({
             <div className="card card-tight col" style={{ gap: 4 }}>
               <div className="row between">
                 <span className="muted">{selection.pack.purchase.title}</span>
-                <span className="badge badge-neutral">1 package credit will be reserved</span>
+                <span className="badge badge-neutral">One of your remaining conversations will be reserved</span>
               </div>
               <p className="faint" style={{ margin: '6px 0 0' }}>
                 This uses one credit from your simulated package. No payment will be taken.

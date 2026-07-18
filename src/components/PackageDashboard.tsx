@@ -67,7 +67,7 @@ export function PackageDashboard() {
         );
         if (live) setRows(withBalances);
       } catch {
-        if (live) setError('We couldn’t load your packages.');
+        if (live) setError('We couldn’t load your earlier conversation bundles.');
       }
     })();
     return () => {
@@ -88,7 +88,7 @@ export function PackageDashboard() {
       ) : rows === null ? (
         <div className="row" style={{ gap: 10 }}>
           <Loader2 size={18} aria-hidden="true" />
-          <span className="muted">Loading packages…</span>
+          <span className="muted">Loading…</span>
         </div>
       ) : rows.length === 0 ? (
         null // nothing to say: plans are shown by ConversationPlans
@@ -121,7 +121,8 @@ export function PackageDashboard() {
             </div>
           ))}
           <p className="faint" style={{ margin: 0 }}>
-            Package credits can’t be used when booking yet — that arrives in a later stage.
+            These are earlier test bundles kept for reference. Regular conversations now happen
+            through conversation plans.
           </p>
         </div>
       )}

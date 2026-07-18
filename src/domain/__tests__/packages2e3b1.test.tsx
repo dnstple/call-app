@@ -208,11 +208,11 @@ describe('public profile packages', () => {
     expect(q.filters).toContainEqual(['active', true]); // archived never fetched
   });
 
-  it('8. a member with can_book gets the Buy plan action', async () => {
+  it('8. a member with can_book gets the arrange action', async () => {
     signInAs([[profileRow('member', 'm1'), true]]);
     mock.fromRows = [[offerRow]];
     render(<PublicPackages companion={companion} />);
-    expect(await screen.findByRole('button', { name: /Buy plan/ })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: /Arrange these conversations/ })).toBeTruthy();
   });
 
   it('viewers without a bookable member see no purchase action', async () => {
@@ -220,7 +220,7 @@ describe('public profile packages', () => {
     mock.fromRows = [[offerRow]];
     render(<PublicPackages companion={companion} />);
     await screen.findByText('4 × 30-minute conversations');
-    expect(screen.queryByRole('button', { name: /Buy plan/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Arrange these conversations/ })).toBeNull();
   });
 });
 
@@ -285,7 +285,7 @@ describe('package dashboard', () => {
     render(<PackageDashboard />);
     expect(await screen.findByText('3 of 4')).toBeTruthy(); // from get_package_balance
     expect(screen.getByText(/simulated purchase — no payment taken/)).toBeTruthy();
-    expect(screen.getByText(/can’t be used when booking yet/)).toBeTruthy();
+    expect(screen.getByText(/earlier test bundles kept for reference/)).toBeTruthy();
     expect(mock.rpcCalls.some((c) => c.fn === 'get_package_balance')).toBe(true);
   });
 

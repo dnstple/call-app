@@ -80,3 +80,25 @@ See `docs/CHAT_SCOPE.md` and `docs/TRUST_AND_SAFETY.md`. Neither is built; both
 documents exist so later stages extend rather than rewrite. Plan consent
 messages (`request_message` / `response_message`, 0013) are locked after the
 decision and are not a chat substitute.
+
+## Stage 2E4D notes
+
+- **Plan management** lives at `/plans` and `/plans/:planId` (`PlansPage.tsx`,
+  `PlanDetail.tsx`). Occurrence-level operations go through migration 0014's
+  controlled functions: `skip_plan_occurrence` (deliberate skip, allowance
+  released, never regenerated) and `resolve_plan_occurrence` (replacement time
+  for a conflicted/unavailable occurrence — same availability, notice, horizon,
+  two-hour-cutoff and exclusion rules as generation; double resolution refused).
+  Bulk future cancellation (pause/end/schedule change) spares conversations
+  starting within two hours.
+- **Calling boundary**: `/calls/:bookingId` renders an honest placeholder
+  around the provider-neutral `CallProvider` interface
+  (`src/calls/CallProvider.ts`: `createSession` / `joinSession` /
+  `leaveSession`). Join tokens will be minted server-side for participants
+  only; joining never changes booking state. No provider is integrated.
+- **Profile photos**: one shared source limit,
+  `MAX_PROFILE_IMAGE_SOURCE_BYTES` (10 MB), enforced client-side and by the
+  Storage bucket (0014). `src/domain/image.ts` orientation-corrects,
+  downscales to ≤1600 px and re-encodes to JPEG (~0.85 quality) before
+  upload, so stored objects stay small. Replacement remains
+  upload-new → repoint → delete-old; failures keep the previous photo.

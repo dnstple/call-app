@@ -7,7 +7,6 @@ import { canConfirmCompletion, listMyBookings, splitBookings } from '../reposito
 import { listMyPlans } from '../repositories/planRepository';
 import { SupabaseBookingRow } from './Conversations';
 import { isSupabaseConfigured } from '../supabase/client';
-import { PackageDashboard } from '../components/PackageDashboard';
 import { CompanionPlanRequests, ConversationPlans } from '../components/PlanCards';
 import { useAppState } from '../state/store';
 import {
@@ -122,12 +121,14 @@ export default function Home() {
           <h1>{greeting}, {me.firstName}</h1>
         </header>
 
-        {/* Priority order: plan requests → upcoming → things needing attention
-            → profile filler only when there is genuinely nothing else. */}
+        {/* 2E4D priority order.
+            Member/Coordinator: next conversation → schedule issues →
+            pending requests → active plans → Explore when nothing exists.
+            Companion: plan requests → schedule issues → upcoming →
+            profile reminder only when genuinely nothing is happening. */}
         {isSupabaseConfigured() && me.role === 'companion' && <CompanionPlanRequests />}
-        {isSupabaseConfigured() && me.role !== 'companion' && <ConversationPlans />}
 
-        {me.role === 'companion' && real.confirmed.length > 0 && (
+        {me.role !== 'companion' && real.confirmed.length > 0 && (
           <section className="section-tight" aria-label="Upcoming conversations">
             <h2>Up next</h2>
             <div className="stack-list">
@@ -174,7 +175,7 @@ export default function Home() {
           </section>
         )}
 
-        {me.role !== 'companion' && real.confirmed.length > 0 && (
+        {me.role === 'companion' && real.confirmed.length > 0 && (
           <section className="section-tight" aria-label="Upcoming conversations">
             <h2>Up next</h2>
             <div className="stack-list">
@@ -183,6 +184,14 @@ export default function Home() {
               ))}
             </div>
           </section>
+        )}
+
+        {isSupabaseConfigured() && me.role !== 'companion' && <ConversationPlans />}
+
+        {planActivity > 0 && (
+          <p className="muted" style={{ margin: '4px 0 0' }}>
+            <Link to="/plans">Manage your conversation plans</Link>
+          </p>
         )}
 
         {!hasRealActivity && me.role !== 'companion' ? (
@@ -222,8 +231,6 @@ export default function Home() {
             </div>
           </section>
         ) : null}
-
-        {me.role !== 'companion' && isSupabaseConfigured() && <PackageDashboard />}
 
         {me.role === 'coordinator' && managedMembers(state, me.id).length > 0 && (
           <section className="section-tight" aria-label="People you arrange for">

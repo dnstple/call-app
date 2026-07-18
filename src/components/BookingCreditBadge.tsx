@@ -18,11 +18,11 @@ export function creditStateLabel(
   state: Pick<BookingCreditState, 'reserved' | 'released' | 'consumed'>,
   bookingStatus: MyBookingRow['status'],
 ): string {
-  if (state.consumed) return 'Package credit used — conversation completed';
-  if (state.released) return 'Package credit released — returned to your package';
-  if (bookingStatus === 'needs_review') return 'Package credit reserved while this is looked into';
-  if (state.reserved) return 'Package credit reserved';
-  return 'Package credit';
+  if (state.consumed) return 'Conversation completed — counted towards your plan';
+  if (state.released) return 'This conversation was returned to your plan allowance';
+  if (bookingStatus === 'needs_review') return 'Held from your plan allowance while this is looked into';
+  if (state.reserved) return 'Reserved from your plan allowance';
+  return 'Part of your conversation plan';
 }
 
 export function BookingCreditPanel({ booking }: { booking: MyBookingRow }) {
@@ -51,15 +51,15 @@ export function BookingCreditPanel({ booking }: { booking: MyBookingRow }) {
   if (!isPackage) return null; // ordinary offer booking: not applicable
 
   return (
-    <section className="section-tight" aria-label="Package credit">
-      <h2>Package</h2>
+    <section className="section-tight" aria-label="Conversation plan">
+      <h2>Conversation plan</h2>
       <div className="card card-tight col" style={{ gap: 6, maxWidth: 460 }}>
         <span className="row bold" style={{ gap: 8 }}>
           <Package size={18} aria-hidden="true" />
-          {title ?? 'Conversation package'}
+          {title ?? 'Regular conversations'}
         </span>
         <span className="muted">
-          {state ? creditStateLabel(state, booking.status) : 'Checking credit status…'}
+          {state ? creditStateLabel(state, booking.status) : 'Checking…'}
         </span>
         <p className="faint" style={{ margin: '4px 0 0' }}>
           This conversation uses one credit from a simulated package. No payment will be taken.

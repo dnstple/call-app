@@ -454,7 +454,7 @@ function FeeLine({ priceMinor, type, rates }: { priceMinor: number; type: 'trial
   const fee = repo.calculateFeePreview(priceMinor, type, rates);
   return (
     <p className="faint" style={{ margin: 0 }}>
-      Estimated platform fee ({fee.ratePct}%): {repo.formatMinor(fee.feeMinor)} · you’d receive about{' '}
+      Estimated platform fee ({fee.ratePct}%): {repo.formatMinor(fee.feeMinor)} · you’d receive{' '}
       {repo.formatMinor(fee.companionMinor)}
     </p>
   );

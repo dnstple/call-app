@@ -118,6 +118,7 @@ function planRow(partial: Partial<ConversationPlanRow> = {}): ConversationPlanRo
     communication_method: 'phone', per_conversation_price_minor: 900, weekly_price_minor: 2700,
     currency: 'GBP', status: 'active', allowance_purchase_id: 'pp1', pending_change: null,
     generated_until: null, paused_at: null, ended_at: null, end_reason: null,
+    pause_reason: null, resume_on: null,
     request_message: null, response_message: null,
     created_at: '', updated_at: '',
     ...partial,

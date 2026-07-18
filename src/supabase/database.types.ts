@@ -441,6 +441,9 @@ export type ConversationPlanRow = {
   response_message: string | null;
   generated_until: string | null;
   paused_at: string | null;
+  /** 2E4D pause metadata — why, and (optionally) when it should resume. */
+  pause_reason: string | null;
+  resume_on: string | null;
   ended_at: string | null;
   end_reason: string | null;
   created_at: string;
@@ -741,10 +744,18 @@ export type Database = {
         Returns: SlotPreviewPayload[];
       };
       decline_plan: { Args: { p_plan: string; p_reason?: string | null }; Returns: ConversationPlanRow };
-      pause_plan: { Args: { p_plan: string }; Returns: PlanActionResultPayload };
+      pause_plan: {
+        Args: { p_plan: string; p_reason?: string | null; p_resume_on?: string | null };
+        Returns: PlanActionResultPayload;
+      };
       resume_plan: { Args: { p_plan: string }; Returns: PlanGenerationResultPayload };
       end_plan: { Args: { p_plan: string; p_reason?: string | null }; Returns: PlanActionResultPayload };
       skip_plan_week: { Args: { p_plan: string; p_week_start: string }; Returns: PlanActionResultPayload };
+      skip_plan_occurrence: { Args: { p_booking: string }; Returns: PlanActionResultPayload };
+      resolve_plan_occurrence: {
+        Args: { p_plan: string; p_intended_start: string; p_new_start: string };
+        Returns: { plan_id: string; booking_id: string; starts_at: string };
+      };
       propose_plan_change: {
         Args: {
           p_plan: string;
@@ -755,8 +766,14 @@ export type Database = {
         };
         Returns: ConversationPlanRow;
       };
-      accept_plan_change: { Args: { p_plan: string }; Returns: PlanActionResultPayload };
-      decline_plan_change: { Args: { p_plan: string }; Returns: ConversationPlanRow };
+      accept_plan_change: {
+        Args: { p_plan: string; p_message?: string | null };
+        Returns: PlanActionResultPayload;
+      };
+      decline_plan_change: {
+        Args: { p_plan: string; p_message?: string | null };
+        Returns: ConversationPlanRow;
+      };
       get_trial_state: { Args: { p_member: string; p_companion: string }; Returns: TrialState };
       get_companion_public_reviews: {
         Args: { p_profile: string; p_limit?: number; p_offset?: number };

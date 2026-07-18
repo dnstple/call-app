@@ -153,7 +153,7 @@ describe('avatar validation', () => {
     expect(validateAvatarFile({ size: 1000, type: 'application/pdf' })).not.toBeNull();
   });
   it('rejects oversized files', () => {
-    expect(validateAvatarFile({ size: 5 * 1024 * 1024, type: 'image/png' })).toMatch(/under 4 MB/);
+    expect(validateAvatarFile({ size: 11 * 1024 * 1024, type: 'image/png' })).toMatch(/smaller than 10 MB/);
   });
   it('accepts a valid image', () => {
     expect(validateAvatarFile({ size: 500_000, type: 'image/jpeg' })).toBeNull();

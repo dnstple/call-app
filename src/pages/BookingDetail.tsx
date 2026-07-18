@@ -32,6 +32,8 @@ import { MEDIUM_LABELS } from '../domain/format';
 import type { BookingHistoryRow, BookingProposalRow, MyBookingRow } from '../supabase/database.types';
 import { EmptyState } from '../components/ui';
 import { SlotPicker, slotDayLabel, slotTimeLabel } from '../components/SupabaseBookingWizard';
+import { getAvailablePackageSlots } from '../repositories/packageRepository';
+import { DateTimeSlotPicker } from '../components/DateTimeSlotPicker';
 import { CompletionPanel } from '../components/CompletionPanel';
 import { IN_APP_CALL_EXPLAINER, IN_APP_CALL_LABEL } from '../components/FlowModal';
 import { RatingPanel } from '../components/RatingPanel';
@@ -292,9 +294,10 @@ export default function BookingDetail() {
                 )}
               </>
             )}
-            {booking.status === 'confirmed' && (isCompanionSide || isRequesterSide) && booking.offer_id && canRescheduleBooking(booking) && (
+            {booking.status === 'confirmed' && (isCompanionSide || isRequesterSide)
+              && (booking.offer_id || booking.package_purchase_id) && canRescheduleBooking(booking) && (
               <button className="btn btn-secondary" disabled={busy} onClick={() => setProposing(true)}>
-                Propose a new time
+                {booking.plan_id ? 'Change this conversation only' : 'Propose a new time'}
               </button>
             )}
             <button className="btn btn-ghost" disabled={busy} onClick={() => setCancelling(true)}>
@@ -306,10 +309,9 @@ export default function BookingDetail() {
           {!canRescheduleBooking(booking) && (
             <p className="faint longform mt-2">{RESCHEDULE_CLOSED_COPY}</p>
           )}
-          {!booking.offer_id && canRescheduleBooking(booking) && (
+          {booking.plan_id && canRescheduleBooking(booking) && (
             <p className="faint longform mt-2">
-              To change the time of a plan conversation, cancel this one and book another — your
-              conversation comes back to your plan.
+              This change applies only to this conversation — your weekly plan schedule stays the same.
             </p>
           )}
 
@@ -343,17 +345,26 @@ export default function BookingDetail() {
             </div>
           )}
 
-          {/* Slot suggestions need a conversation offer; package-credit
-              bookings reschedule via cancel + rebook for now (2E3B2B). */}
-          {proposing && booking.offer_id && (
+          {/* Offer bookings pick from offer slots; plan/package conversations
+              pick from the same server availability via the package RPC.
+              Either way the server re-checks everything on submission. */}
+          {proposing && (booking.offer_id || booking.package_purchase_id) && (
             <div className="card card-tight col mt-4" style={{ gap: 12 }}>
               <div className="bold">Choose an alternative time</div>
-              <SlotPicker
-                companionProfileId={booking.companion_profile_id}
-                offerId={booking.offer_id}
-                selected={proposedSlot}
-                onSelect={setProposedSlot}
-              />
+              {booking.offer_id ? (
+                <SlotPicker
+                  companionProfileId={booking.companion_profile_id}
+                  offerId={booking.offer_id}
+                  selected={proposedSlot}
+                  onSelect={setProposedSlot}
+                />
+              ) : (
+                <PackageSlotPicker
+                  purchaseId={booking.package_purchase_id!}
+                  selected={proposedSlot}
+                  onSelect={setProposedSlot}
+                />
+              )}
               <div className="row" style={{ gap: 10 }}>
                 <button
                   className="btn btn-primary btn-small"
@@ -398,5 +409,43 @@ export default function BookingDetail() {
         </section>
       )}
     </div>
+  );
+}
+
+/** Server-availability picker for plan/package conversations (no offer). */
+function PackageSlotPicker({ purchaseId, selected, onSelect }: {
+  purchaseId: string;
+  selected: AvailableSlot | null;
+  onSelect: (slot: AvailableSlot) => void;
+}) {
+  const [slots, setSlots] = useState<AvailableSlot[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    setError(null);
+    const from = new Date(Date.now() + 2 * 3600_000).toISOString();
+    const to = new Date(Date.now() + 28 * 86400_000).toISOString();
+    getAvailablePackageSlots(purchaseId, from, to)
+      .then((s) => setSlots(s))
+      .catch(() => setError('We couldn’t load available times. Please try again.'))
+      .finally(() => setLoading(false));
+  }, [purchaseId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  return (
+    <DateTimeSlotPicker
+      slots={slots}
+      loading={loading}
+      error={error}
+      selected={selected}
+      onSelect={onSelect}
+      onRetry={load}
+      emptyMessage="No free times in the next four weeks."
+    />
   );
 }

@@ -177,7 +177,7 @@ afterEach(() => {
 describe('wizard: choosing between offers and package credits', () => {
   it('1+5. an eligible package appears beside the pay-per-conversation offers', async () => {
     renderWizard();
-    expect(await screen.findByText(/Use a package credit/)).toBeTruthy();
+    expect(await screen.findByText(/Use a conversation you already have/)).toBeTruthy();
     expect(screen.getByText(/Four pack/)).toBeTruthy();
     expect(screen.getByText(/3 of 4 conversations left · 45 minutes each/)).toBeTruthy();
     expect(screen.getByText(/Pay per conversation/)).toBeTruthy(); // both choices offered
@@ -194,7 +194,7 @@ describe('wizard: choosing between offers and package credits', () => {
     renderWizard();
     await screen.findByText(/Pay per conversation/);
     await waitFor(() => expect(screen.queryByText(/Checking your packages/)).toBeNull());
-    expect(screen.queryByText(/Use a package credit/)).toBeNull();
+    expect(screen.queryByText(/Use a conversation you already have/)).toBeNull();
     // (wrong-member packages are impossible: the query is scoped to the member id)
   });
 
@@ -217,7 +217,7 @@ describe('wizard: choosing between offers and package credits', () => {
     fireEvent.click(slotButtons[0]);
     fireEvent.click(screen.getByRole('button', { name: /Review request/ }));
 
-    expect(await screen.findByText(/1 package credit will be reserved/)).toBeTruthy();
+    expect(await screen.findByText(/One of your remaining conversations will be reserved/)).toBeTruthy();
     expect(screen.getByText(/This uses one credit from your simulated package/)).toBeTruthy();
     expect(screen.getByText(/No payment will be taken/)).toBeTruthy();
     expect(view.container.textContent).not.toMatch(/£|succeeded|charged|\bpaid\b/);
@@ -273,7 +273,7 @@ describe('wizard: choosing between offers and package credits', () => {
     expect(alert.textContent).toMatch(/pay-per-conversation/i);
     // Back on the options step with the normal offer still available:
     expect(await screen.findByText(/Pay per conversation/)).toBeTruthy();
-    await waitFor(() => expect(screen.queryByText(/Use a package credit/)).toBeNull()); // refreshed away
+    await waitFor(() => expect(screen.queryByText(/Use a conversation you already have/)).toBeNull()); // refreshed away
   });
 });
 
@@ -301,19 +301,19 @@ describe('booking rows and credit states', () => {
   it('14. BookingDetail panel shows the reserved state from the server', async () => {
     mock.fromRows.package_purchases = [[purchase()]];
     render(<BookingCreditPanel booking={myBooking()} />);
-    expect(await screen.findByText(/Package credit reserved/)).toBeTruthy();
+    expect(await screen.findByText(/Reserved from your plan allowance/)).toBeTruthy();
     expect(screen.getByText(/Four pack/)).toBeTruthy();
     expect(screen.getByText(/simulated package\. No payment will be taken/)).toBeTruthy();
   });
 
   it('15+16+17+18. credit-state labels cover released, used and under-review', () => {
     const base = { reserved: true, released: false, consumed: false };
-    expect(creditStateLabel({ ...base, released: true }, 'declined')).toMatch(/released/i); // 15.
-    expect(creditStateLabel({ ...base, released: true }, 'cancelled')).toMatch(/released/i); // 16.
-    expect(creditStateLabel({ ...base, released: true, consumed: true }, 'completed')).toMatch(/used/i); // 17.
+    expect(creditStateLabel({ ...base, released: true }, 'declined')).toMatch(/returned/i); // 15.
+    expect(creditStateLabel({ ...base, released: true }, 'cancelled')).toMatch(/returned/i); // 16.
+    expect(creditStateLabel({ ...base, released: true, consumed: true }, 'completed')).toMatch(/completed/i); // 17.
     expect(creditStateLabel(base, 'needs_review')).toMatch(/looked into/i); // 18.
-    expect(creditStateLabel(base, 'requested')).toBe('Package credit reserved');
-    expect(creditStateLabel(base, 'confirmed')).toBe('Package credit reserved');
+    expect(creditStateLabel(base, 'requested')).toBe('Reserved from your plan allowance');
+    expect(creditStateLabel(base, 'confirmed')).toBe('Reserved from your plan allowance');
   });
 
   it('ordinary bookings render no credit panel at all', () => {

@@ -51,13 +51,21 @@ function mapError(e: any, fallback = 'Something went wrong. Please try again.'):
 /* ---------------- Avatar helpers ---------------- */
 
 const AVATAR_BUCKET = 'profile-avatars';
-export const AVATAR_MAX_BYTES = 4 * 1024 * 1024;
+/**
+ * ONE shared source-size limit (2E4D): normal high-resolution phone photos
+ * are welcome. The client resizes/compresses before upload, so the stored
+ * object is much smaller; the Storage bucket enforces the same 10 MB cap
+ * server-side (migration 0014).
+ */
+export const MAX_PROFILE_IMAGE_SOURCE_BYTES = 10 * 1024 * 1024;
+/** @deprecated alias kept for older imports — same single value. */
+export const AVATAR_MAX_BYTES = MAX_PROFILE_IMAGE_SOURCE_BYTES;
 export const AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
 /** Client-side validation (the bucket enforces the same limits server-side). */
 export function validateAvatarFile(file: { size: number; type: string }): string | null {
-  if (!AVATAR_TYPES.includes(file.type)) return 'Please choose a JPEG, PNG or WebP image.';
-  if (file.size > AVATAR_MAX_BYTES) return 'Please choose an image under 4 MB.';
+  if (!AVATAR_TYPES.includes(file.type)) return 'Choose a JPEG, PNG or WebP image smaller than 10 MB.';
+  if (file.size > MAX_PROFILE_IMAGE_SOURCE_BYTES) return 'Choose a JPEG, PNG or WebP image smaller than 10 MB.';
   return null;
 }
 
@@ -100,15 +108,35 @@ export async function uploadAvatar(profileId: string, file: File): Promise<strin
   if (problem) throw new RepoError(problem, 'validation');
   const client = getSupabaseClient();
 
+  // Process before upload: orientation-correct, downscale to ≤1600px and
+  // re-encode, so a 10 MB phone photo is stored as a small JPEG. In
+  // environments without image decoding (tests), the source uploads as-is —
+  // the bucket still enforces the same 10 MB cap.
+  let payload: Blob = file;
+  let contentType = file.type;
+  if (typeof createImageBitmap === 'function' && typeof document !== 'undefined') {
+    try {
+      const { processProfileImage } = await import('../domain/image');
+      const processed = await processProfileImage(file);
+      payload = processed.blob;
+      if (!processed.passthrough) contentType = 'image/jpeg';
+    } catch (e) {
+      throw new RepoError(
+        e instanceof Error ? e.message : 'We couldn’t process that image. Please try again.',
+        'validation',
+      );
+    }
+  }
+
   const { data: current } = await client
     .from('profiles').select('avatar_path').eq('id', profileId).single();
   const oldPath = current?.avatar_path ?? null;
 
-  const ext = file.type === 'image/png' ? 'png' : file.type === 'image/webp' ? 'webp' : 'jpg';
+  const ext = contentType === 'image/png' ? 'png' : contentType === 'image/webp' ? 'webp' : 'jpg';
   const newPath = `${profileId}/${crypto.randomUUID()}.${ext}`;
 
-  const up = await client.storage.from(AVATAR_BUCKET).upload(newPath, file, {
-    contentType: file.type,
+  const up = await client.storage.from(AVATAR_BUCKET).upload(newPath, payload, {
+    contentType,
     upsert: false,
   });
   if (up.error) throw mapError(up.error, 'We couldn’t upload that image.');

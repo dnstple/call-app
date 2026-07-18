@@ -1,6 +1,6 @@
 import { useEffect, type ReactNode } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { Bell, Compass, Home, Phone, Settings, UserRound } from 'lucide-react';
+import { Bell, CalendarHeart, Compass, Home, Phone, Settings, UserRound } from 'lucide-react';
 import { useAppState } from '../state/store';
 import { activeMember, currentUser, managedMembers, settingsFor, unreadCount } from '../state/selectors';
 import { switchActiveMember, switchIdentity } from '../state/actions';
@@ -12,6 +12,7 @@ import { ToastStack } from './ui';
 const NAV = [
   { to: '/', label: 'Home', Icon: Home },
   { to: '/explore', label: 'Explore', Icon: Compass },
+  { to: '/plans', label: 'Conversation plans', Icon: CalendarHeart },
   { to: '/conversations', label: 'Conversations', Icon: Phone },
   { to: '/profile', label: 'Profile', Icon: UserRound },
 ];

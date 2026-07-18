@@ -43,8 +43,8 @@ export function PublicPackages({ companion }: { companion: User }) {
   if (!offers || offers.length === 0) return null; // profiles stay calm without packages
 
   return (
-    <section className="section-tight" aria-label="Conversation packages">
-      <h2>Conversation packages</h2>
+    <section className="section-tight" aria-label="Conversation bundles">
+      <h2>Conversation bundles</h2>
       <div className="grid-2">
         {offers.map((o) => (
           <div key={o.id} className="card card-tight col" style={{ gap: 8 }}>
@@ -63,7 +63,7 @@ export function PublicPackages({ companion }: { companion: User }) {
               </span>
               {canBuy && (
                 <button className="btn btn-secondary btn-small" onClick={() => setBuying(o)}>
-                  Buy plan
+                  Arrange these conversations
                 </button>
               )}
             </div>
