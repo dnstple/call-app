@@ -169,7 +169,23 @@ describe('14. ledger balance maths (pure mirror of get_package_balance)', () => 
       { entry_type: 'release', quantity: 1 },
       { entry_type: 'adjustment', quantity: 1 },
     ]);
+    // remaining is unchanged algebra; releases OFFSET reservations (0018)
     expect(balance.remaining).toBe(8 - 2 - 3 + 1 + 1);
+    expect(balance.granted).toBe(9);  // grants + adjustments only
+    expect(balance.reserved).toBe(1); // reserves − releases
+  });
+
+  it('a full reserve/release cycle restores the intuitive report (0018)', () => {
+    const balance = ledgerBalance('p', [
+      { entry_type: 'grant', quantity: 2 },
+      { entry_type: 'reserve', quantity: 1 },
+      { entry_type: 'reserve', quantity: 1 },
+      { entry_type: 'release', quantity: 1 },
+      { entry_type: 'release', quantity: 1 },
+    ]);
+    expect(balance).toEqual({
+      purchaseId: 'p', granted: 2, reserved: 0, consumed: 0, remaining: 2,
+    });
   });
 
   it('an empty ledger is zero, never a trusted browser number', () => {

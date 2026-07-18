@@ -147,8 +147,10 @@ export interface PackageBalance {
 }
 
 /**
- * Balance from ledger entries — identical maths to get_package_balance:
- * grants + releases + adjustments − reserves − consumes.
+ * Balance from ledger entries — identical maths to get_package_balance
+ * (0018 buckets): granted = grants + adjustments; a release OFFSETS its
+ * reservation rather than inflating granted; remaining is unchanged
+ * algebra (g+a − (res−rel) − c).
  */
 export function ledgerBalance(
   purchaseId: string,
@@ -158,8 +160,9 @@ export function ledgerBalance(
   let reserved = 0;
   let consumed = 0;
   for (const e of entries) {
-    if (e.entry_type === 'grant' || e.entry_type === 'release' || e.entry_type === 'adjustment') granted += e.quantity;
+    if (e.entry_type === 'grant' || e.entry_type === 'adjustment') granted += e.quantity;
     else if (e.entry_type === 'reserve') reserved += e.quantity;
+    else if (e.entry_type === 'release') reserved -= e.quantity;
     else if (e.entry_type === 'consume') consumed += e.quantity;
   }
   return { purchaseId, granted, reserved, consumed, remaining: granted - reserved - consumed };

@@ -11,7 +11,7 @@
  * These tests are the Stage 2B security acceptance evidence — do not consider
  * the milestone verified until they pass against your project.
  */
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 // Read Node env without requiring @types/node in this browser-typed project.
@@ -25,10 +25,23 @@ const enabled = Boolean(url && anonKey);
 // Supabase accepts (reserved TLDs like .test are rejected), configurable via
 // SUPABASE_TEST_EMAIL_DOMAIN.
 const TEST_EMAIL_DOMAIN = testEnv.SUPABASE_TEST_EMAIL_DOMAIN ?? 'example.com';
-const suffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+/**
+ * ONE run identifier for the whole test process. Every account email and
+ * every test-authored record that could be looked up by name carries it,
+ * so repeated `npm run test:rls` invocations never share users or
+ * business data with earlier runs.
+ */
+const RUN_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+const suffix = RUN_ID;
 const EMAIL_A = `rls-a-${suffix}@${TEST_EMAIL_DOMAIN}`;
 const EMAIL_B = `rls-b-${suffix}@${TEST_EMAIL_DOMAIN}`;
 const PASSWORD = 'test-password-123';
+
+/** Optional: enables post-run cleanup of THIS run's users only. */
+const serviceKey =
+  testEnv.SUPABASE_TEST_SERVICE_ROLE_KEY ?? testEnv.SUPABASE_SERVICE_ROLE_KEY;
+/** auth user ids created by this run — the only thing cleanup may touch. */
+const runUserIds: string[] = [];
 
 function client(): SupabaseClient {
   return createClient(url!, anonKey!, { auth: { persistSession: false } });
@@ -44,10 +57,26 @@ async function signedInClient(email: string): Promise<SupabaseClient> {
       `Could not sign in test user (${error.message}). Ensure email confirmations are disabled for the test project.`,
     );
   }
+  const uid = (await c.auth.getUser()).data.user?.id;
+  if (uid) runUserIds.push(uid);
   return c;
 }
 
 describe.skipIf(!enabled)('RLS integration (requires live Supabase)', () => {
+  // Post-run hygiene: delete ONLY the auth users this run created, via the
+  // service-role admin API, strictly AFTER every assertion has finished.
+  // accounts.id references auth.users ON DELETE CASCADE (0002), so each
+  // user's test data goes with them. Cleanup never participates in — and
+  // cannot bypass — any RLS assertion; without a service key it is skipped
+  // and RUN_ID-scoped fixtures still keep runs isolated.
+  afterAll(async () => {
+    if (!serviceKey || runUserIds.length === 0) return;
+    const admin = createClient(url!, serviceKey, { auth: { persistSession: false } });
+    for (const id of runUserIds) {
+      await admin.auth.admin.deleteUser(id).catch(() => undefined);
+    }
+  }, 60_000);
+
   let a: SupabaseClient;
   let b: SupabaseClient;
   let aId: string;
@@ -395,7 +424,7 @@ describe.skipIf(!enabled)('2C1 RLS + Storage (requires live Supabase)', () => {
       offer_type: 'trial',
       duration_minutes: 30,
       price_minor: 500,
-      supported_methods: ['phone'],
+      supported_methods: ['in_app'],
     }).select('id').single();
     expect(trial.error).toBeNull();
 
@@ -428,7 +457,7 @@ describe.skipIf(!enabled)('2C1 RLS + Storage (requires live Supabase)', () => {
       offer_type: 'single',
       duration_minutes: 30,
       price_minor: 1000,
-      supported_methods: ['phone'],
+      supported_methods: ['in_app'],
     }).select('id').single();
     expect(single.error).toBeNull();
 
@@ -499,7 +528,7 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
       offer_type: 'trial',
       duration_minutes: 30,
       price_minor: 500,
-      supported_methods: ['phone', 'whatsapp'],
+      supported_methods: ['in_app'],
     }).select('id').single();
     expect(trial.error).toBeNull();
     const single = await cl.from('conversation_offers').insert({
@@ -507,7 +536,7 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
       offer_type: 'single',
       duration_minutes: 30,
       price_minor: 1500,
-      supported_methods: ['phone'],
+      supported_methods: ['in_app'],
     }).select('id').single();
     expect(single.error).toBeNull();
     return { trialId: trial.data!.id as string, singleId: single.data!.id as string };
@@ -578,7 +607,7 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
   it('member owner creates a request; price is snapshotted server-side', async () => {
     const created = await e.rpc('create_booking_request', {
       p_member: eMemberId, p_offer: trialOfferId,
-      p_starts_at: slots[0].slot_start, p_method: 'phone',
+      p_starts_at: slots[0].slot_start, p_method: 'in_app',
     });
     expect(created.error).toBeNull();
     trialBookingId = created.data.id;
@@ -592,7 +621,7 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
   it('browser cannot supply price, fee, status or actor', async () => {
     const forged = await e.rpc('create_booking_request', {
       p_member: eMemberId, p_offer: singleOfferId,
-      p_starts_at: slots[3].slot_start, p_method: 'phone',
+      p_starts_at: slots[3].slot_start, p_method: 'in_app',
       p_price_minor: 1, // unknown argument → rejected by PostgREST
     });
     expect(forged.error).not.toBeNull();
@@ -601,7 +630,7 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
   it('second pending trial for the same pair is rejected', async () => {
     const dup = await e.rpc('create_booking_request', {
       p_member: eMemberId, p_offer: trialOfferId,
-      p_starts_at: slots[5].slot_start, p_method: 'phone',
+      p_starts_at: slots[5].slot_start, p_method: 'in_app',
     });
     expect(dup.error).not.toBeNull();
     expect(String(dup.error!.message)).toContain('trial');
@@ -610,7 +639,7 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
   it('unrelated user cannot book for someone else’s member', async () => {
     const forged = await e.rpc('create_booking_request', {
       p_member: gManagedMemberId, p_offer: singleOfferId,
-      p_starts_at: slots[6].slot_start, p_method: 'phone',
+      p_starts_at: slots[6].slot_start, p_method: 'in_app',
     });
     expect(forged.error).not.toBeNull();
   });
@@ -618,7 +647,7 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
   it('coordinator with can_book books for their managed member', async () => {
     const created = await g.rpc('create_booking_request', {
       p_member: gManagedMemberId, p_offer: singleOfferId,
-      p_starts_at: slots[8].slot_start, p_method: 'phone',
+      p_starts_at: slots[8].slot_start, p_method: 'in_app',
     });
     expect(created.error).toBeNull();
     expect(created.data.member_profile_id).toBe(gManagedMemberId);
@@ -627,7 +656,7 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
   it('overlapping time for the same companion is rejected (already-requested slot)', async () => {
     const clash = await h.rpc('create_booking_request', {
       p_member: hMemberId, p_offer: singleOfferId,
-      p_starts_at: slots[0].slot_start, p_method: 'phone',
+      p_starts_at: slots[0].slot_start, p_method: 'in_app',
     });
     expect(clash.error).not.toBeNull();
     expect(String(clash.error!.message)).toContain('taken');
@@ -647,10 +676,10 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
     const target = slots[10].slot_start;
     const [r1, r2] = await Promise.all([
       e.rpc('create_booking_request', {
-        p_member: eMemberId, p_offer: singleOfferId, p_starts_at: target, p_method: 'phone',
+        p_member: eMemberId, p_offer: singleOfferId, p_starts_at: target, p_method: 'in_app',
       }),
       h.rpc('create_booking_request', {
-        p_member: hMemberId, p_offer: singleOfferId, p_starts_at: target, p_method: 'phone',
+        p_member: hMemberId, p_offer: singleOfferId, p_starts_at: target, p_method: 'in_app',
       }),
     ]);
     const successes = [r1, r2].filter((r) => r.error === null);
@@ -678,7 +707,7 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
       offer_id: singleOfferId,
       starts_at: slots[12].slot_start,
       ends_at: slots[12].slot_end,
-      communication_method: 'phone',
+      communication_method: 'in_app',
       duration_minutes: 30,
       price_minor: 1,
       platform_fee_rate: 0,
@@ -719,7 +748,7 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
     // A fresh request from h to work with.
     const created = await h.rpc('create_booking_request', {
       p_member: hMemberId, p_offer: singleOfferId,
-      p_starts_at: slots[14].slot_start, p_method: 'phone',
+      p_starts_at: slots[14].slot_start, p_method: 'in_app',
     });
     expect(created.error).toBeNull();
     const bookingId = created.data.id;
@@ -752,7 +781,7 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
   it('rejecting a proposal restores the previous status', async () => {
     const created = await h.rpc('create_booking_request', {
       p_member: hMemberId, p_offer: singleOfferId,
-      p_starts_at: slots[18].slot_start, p_method: 'phone',
+      p_starts_at: slots[18].slot_start, p_method: 'in_app',
     });
     expect(created.error).toBeNull();
     const proposed = await f.rpc('propose_booking_time', {
@@ -774,7 +803,7 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
     // The freed time is bookable again (companion no longer blocked).
     const rebook = await h.rpc('create_booking_request', {
       p_member: hMemberId, p_offer: singleOfferId,
-      p_starts_at: slots[0].slot_start, p_method: 'phone',
+      p_starts_at: slots[0].slot_start, p_method: 'in_app',
     });
     expect(rebook.error).toBeNull();
 
@@ -786,7 +815,7 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
   it('companion can decline with a reason; decline is audited', async () => {
     const created = await e.rpc('create_booking_request', {
       p_member: eMemberId, p_offer: singleOfferId,
-      p_starts_at: slots[22].slot_start, p_method: 'phone',
+      p_starts_at: slots[22].slot_start, p_method: 'in_app',
     });
     expect(created.error).toBeNull();
     const declinedByMember = await e.rpc('decline_booking', { p_booking: created.data.id });
@@ -818,7 +847,7 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
   it('2E1A: completion is rejected before the conversation ends (too_early)', async () => {
     const created = await e.rpc('create_booking_request', {
       p_member: eMemberId, p_offer: singleOfferId,
-      p_starts_at: slots[24].slot_start, p_method: 'phone',
+      p_starts_at: slots[24].slot_start, p_method: 'in_app',
     });
     expect(created.error).toBeNull();
     const accepted = await f.rpc('accept_booking', { p_booking: created.data.id });
@@ -883,7 +912,7 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
   it('2E2A: rating eligibility and authorisation are enforced', async () => {
     const created = await e.rpc('create_booking_request', {
       p_member: eMemberId, p_offer: singleOfferId,
-      p_starts_at: slots[26].slot_start, p_method: 'phone',
+      p_starts_at: slots[26].slot_start, p_method: 'in_app',
     });
     expect(created.error).toBeNull();
     const accepted = await f.rpc('accept_booking', { p_booking: created.data.id });
@@ -1055,7 +1084,7 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
   it('2E3B2A: reserve on booking, final-credit concurrency, release on decline/cancel', async () => {
     // A fresh two-conversation package for e's member.
     const offer = await f.rpc('create_package_offer', {
-      p_profile: fCompanionId, p_title: 'Two pack', p_count: 2, p_duration: 30, p_price_minor: 2000,
+      p_profile: fCompanionId, p_title: `Two pack ${RUN_ID}`, p_count: 2, p_duration: 30, p_price_minor: 2000,
     });
     expect(offer.error).toBeNull();
     const bought = await e.rpc('create_simulated_package_purchase', {
@@ -1066,7 +1095,7 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
 
     // Booking with a credit reserves exactly one, atomically.
     const bookingA = await e.rpc('create_package_booking_request', {
-      p_purchase: purchaseId, p_starts_at: slots[34].slot_start, p_method: 'phone',
+      p_purchase: purchaseId, p_starts_at: slots[34].slot_start, p_method: 'in_app',
     });
     expect(bookingA.error).toBeNull();
     expect(bookingA.data.booking_source).toBe('package_credit');
@@ -1078,10 +1107,10 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
     // (different times, same purchase) → exactly one wins.
     const [r1, r2] = await Promise.all([
       e.rpc('create_package_booking_request', {
-        p_purchase: purchaseId, p_starts_at: slots[36].slot_start, p_method: 'phone',
+        p_purchase: purchaseId, p_starts_at: slots[36].slot_start, p_method: 'in_app',
       }),
       e.rpc('create_package_booking_request', {
-        p_purchase: purchaseId, p_starts_at: slots[38].slot_start, p_method: 'phone',
+        p_purchase: purchaseId, p_starts_at: slots[38].slot_start, p_method: 'in_app',
       }),
     ]);
     const wins = [r1, r2].filter((r) => r.error === null);
@@ -1092,7 +1121,7 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
 
     // Zero balance → no further package bookings.
     const empty = await e.rpc('create_package_booking_request', {
-      p_purchase: purchaseId, p_starts_at: slots[40].slot_start, p_method: 'phone',
+      p_purchase: purchaseId, p_starts_at: slots[40].slot_start, p_method: 'in_app',
     });
     expect(String(empty.error!.message)).toContain('no_credit');
 
@@ -1102,12 +1131,12 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
     });
     expect(badMethod.error).not.toBeNull();
     const unrelated = await g.rpc('create_package_booking_request', {
-      p_purchase: purchaseId, p_starts_at: slots[40].slot_start, p_method: 'phone',
+      p_purchase: purchaseId, p_starts_at: slots[40].slot_start, p_method: 'in_app',
     });
     expect(unrelated.error).not.toBeNull();
     // The browser cannot override the booking source (unknown argument).
     const forgedSource = await e.rpc('create_package_booking_request', {
-      p_purchase: purchaseId, p_starts_at: slots[40].slot_start, p_method: 'phone',
+      p_purchase: purchaseId, p_starts_at: slots[40].slot_start, p_method: 'in_app',
       p_source: 'single_offer',
     });
     expect(forgedSource.error).not.toBeNull();
@@ -1129,7 +1158,10 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
     const cancelled = await e.rpc('cancel_booking', { p_booking: winner.data.id });
     expect(cancelled.error).toBeNull();
     const restored = await e.rpc('get_package_balance', { p_purchase: purchaseId });
-    expect(restored.data).toMatchObject({ granted: 2, remaining: 2 });
+    // The full production invariant (0018 reporting): two credits were
+    // granted exactly once, both reservations were released, nothing was
+    // consumed, and both conversations are available again.
+    expect(restored.data).toMatchObject({ granted: 2, reserved: 0, consumed: 0, remaining: 2 });
 
     // Credit state is readable by participants, opaque to others.
     const state = await e.rpc('get_booking_credit_state', { p_booking: bookingA.data.id });
@@ -1156,28 +1188,39 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
     // and there is an active 30-minute single offer at £15.
     const bad = await e.rpc('create_conversation_plan', {
       p_member: eMemberId, p_companion: fCompanionId, p_frequency: 2,
-      p_duration: 30, p_method: 'phone',
+      p_duration: 30, p_method: 'in_app',
       p_slots: [{ day: 2, time: '10:00' }], // one slot for a frequency of two
     });
     expect(String(bad.error!.message)).toContain('invalid_slots');
 
     const outside = await e.rpc('create_conversation_plan', {
       p_member: eMemberId, p_companion: fCompanionId, p_frequency: 1,
-      p_duration: 30, p_method: 'phone',
+      p_duration: 30, p_method: 'in_app',
       p_slots: [{ day: 2, time: '23:00' }], // outside the availability window
     });
     expect(String(outside.error!.message)).toContain('slot_unavailable');
 
-    const badMethod = await e.rpc('create_conversation_plan', {
+    // Since 2E4B there is exactly ONE communication method. The server
+    // IGNORES whatever the browser sends and stores 'in_app' — a bogus
+    // method is coerced, never honoured and never an error. (0013 hard-codes
+    // the value server-side; rejecting here would be re-adding method
+    // choice, which the product no longer has.) The plan this creates is
+    // ended immediately so the pair stays free for the lifecycle tests.
+    const coerced = await e.rpc('create_conversation_plan', {
       p_member: eMemberId, p_companion: fCompanionId, p_frequency: 1,
       p_duration: 30, p_method: 'carrier_pigeon',
       p_slots: [{ day: 2, time: '10:00' }],
     });
-    expect(String(badMethod.error!.message)).toContain('invalid_method');
+    expect(coerced.error).toBeNull();
+    expect(coerced.data.communication_method).toBe('in_app');
+    const coercedCleanup = await e.rpc('end_plan', {
+      p_plan: coerced.data.id, p_reason: 'Method-coercion test cleanup',
+    });
+    expect(coercedCleanup.error).toBeNull(); // pair must be free again
 
     const noRate = await e.rpc('create_conversation_plan', {
       p_member: eMemberId, p_companion: fCompanionId, p_frequency: 1,
-      p_duration: 60, p_method: 'phone', // no 60-minute offer exists
+      p_duration: 60, p_method: 'in_app', // no 60-minute offer exists
       p_slots: [{ day: 2, time: '10:00' }],
     });
     expect(String(noRate.error!.message)).toContain('price_unavailable');
@@ -1185,13 +1228,13 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
     // Unrelated accounts cannot create a plan for someone else's member.
     const forged = await g.rpc('create_conversation_plan', {
       p_member: eMemberId, p_companion: fCompanionId, p_frequency: 1,
-      p_duration: 30, p_method: 'phone', p_slots: [{ day: 2, time: '10:00' }],
+      p_duration: 30, p_method: 'in_app', p_slots: [{ day: 2, time: '10:00' }],
     });
     expect(forged.error).not.toBeNull();
     // …and cannot send their own price (unknown argument).
     const forgedPrice = await e.rpc('create_conversation_plan', {
       p_member: eMemberId, p_companion: fCompanionId, p_frequency: 1,
-      p_duration: 30, p_method: 'phone', p_slots: [{ day: 2, time: '10:00' }],
+      p_duration: 30, p_method: 'in_app', p_slots: [{ day: 2, time: '10:00' }],
       p_weekly_price_minor: 1,
     });
     expect(forgedPrice.error).not.toBeNull();
@@ -1200,7 +1243,7 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
   it('2E4A: full plan lifecycle — accept, generate, pause, resume, change, end', async () => {
     const created = await e.rpc('create_conversation_plan', {
       p_member: eMemberId, p_companion: fCompanionId, p_frequency: 2,
-      p_duration: 30, p_method: 'phone',
+      p_duration: 30, p_method: 'in_app',
       p_slots: [{ day: 2, time: '10:00' }, { day: 4, time: '14:00' }],
     });
     expect(created.error).toBeNull();
@@ -1214,7 +1257,7 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
     // A second live plan for the same pair is refused.
     const duplicate = await e.rpc('create_conversation_plan', {
       p_member: eMemberId, p_companion: fCompanionId, p_frequency: 1,
-      p_duration: 30, p_method: 'phone', p_slots: [{ day: 3, time: '10:00' }],
+      p_duration: 30, p_method: 'in_app', p_slots: [{ day: 3, time: '10:00' }],
     });
     expect(String(duplicate.error!.message)).toContain('plan_exists');
 
@@ -1314,7 +1357,7 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
     const forgedPlan = await e.from('conversation_plans').insert({
       member_profile_id: eMemberId, companion_profile_id: fCompanionId,
       created_by_account_id: (await e.auth.getUser()).data.user!.id,
-      frequency_per_week: 7, duration_minutes: 30, communication_method: 'phone',
+      frequency_per_week: 7, duration_minutes: 30, communication_method: 'in_app',
       per_conversation_price_minor: 1, weekly_price_minor: 1,
       allowance_purchase_id: mine.data!.allowance_purchase_id,
     });
@@ -1335,7 +1378,7 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
   it('2E4A: CONCURRENCY — simultaneous generation never double-books an occurrence', async () => {
     const created = await h.rpc('create_conversation_plan', {
       p_member: hMemberId, p_companion: fCompanionId, p_frequency: 1,
-      p_duration: 30, p_method: 'phone', p_slots: [{ day: 3, time: '16:00' }],
+      p_duration: 30, p_method: 'in_app', p_slots: [{ day: 3, time: '16:00' }],
     });
     expect(created.error).toBeNull();
     const planId = created.data.id;
@@ -1378,12 +1421,19 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
     if (free.length > 0) {
       const first = await e.rpc('create_booking_request', {
         p_member: eMemberId, p_offer: trialOfferId,
-        p_starts_at: free[0].slot_start, p_method: 'phone',
+        p_starts_at: free[0].slot_start, p_method: 'in_app',
       });
-      if (first.error === null && free.length > 1) {
+      // The second attempt must use a genuinely NON-OVERLAPPING free slot:
+      // adjacent slots overlap a 30-minute trial, and the overlap guard
+      // (slot_taken) fires before the trial rule ever gets a chance to.
+      // Picking a clear slot proves the refusal is the trial-per-pair rule.
+      const clearOfFirst = free.find(
+        (sl) => Date.parse(sl.slot_start) >= Date.parse(free[0].slot_start) + 30 * 60_000,
+      );
+      if (first.error === null && clearOfFirst) {
         const second = await e.rpc('create_booking_request', {
           p_member: eMemberId, p_offer: trialOfferId,
-          p_starts_at: free[1].slot_start, p_method: 'phone',
+          p_starts_at: clearOfFirst.slot_start, p_method: 'in_app',
         });
         expect(second.error).not.toBeNull();
         expect(String(second.error!.message)).toMatch(/trial/);
@@ -1409,7 +1459,7 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
     // Legacy channels are rejected outright.
     const phone = await e.rpc('create_booking_request', {
       p_member: eMemberId, p_offer: singleOfferId,
-      p_starts_at: slots[44].slot_start, p_method: 'phone',
+      p_starts_at: slots[44].slot_start, p_method: 'phone', // deliberately legacy
     });
     expect(phone.error).not.toBeNull();
 
