@@ -249,10 +249,18 @@ describe('supabase messaging repository', () => {
   });
 
   it('paginates with a (created_at, id) cursor and returns oldest-first pages', async () => {
-    mock.selectRows = Array.from({ length: MESSAGES_PAGE_SIZE }, (_, i) =>
-      messageRow(1000 - i, `2026-07-18T10:${String(59 - i).padStart(2, '0')}:00Z`));
+    // 0020: the read path is the sender-attribution RPC.
+    mock.rpcResults.list_conversation_messages = {
+      data: Array.from({ length: MESSAGES_PAGE_SIZE }, (_, i) => ({
+        ...messageRow(1000 - i, `2026-07-18T10:${String(59 - i).padStart(2, '0')}:00Z`),
+        sender_role: 'member', sender_name: 'Mary T.',
+      })),
+      error: null,
+    };
     const page = await supabaseMessagingRepository.listMessages('conv1');
+    expect(mock.rpcCalls[0].fn).toBe('list_conversation_messages');
     expect(page.messages).toHaveLength(MESSAGES_PAGE_SIZE);
+    expect(page.messages[0].senderRole).toBe('member'); // server-derived, preserved
     // Oldest first for rendering; cursor points at the oldest row.
     expect(page.messages[0].createdAt < page.messages[page.messages.length - 1].createdAt).toBe(true);
     expect(page.nextCursor).toEqual({
@@ -260,9 +268,16 @@ describe('supabase messaging repository', () => {
       id: page.messages[0].id,
     });
 
-    mock.selectRows = [messageRow(1, '2026-07-18T09:00:00Z')];
+    mock.rpcResults.list_conversation_messages = {
+      data: [{ ...messageRow(1, '2026-07-18T09:00:00Z'), sender_role: 'member', sender_name: null }],
+      error: null,
+    };
     const last = await supabaseMessagingRepository.listMessages('conv1', page.nextCursor!);
-    expect(last.nextCursor).toBeNull(); // short page ⇒ history exhausted
+    // The cursor travelled to the server, and a short page ends history.
+    const call = mock.rpcCalls[mock.rpcCalls.length - 1];
+    expect(call.args.p_before_created).toBe(page.nextCursor!.createdAt);
+    expect(call.args.p_before_id).toBe(page.nextCursor!.id);
+    expect(last.nextCursor).toBeNull();
   });
 
   it('subscribe opens a conversation-scoped realtime channel and can unsubscribe', () => {

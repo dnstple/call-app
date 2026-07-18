@@ -14,6 +14,8 @@ import { CalendarHeart, Loader2, Sparkles } from 'lucide-react';
 import type { ConversationOfferRow, ConversationPlanRow, TrialState } from '../supabase/database.types';
 import type { User } from '../types';
 import { getTrialState, listMyPlans, PLAN_FREQUENCY_MIN } from '../repositories/planRepository';
+import { listMyBookings } from '../repositories/bookingRepository';
+import { MessageActionButton } from '../messaging/MessageAction';
 import { getMemberPlanPreferences, recommendedFrequency } from '../repositories/planRepository';
 import { formatMinor } from '../repositories/availabilityRepository';
 import { useAuthSnapshot } from '../state/authBridge';
@@ -44,6 +46,7 @@ export function CompanionPlanHero({
 
   const [trial, setTrial] = useState<TrialState | null>(null);
   const [plan, setPlan] = useState<ConversationPlanRow | null>(null);
+  const [messagingEligible, setMessagingEligible] = useState(false);
   const [recommended, setRecommended] = useState(3);
   const [loading, setLoading] = useState(true);
   const [planOpen, setPlanOpen] = useState(false);
@@ -57,12 +60,13 @@ export function CompanionPlanHero({
       setLoading(false);
       return;
     }
-    const [state, plans, prefs] = await Promise.all([
+    const [state, plans, prefs, bookings] = await Promise.all([
       getTrialState(member.id, companion.id).catch(() => null),
       listMyPlans().catch(() => []),
       getMemberPlanPreferences(member.id).catch(() => ({
         preferredDays: [], preferredDayparts: [], preferredDurationMinutes: null,
       })),
+      listMyBookings().catch(() => []),
     ]);
     setTrial(state);
     setPlan(
@@ -72,6 +76,23 @@ export function CompanionPlanHero({
           p.companion_profile_id === companion.id &&
           ['requested', 'active', 'paused'].includes(p.status),
       ) ?? null,
+    );
+    // 2F2B: messaging opens for a qualifying relationship — a
+    // confirmed/completed booking or an accepted plan. This is only a UI
+    // hint; the server re-checks on get_or_create_conversation.
+    setMessagingEligible(
+      bookings.some(
+        (b) =>
+          b.member_profile_id === member.id &&
+          b.companion_profile_id === companion.id &&
+          ['confirmed', 'completed'].includes(b.status),
+      ) ||
+      plans.some(
+        (p) =>
+          p.member_profile_id === member.id &&
+          p.companion_profile_id === companion.id &&
+          ['active', 'paused', 'ended'].includes(p.status),
+      ),
     );
     setRecommended(recommendedFrequency(prefs));
     setLoading(false);
@@ -100,6 +121,25 @@ export function CompanionPlanHero({
       {!acceptingNewMembers && (
         <span className="badge badge-neutral" style={{ alignSelf: 'flex-start' }}>
           Not taking new members right now
+        </span>
+      )}
+
+      {/* 2F2B: message an eligible relationship right from the profile.
+          The server stays authoritative; ineligible members see concise
+          guidance instead of an active button. */}
+      {messagingEligible ? (
+        <MessageActionButton
+          small
+          memberProfileId={member.id}
+          companionProfileId={companion.id}
+          label={`Message ${companion.firstName}`}
+        />
+      ) : (
+        <span className="col" style={{ gap: 2, alignSelf: 'flex-start' }}>
+          <button className="btn btn-secondary btn-small" disabled>
+            Message {companion.firstName}
+          </button>
+          <span className="faint">Book a conversation before messaging</span>
         </span>
       )}
 

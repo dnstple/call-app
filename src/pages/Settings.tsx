@@ -28,6 +28,7 @@ import { saveSettings } from '../state/actions';
 import { formatPence } from '../domain/commission';
 import { usageLabel } from '../domain/packages';
 import { ConfirmDialog, Modal, PageHeader, ProfilePhoto, SettingsRow, Switch } from '../components/ui';
+import { MessagingPermissionSettings } from '../messaging/MessagingPermissionSettings';
 import { clearDraft, completedSignups, hasDraft, resetSignupDemo } from '../signup/storage';
 import { DataModePanel } from '../components/DataModePanel';
 import { AuthStatusPanel } from '../components/AuthStatusPanel';
@@ -162,6 +163,10 @@ export default function Settings() {
                 description="Managed profiles, consent and permissions"
                 onClick={() => open('managed')}
               />
+            </div>
+            {/* 2F2B: the explicit Coordinator messaging switch (Supabase). */}
+            <div className="mt-4">
+              <MessagingPermissionSettings />
             </div>
           </section>
         )}

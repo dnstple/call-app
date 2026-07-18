@@ -54,5 +54,9 @@ export function getSupabaseClient(): TypedSupabaseClient {
       flowType: 'pkce',
     },
   });
+  // DEV-only: expose the client for console diagnostics (never in builds).
+  if (import.meta.env?.DEV) {
+    (window as unknown as { __sb?: unknown }).__sb = client;
+  }
   return client;
 }

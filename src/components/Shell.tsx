@@ -1,17 +1,19 @@
 import { useEffect, type ReactNode } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { Bell, CalendarHeart, Compass, Home, Phone, Settings, UserRound } from 'lucide-react';
+import { Bell, CalendarHeart, Compass, Home, MessageCircle, Phone, Settings, UserRound } from 'lucide-react';
 import { useAppState } from '../state/store';
 import { activeMember, currentUser, managedMembers, settingsFor, unreadCount } from '../state/selectors';
 import { switchActiveMember, switchIdentity } from '../state/actions';
 import { DEMO_IDENTITIES } from '../data/seed';
 import { getDataMode, isSupabaseMode } from '../config/dataMode';
 import { useAuth } from '../auth/AuthProvider';
+import { useUnreadTotal } from '../messaging/hooks';
 import { ToastStack } from './ui';
 
 const NAV = [
   { to: '/', label: 'Home', Icon: Home },
   { to: '/explore', label: 'Explore', Icon: Compass },
+  { to: '/messages', label: 'Messages', Icon: MessageCircle },
   { to: '/plans', label: 'Conversation plans', Icon: CalendarHeart },
   { to: '/conversations', label: 'Conversations', Icon: Phone },
   { to: '/profile', label: 'Profile', Icon: UserRound },
@@ -27,6 +29,16 @@ export function Shell({ children }: { children: ReactNode }) {
   const settings = settingsFor(state, me.id);
   const auth = useAuth();
   const supabase = isSupabaseMode();
+  // 2F2B: unread messages badge on the Messages nav item. Active in mock
+  // mode and for signed-in Supabase sessions; RLS scopes what it can see.
+  const unreadMessages = useUnreadTotal(!supabase || auth.status === 'authenticated');
+
+  const navBadge = (to: string) =>
+    to === '/messages' && unreadMessages > 0 ? (
+      <span className="msg-unread-badge nav-badge" aria-label={`${unreadMessages} unread messages`}>
+        {unreadMessages > 99 ? '99+' : unreadMessages}
+      </span>
+    ) : null;
 
   // Apply accessibility preferences globally.
   useEffect(() => {
@@ -64,6 +76,7 @@ export function Shell({ children }: { children: ReactNode }) {
           {NAV.map(({ to, label, Icon }) => (
             <NavLink key={to} to={to} end={to === '/'}>
               <Icon size={20} aria-hidden="true" /> {label}
+              {navBadge(to)}
             </NavLink>
           ))}
           <NavLink to="/settings">
@@ -153,9 +166,12 @@ export function Shell({ children }: { children: ReactNode }) {
       </div>
 
       <nav className="bottomnav" aria-label="Primary mobile">
-        {NAV.map(({ to, label, Icon }) => (
+        {NAV.filter((n) => n.to !== '/plans').map(({ to, label, Icon }) => (
           <NavLink key={to} to={to} end={to === '/'}>
-            <Icon size={22} aria-hidden="true" />
+            <span style={{ position: 'relative' }}>
+              <Icon size={22} aria-hidden="true" />
+              {navBadge(to)}
+            </span>
             {label}
           </NavLink>
         ))}

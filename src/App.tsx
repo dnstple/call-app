@@ -11,6 +11,7 @@ import BookingDetail from './pages/BookingDetail';
 import CallRoom from './pages/CallRoom';
 import PlanMemberProfile from './pages/PlanMemberProfile';
 import PlansPage from './pages/PlansPage';
+import MessagesPage from './pages/MessagesPage';
 import PlanDetail from './pages/PlanDetail';
 import Notifications from './pages/Notifications';
 import Settings from './pages/Settings';
@@ -123,6 +124,8 @@ function AppRoutes() {
                 <Route path="/conversations/:bookingId" element={<BookingDetail />} />
                 {/* Documented boundary for in-app calling (not built yet). */}
                 <Route path="/calls/:bookingId" element={<CallRoom />} />
+                <Route path="/messages" element={<MessagesPage />} />
+                <Route path="/messages/:conversationId" element={<MessagesPage />} />
                 <Route path="/plans" element={<PlansPage />} />
                 <Route path="/plans/:planId" element={<PlanDetail />} />
                 <Route path="/plans/:planId/member" element={<PlanMemberProfile />} />

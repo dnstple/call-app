@@ -615,3 +615,109 @@ table.plain th { color: var(--color-text-secondary); font-weight: 600; }
   .convo-row .btn { margin-left: 72px; }
   .card-feature .row { flex-wrap: wrap; }
 }
+
+/* ================= 2F2B — messaging ================= */
+/* The messages workspace breaks out of the centred .page container and
+   fills the shell's content area; panes scroll independently and the page
+   itself never scrolls. Height is measured at runtime from the shell. */
+.page:has(.msg-workspace) {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
+.msg-workspace {
+  display: flex;
+  width: 100%;
+  min-height: 320px;
+  overflow: hidden;
+  background: var(--color-surface);
+}
+.msg-pane-list {
+  width: clamp(300px, 28vw, 380px);
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--color-border);
+}
+.msg-pane-list.mobile { width: 100%; border-right: none; }
+.msg-list-head { padding: 16px 18px 8px; }
+.msg-list-head h1 { font-size: 1.3em; margin: 0; }
+.msg-list-scroll { flex: 1; overflow-y: auto; padding: 4px 10px 16px; min-height: 0; }
+.msg-pane-thread { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+.msg-pane-center { flex: 1; display: flex; align-items: center; justify-content: center; padding: 24px; }
+
+.msg-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.msg-item {
+  display: flex; gap: 10px; align-items: center; padding: 10px 10px;
+  border-radius: 12px; text-decoration: none; color: inherit; min-height: 56px;
+}
+.msg-item:hover { background: var(--surface-muted); }
+.msg-item.selected { background: var(--color-brand-soft); }
+.msg-item:focus-visible { outline: 2px solid var(--color-brand-strong); outline-offset: 2px; }
+.msg-avatar { width: 42px; height: 42px; flex-shrink: 0; font-size: 15px; background: var(--color-warning-bg); color: var(--color-warning-text); }
+.msg-item-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.msg-item-name { font-weight: 600; }
+.msg-item.unread .msg-item-name { font-weight: 800; }
+.msg-item.unread .msg-item-preview { font-weight: 600; color: var(--text-primary); }
+.msg-item-preview {
+  color: var(--text-secondary); font-size: 0.9em; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; max-width: 220px;
+}
+.msg-item-time { font-size: 0.8em; flex-shrink: 0; }
+.msg-unread-badge {
+  background: var(--color-brand-strong); color: #fff; border-radius: 999px;
+  font-size: 0.72em; font-weight: 700; min-width: 18px; height: 18px;
+  display: inline-flex; align-items: center; justify-content: center; padding: 0 5px;
+}
+.nav-badge { position: absolute; top: -6px; right: -10px; }
+.sidenav a { position: relative; }
+.msg-skeleton { height: 56px; border-radius: 12px; background: var(--surface-muted); }
+
+.msg-thread { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
+.msg-thread-head {
+  display: flex; align-items: center; gap: 10px; padding: 12px 20px;
+  border-bottom: 1px solid var(--color-border); flex: none;
+}
+.msg-scroll { flex: 1; overflow-y: auto; padding: 14px 20px; min-height: 0; }
+.msg-earlier { display: block; margin: 0 auto 12px; }
+.msg-row { display: flex; flex-direction: column; margin-bottom: 4px; }
+.msg-row.mine { align-items: flex-end; }
+.msg-row.theirs { align-items: flex-start; }
+.msg-bubble {
+  max-width: min(75%, 520px); padding: 9px 13px; border-radius: 16px;
+  line-height: 1.4; overflow-wrap: break-word; white-space: pre-wrap;
+}
+.msg-bubble.mine { background: var(--color-brand-strong); color: #fff; border-bottom-right-radius: 6px; }
+.msg-bubble.theirs { background: var(--surface-muted); border-bottom-left-radius: 6px; }
+.msg-time { font-size: 0.75em; margin: 2px 4px 8px; }
+.msg-system {
+  text-align: center; color: var(--text-secondary); font-size: 0.85em;
+  margin: 10px auto; max-width: 80%;
+}
+.msg-composer {
+  flex: none;
+  padding: 10px 20px calc(10px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+.msg-composer textarea {
+  flex: 1; resize: none; min-height: 44px; max-height: 140px;
+  border-radius: 14px; padding: 11px 14px; font: inherit; width: 100%;
+}
+.msg-send { min-width: 44px; min-height: 44px; border-radius: 999px; padding: 0; }
+
+/* Tablet: keep the split, tighten the list. */
+@media (min-width: 760px) and (max-width: 1000px) {
+  .msg-pane-list { width: 300px; }
+  .msg-item-preview { max-width: 160px; }
+}
+/* Mobile: single pane per route; the workspace height accounts for the
+   bottom nav (measured in the page component). */
+@media (max-width: 759px) {
+  .msg-thread-head { padding: 10px 12px; }
+  .msg-scroll { padding: 12px 12px; }
+  .msg-composer { padding-left: 12px; padding-right: 12px; }
+  .msg-item-preview { max-width: 46vw; }
+}
+

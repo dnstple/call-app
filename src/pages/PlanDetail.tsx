@@ -49,6 +49,7 @@ import { DateTimeSlotPicker } from '../components/DateTimeSlotPicker';
 import { EmptyState, Modal } from '../components/ui';
 import { IN_APP_CALL_LABEL } from '../components/FlowModal';
 import { loadPlanOverview, nextConversationLabel, type PlanOverview } from './PlansPage';
+import { MessageActionButton } from '../messaging/MessageAction';
 
 const BILLING_NOTICE = 'Prototype weekly plan — no payment is currently taken.';
 const BILLING_FUTURE = 'When payments are introduced, this plan will renew weekly.';
@@ -544,6 +545,15 @@ export default function PlanDetail() {
             <Link to={`/people/${plan.companion_profile_id}`} className="btn btn-secondary btn-small">
               View {counterpartName.split(' ')[0]}’s profile
             </Link>
+          )}
+          {/* 2F2B: accepted plans (active/paused/ended) qualify for messaging. */}
+          {['active', 'paused', 'ended'].includes(plan.status) && (
+            <MessageActionButton
+              small
+              memberProfileId={plan.member_profile_id}
+              companionProfileId={plan.companion_profile_id}
+              label={`Message ${counterpartName.split(' ')[0]}`}
+            />
           )}
         </div>
       </header>

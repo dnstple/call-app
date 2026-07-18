@@ -1695,6 +1695,52 @@ describe.skipIf(!enabled)('2F2A messaging RLS (requires live Supabase)', () => {
     expect(String(refused.error!.message)).toContain('not_eligible');
   });
 
+  it('0021/0022: the eligible coordinator pair was materialised WITHOUT any manual call', async () => {
+    // The p-pair booking was confirmed in beforeAll; the trigger (or the
+    // 0021/0022 backfill) must have created the thread already. The
+    // Companion owner can see it — no get_or_create involved.
+    const rows = await n.from('conversations').select('id')
+      .eq('member_profile_id', pManagedMemberId)
+      .eq('companion_profile_id', nCompanionId);
+    expect(rows.error).toBeNull();
+    expect(rows.data).toHaveLength(1);
+  });
+
+  it('0022: requested-only relationships are never materialised and stay ineligible', async () => {
+    // o requests a conversation with n but nobody accepts it.
+    const from2 = new Date().toISOString();
+    const to2 = new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString();
+    const offers = await o.from('conversation_offers').select('id, offer_type')
+      .eq('companion_profile_id', nCompanionId);
+    const single2 = offers.data!.find((x: { offer_type: string }) => x.offer_type === 'single')!;
+    const s2 = await o.rpc('get_available_slots', {
+      p_companion: nCompanionId, p_offer: single2.id, p_from: from2, p_to: to2,
+    });
+    const slot2 = (s2.data ?? [])[10] as { slot_start: string };
+    const req = await o.rpc('create_booking_request', {
+      p_member: oMemberId, p_offer: single2.id,
+      p_starts_at: slot2.slot_start, p_method: 'in_app',
+    });
+    expect(req.error).toBeNull(); // requested, never confirmed
+
+    // No thread was materialised for the pair…
+    const rows = await o.from('conversations').select('id')
+      .eq('member_profile_id', oMemberId)
+      .eq('companion_profile_id', nCompanionId);
+    expect(rows.data ?? []).toHaveLength(0);
+    // …and manual opening is still refused as ineligible.
+    const refused = await o.rpc('get_or_create_conversation', {
+      p_member: oMemberId, p_companion: nCompanionId,
+    });
+    expect(String(refused.error!.message)).toContain('not_eligible');
+    await o.rpc('cancel_booking', { p_booking: req.data.id, p_reason: 'Materialisation test cleanup' });
+    // Cancelling an unconfirmed request still creates nothing.
+    const after = await o.from('conversations').select('id')
+      .eq('member_profile_id', oMemberId)
+      .eq('companion_profile_id', nCompanionId);
+    expect(after.data ?? []).toHaveLength(0);
+  });
+
   it('7+8+9. valid send works; sender/timestamps are server-derived; bad bodies rejected', async () => {
     const sent = await m.rpc('send_message', {
       p_conversation: conversationId, p_body: '  Hello Daniel!  ',
@@ -1732,11 +1778,11 @@ describe.skipIf(!enabled)('2F2A messaging RLS (requires live Supabase)', () => {
     const oMsgs = await o.from('messages').select('id').eq('conversation_id', conversationId);
     expect(oMsgs.data ?? []).toHaveLength(0);
     const oSend = await o.rpc('send_message', { p_conversation: conversationId, p_body: 'hi' });
-    expect(String(oSend.error!.message)).toContain('Conversation not found');
+    expect(String(oSend.error!.message)).toMatch(/Conversation not found|not_found/);
     const oJoin = await o.rpc('get_or_create_conversation', {
       p_member: mMemberId, p_companion: nCompanionId,
     });
-    expect(String(oJoin.error!.message)).toContain('Conversation not found');
+    expect(String(oJoin.error!.message)).toMatch(/Conversation not found|not_found/);
 
     // Anonymous: nothing at all.
     const anon = client();
@@ -1805,7 +1851,7 @@ describe.skipIf(!enabled)('2F2A messaging RLS (requires live Supabase)', () => {
     const before = await p.rpc('get_or_create_conversation', {
       p_member: pManagedMemberId, p_companion: nCompanionId,
     });
-    expect(String(before.error!.message)).toContain('Conversation not found');
+    expect(String(before.error!.message)).toMatch(/Conversation not found|not_found/);
 
     // An unrelated account cannot grant themselves the permission.
     const foreignGrant = await o.rpc('set_messaging_permission', {

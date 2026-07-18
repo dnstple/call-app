@@ -107,6 +107,14 @@ export type ConversationReadStateRow = {
   updated_at: string;
 };
 
+export type MessageSenderRole = 'member' | 'companion' | 'coordinator' | 'system' | 'participant';
+
+/** 0020: message + server-derived safe sender metadata. */
+export type MessageWithSenderPayload = MessageRow & {
+  sender_role: MessageSenderRole;
+  sender_name: string | null;
+};
+
 export type ConversationSummaryPayload = {
   id: string;
   member_profile_id: string;
@@ -832,6 +840,15 @@ export type Database = {
         Returns: ConversationReadStateRow;
       };
       list_conversations: { Args: Record<string, never>; Returns: ConversationSummaryPayload[] };
+      list_conversation_messages: {
+        Args: {
+          p_conversation: string;
+          p_before_created?: string | null;
+          p_before_id?: string | null;
+          p_limit?: number;
+        };
+        Returns: MessageWithSenderPayload[] | null;
+      };
       set_messaging_permission: {
         Args: { p_profile: string; p_account: string; p_allowed: boolean };
         Returns: ProfileAccessRow;

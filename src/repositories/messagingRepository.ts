@@ -19,7 +19,11 @@ import type {
   ConversationSummaryPayload,
   MessageKind,
   MessageRow,
+  MessageSenderRole,
+  MessageWithSenderPayload,
 } from '../supabase/database.types';
+
+export type { MessageSenderRole };
 
 export const MESSAGE_MAX_LENGTH = 2000;
 export const MESSAGES_PAGE_SIZE = 30;
@@ -48,6 +52,10 @@ export interface ChatMessage {
   systemEvent: string | null;
   systemPayload: Record<string, unknown> | null;
   createdAt: string;
+  /** 0020: SERVER-derived role of the sender — never guessed client-side. */
+  senderRole: MessageSenderRole;
+  /** 0020: safe display name (first name + initial); null when unknown. */
+  senderName: string | null;
 }
 
 /** Opaque cursor: pass a message's (createdAt, id) to page further back. */
@@ -90,6 +98,9 @@ export class MessagingError extends RepoError {
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 function mapMessagingError(e: any): MessagingError {
+  // DEV-only diagnostics: surface the real code/message in the console
+  // while the UI keeps its neutral copy. Never shipped behaviour.
+  if (import.meta.env?.DEV) console.warn('[messaging]', e?.code ?? '', e?.message ?? '');
   const msg = String(e?.message ?? '').toLowerCase();
   if (msg.includes('not_eligible')) {
     return new MessagingError(
@@ -106,7 +117,14 @@ function mapMessagingError(e: any): MessagingError {
   if (msg.includes('rate_limited')) {
     return new MessagingError('You’re sending messages very quickly — give it a moment.', 'conflict', 'rate_limited');
   }
-  if (msg.includes('not found') || msg.includes('row-level security') || msg.includes('permission denied')) {
+  // 0022: stable prefixed server errors. The copy stays neutral — the
+  // distinct codes exist so DEV logging and tests can tell the cases
+  // apart, never so the UI can reveal relationship details.
+  if (msg.includes('unauthorised')) {
+    return new MessagingError('We couldn’t find that conversation.', 'unauthorised', 'unauthorised');
+  }
+  if (msg.includes('not_found') || msg.includes('not found')
+      || msg.includes('row-level security') || msg.includes('permission denied')) {
     return new MessagingError('We couldn’t find that conversation.', 'not_found', 'not_found');
   }
   if (msg.includes('failed to fetch') || msg.includes('network')) {
@@ -115,7 +133,7 @@ function mapMessagingError(e: any): MessagingError {
   return new MessagingError('Something went wrong. Please try again.', 'database', 'unknown');
 }
 
-function rowToMessage(r: MessageRow): ChatMessage {
+function rowToMessage(r: MessageRow & Partial<MessageWithSenderPayload>): ChatMessage {
   return {
     id: r.id,
     conversationId: r.conversation_id,
@@ -125,6 +143,10 @@ function rowToMessage(r: MessageRow): ChatMessage {
     systemEvent: r.system_event,
     systemPayload: r.system_payload,
     createdAt: r.created_at,
+    // Realtime INSERT payloads carry no derived metadata; the thread
+    // resolves those from context (a fresh page load shows full labels).
+    senderRole: r.sender_role ?? (r.kind === 'system' ? 'system' : 'participant'),
+    senderName: r.sender_name ?? null,
   };
 }
 
@@ -136,6 +158,24 @@ export function validateMessageBody(body: string): MessagingError | null {
     return new MessagingError('Please keep messages under 2,000 characters.', 'validation', 'message_too_long');
   }
   return null;
+}
+
+/**
+ * Coordinator messaging permission (0019 RPC). The server enforces who may
+ * grant: the profile owner, or a consent-confirmed coordinator of an
+ * owner-less profile setting their OWN permission.
+ */
+export async function setMessagingPermission(
+  profileId: string,
+  accountId: string,
+  allowed: boolean,
+): Promise<void> {
+  const { error } = await getSupabaseClient().rpc('set_messaging_permission', {
+    p_profile: profileId,
+    p_account: accountId,
+    p_allowed: allowed,
+  });
+  if (error) throw mapMessagingError(error);
 }
 
 /* ---------------- Supabase implementation ---------------- */
@@ -166,22 +206,20 @@ export const supabaseMessagingRepository: MessagingRepository = {
   },
 
   async listMessages(conversationId, before) {
-    let query = getSupabaseClient()
-      .from('messages')
-      .select('*')
-      .eq('conversation_id', conversationId)
-      .order('created_at', { ascending: false })
-      .order('id', { ascending: false })
-      .limit(MESSAGES_PAGE_SIZE);
-    if (before) {
-      // (created_at, id) cursor: strictly older than the cursor row.
-      query = query.or(
-        `created_at.lt.${before.createdAt},and(created_at.eq.${before.createdAt},id.lt.${before.id})`,
-      );
-    }
-    const { data, error } = await query;
+    // 0020: the secure read path returns server-derived sender metadata
+    // (role + safe name) alongside each message. Same (created_at, id)
+    // cursor pagination as before.
+    const { data, error } = await getSupabaseClient().rpc('list_conversation_messages', {
+      p_conversation: conversationId,
+      p_before_created: before?.createdAt ?? null,
+      p_before_id: before?.id ?? null,
+      p_limit: MESSAGES_PAGE_SIZE,
+    });
     if (error) throw mapMessagingError(error);
-    const rows = (data ?? []) as MessageRow[];
+    if (data === null) {
+      throw new MessagingError('We couldn’t find that conversation.', 'not_found', 'not_found');
+    }
+    const rows = (data ?? []) as MessageWithSenderPayload[];
     const oldest = rows[rows.length - 1];
     return {
       messages: rows.map(rowToMessage).reverse(),
@@ -271,16 +309,68 @@ function mockThreadFor(memberProfileId: string, companionProfileId: string): Moc
 export function __resetMockMessaging(): void {
   mockThreads.clear();
   mockCounter = 0;
+  mockSeeded = false;
+}
+
+let mockSeeded = false;
+
+/**
+ * Mock-mode demo data (2F2B): a small realistic inbox so the messaging UI
+ * is explorable without a database. NEVER used in Supabase mode — the
+ * hooks only call this when the data mode is mock.
+ */
+export function ensureMockMessagingSeed(): void {
+  if (mockSeeded) return;
+  mockSeeded = true;
+  const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
+  const seed = (
+    memberId: string, companionId: string,
+    entries: { from: 'me' | 'them'; body: string; minutes: number }[],
+    readUpToMinutes: number,
+  ) => {
+    const t = mockThreadFor(memberId, companionId);
+    for (const e of entries) {
+      mockCounter += 1;
+      const names: Record<string, string> = { u2: 'Margaret H.', u3: 'Tom B.' };
+      const msg: ChatMessage = {
+        id: `mock-message-${String(mockCounter).padStart(6, '0')}`,
+        conversationId: t.row.id,
+        senderAccountId: e.from === 'me' ? MOCK_ACCOUNT : `mock-other-${companionId}`,
+        kind: 'user',
+        body: e.body,
+        systemEvent: null,
+        systemPayload: null,
+        createdAt: minutesAgo(e.minutes),
+        senderRole: e.from === 'me' ? 'member' : 'companion',
+        senderName: e.from === 'me' ? 'Dorothy F.' : names[companionId] ?? 'Companion',
+      };
+      t.messages.push(msg);
+      t.row.last_message_at = msg.createdAt;
+    }
+    t.lastReadAt.set(MOCK_ACCOUNT, minutesAgo(readUpToMinutes));
+  };
+  seed('u-mem-dorothy', 'u2', [
+    { from: 'them', body: 'Lovely talking earlier — same time next week?', minutes: 200 },
+    { from: 'me', body: 'Yes please, Tuesday suits me well.', minutes: 190 },
+    { from: 'them', body: 'Perfect. I’ll bring my crossword questions!', minutes: 25 },
+  ], 60);
+  seed('u-mem-dorothy', 'u3', [
+    { from: 'me', body: 'Thank you for the book recommendation.', minutes: 2000 },
+    { from: 'them', body: 'You’re very welcome — tell me what you think of chapter three.', minutes: 1950 },
+  ], 1000);
 }
 
 export const mockMessagingRepository: MessagingRepository = {
   async listConversations() {
+    const names: Record<string, string> = {
+      'u-mem-dorothy': 'Dorothy F.', u2: 'Margaret H.', u3: 'Tom B.',
+    };
     return [...mockThreads.values()].map((t) => ({
       id: t.row.id,
       memberProfileId: t.row.member_profile_id,
       companionProfileId: t.row.companion_profile_id,
-      memberName: 'Member',
-      companionName: 'Companion',
+      memberName: names[t.row.member_profile_id] ?? 'Member',
+      companionName: names[t.row.companion_profile_id] ?? 'Companion',
       createdAt: t.row.created_at,
       lastMessageAt: t.row.last_message_at,
       unreadCount: t.messages.filter(
@@ -329,6 +419,8 @@ export const mockMessagingRepository: MessagingRepository = {
       systemEvent: null,
       systemPayload: null,
       createdAt: new Date().toISOString(),
+      senderRole: 'member',
+      senderName: 'Dorothy F.',
     };
     t.messages.push(message);
     t.row.last_message_at = message.createdAt;

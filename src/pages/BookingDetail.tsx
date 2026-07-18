@@ -35,6 +35,7 @@ import { SlotPicker, slotDayLabel, slotTimeLabel } from '../components/SupabaseB
 import { getAvailablePackageSlots } from '../repositories/packageRepository';
 import { DateTimeSlotPicker } from '../components/DateTimeSlotPicker';
 import { CompletionPanel } from '../components/CompletionPanel';
+import { MessageActionButton } from '../messaging/MessageAction';
 import { IN_APP_CALL_EXPLAINER, IN_APP_CALL_LABEL } from '../components/FlowModal';
 import { RatingPanel } from '../components/RatingPanel';
 import { BookingCreditPanel } from '../components/BookingCreditBadge';
@@ -226,6 +227,17 @@ export default function BookingDetail() {
                 The room opens ten minutes before your conversation starts.
               </span>
             </div>
+          )}
+          {/* 2F2B: messaging opens for confirmed/completed conversations.
+              The server re-checks eligibility and participation. */}
+          {['confirmed', 'completed'].includes(booking.status) && (
+            <MessageActionButton
+              memberProfileId={booking.member_profile_id}
+              companionProfileId={booking.companion_profile_id}
+              label={isCompanionSide
+                ? `Message ${booking.member_first_name}`
+                : `Message ${booking.companion_first_name}`}
+            />
           )}
         </div>
       </section>
