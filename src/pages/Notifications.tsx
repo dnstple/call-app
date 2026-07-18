@@ -14,6 +14,8 @@ import {
   X,
 } from 'lucide-react';
 import { useAppState } from '../state/store';
+import { isSupabaseMode } from '../config/dataMode';
+import { NotificationsSupabase } from '../messaging/NotificationsSupabase';
 import { myNotifications } from '../state/selectors';
 import { markAllNotificationsRead, markNotificationRead } from '../state/actions';
 import { EmptyState, PageHeader } from '../components/ui';
@@ -39,6 +41,13 @@ const TYPE_ICONS: Partial<Record<NotificationType, typeof Mail>> = {
 type Filter = 'all' | 'unread';
 
 export default function Notifications() {
+  // 2F2C: Supabase mode uses the real notification centre; the mock-mode
+  // page below stays as the prototype experience.
+  if (isSupabaseMode()) return <NotificationsSupabase />;
+  return <MockNotifications />;
+}
+
+function MockNotifications() {
   const state = useAppState();
   const navigate = useNavigate();
   const [filter, setFilter] = useState<Filter>('all');

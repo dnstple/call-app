@@ -1597,6 +1597,7 @@ describe.skipIf(!enabled)('2F2A messaging RLS (requires live Supabase)', () => {
   let oMemberId: string;
   let pManagedMemberId: string;
   let conversationId: string;
+  let mBookingId: string;
 
   beforeAll(async () => {
     m = await signedInClient(`rls-m-${suffix}@${TEST_EMAIL_DOMAIN}`);
@@ -1655,7 +1656,8 @@ describe.skipIf(!enabled)('2F2A messaging RLS (requires live Supabase)', () => {
       p_starts_at: slots2f2[0].slot_start, p_method: 'in_app',
     });
     expect(b1.error).toBeNull();
-    expect((await n.rpc('accept_booking', { p_booking: b1.data.id })).error).toBeNull();
+    mBookingId = b1.data.id;
+    expect((await n.rpc('accept_booking', { p_booking: mBookingId })).error).toBeNull();
 
     const single = await n.from('conversation_offers').insert({
       companion_profile_id: nCompanionId, offer_type: 'single',
@@ -1887,6 +1889,54 @@ describe.skipIf(!enabled)('2F2A messaging RLS (requires live Supabase)', () => {
     expect(revoke.error).toBeNull();
     const closed = await p.from('conversations').select('id').eq('id', opened.data.id);
     expect(closed.data ?? []).toHaveLength(0);
+  });
+
+  it('2F2C: confirming the booking emitted ONE system event, idempotently (requires 0023)', async () => {
+    // accept_booking in beforeAll fired the trigger exactly once.
+    const events = await m.from('messages').select('id, system_event, event_key')
+      .eq('conversation_id', conversationId).eq('kind', 'system');
+    expect(events.error).toBeNull();
+    const confirmed = events.data!.filter(
+      (e: { event_key: string | null }) => e.event_key === `booking_confirmed:${mBookingId}`,
+    );
+    expect(confirmed).toHaveLength(1); // one, despite trigger + any retries
+
+    // Retrying the lifecycle op is an invalid transition and adds nothing.
+    const again = await n.rpc('accept_booking', { p_booking: mBookingId });
+    expect(again.error).not.toBeNull();
+    const after = await m.from('messages').select('id')
+      .eq('conversation_id', conversationId).eq('kind', 'system');
+    expect(after.data!.length).toBe(events.data!.length);
+  });
+
+  it('2F2C: notifications reach the right people only, and reads are caller-scoped (requires 0023)', async () => {
+    // The actor was n (they accepted) → m is notified, n is NOT.
+    const mine = await m.from('notifications').select('id, type, related_booking_id, read_at')
+      .eq('type', 'booking_confirmed').eq('related_booking_id', mBookingId);
+    expect(mine.error).toBeNull();
+    expect(mine.data).toHaveLength(1);
+    const theirs = await n.from('notifications').select('id')
+      .eq('type', 'booking_confirmed').eq('related_booking_id', mBookingId);
+    expect(theirs.data ?? []).toHaveLength(0); // the actor is never notified
+
+    // Unrelated accounts see nothing at all.
+    const outsider = await o.from('notifications').select('id').eq('related_booking_id', mBookingId);
+    expect(outsider.data ?? []).toHaveLength(0);
+
+    // Forging is impossible: no insert path exists.
+    const forged = await o.from('notifications').insert({
+      user_id: (await o.auth.getUser()).data.user!.id,
+      type: 'booking_confirmed', title: 'forged',
+    });
+    expect(forged.error).not.toBeNull();
+
+    // Mark-read is caller-scoped: n cannot read-mark m's notification…
+    const cross = await n.rpc('mark_notification_read', { p_notification: mine.data![0].id });
+    expect(cross.error).not.toBeNull();
+    // …while m can, exactly once and idempotently.
+    const marked = await m.rpc('mark_notification_read', { p_notification: mine.data![0].id });
+    expect(marked.error).toBeNull();
+    expect(marked.data.read_at).toBeTruthy();
   });
 
   it('15+16. pagination is stable and the rate limit is server-enforced', async () => {

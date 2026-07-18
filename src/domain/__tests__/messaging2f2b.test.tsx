@@ -176,7 +176,7 @@ describe('conversation list', () => {
 describe('message thread', () => {
   it('4. messages render chronologically with sent/received styling', async () => {
     renderMessages(`/messages/${MARGARET_THREAD}`);
-    await screen.findByText(/crossword questions/);
+    await screen.findAllByText(/crossword questions/);
     const bubbles = [...document.querySelectorAll('.msg-bubble')];
     expect(bubbles.map((b) => b.textContent)).toEqual([
       expect.stringContaining('Lovely talking earlier'),
@@ -207,7 +207,7 @@ describe('message thread', () => {
 
   it('7+8+14. sending works; empty and over-limit are blocked locally; own sends stay read', async () => {
     renderMessages(`/messages/${MARGARET_THREAD}`);
-    await screen.findByText(/crossword questions/);
+    await screen.findAllByText(/crossword questions/);
     const input = screen.getByLabelText('Write a message');
     const send = screen.getByRole('button', { name: 'Send message' });
     expect((send as HTMLButtonElement).disabled).toBe(true); // empty blocked
@@ -260,7 +260,7 @@ describe('message thread', () => {
 
   it('10+11. subscription messages appear without refresh and echoes never duplicate', async () => {
     renderMessages(`/messages/${MARGARET_THREAD}`);
-    await screen.findByText(/crossword questions/);
+    await screen.findAllByText(/crossword questions/);
     // An incoming message via the subscription channel (no reload):
     await act(async () => {
       await mockMessagingRepository.sendMessage({
@@ -273,8 +273,9 @@ describe('message thread', () => {
     await waitFor(() => expect(within(scroll).getAllByText('Realtime hello')).toHaveLength(1));
     // …and the left-pane conversation preview updates without a refresh.
     await waitFor(() =>
+      // Own messages preview as "You: …" (2F2C summary contract).
       expect(within(document.querySelector('.msg-pane-list') as HTMLElement)
-        .getByText('Realtime hello')).toBeTruthy());
+        .getByText(/You: Realtime hello/)).toBeTruthy());
   });
 
   it('12. switching threads unsubscribes from the previous one', async () => {
@@ -287,11 +288,11 @@ describe('message thread', () => {
       return { unsubscribe };
     });
     renderMessages(`/messages/${MARGARET_THREAD}`);
-    await screen.findByText(/crossword questions/);
+    await screen.findAllByText(/crossword questions/);
     expect(unsubs).toHaveLength(1);
     // Switch to Tom's thread via the list.
     fireEvent.click(screen.getByText('Tom B.'));
-    await screen.findByText(/chapter three/);
+    await screen.findAllByText(/chapter three/);
     expect(unsubs[0]).toHaveBeenCalled(); // old thread released
     expect(unsubs).toHaveLength(2); // exactly one live subscription at a time
   });
@@ -300,7 +301,7 @@ describe('message thread', () => {
     const markSpy = vi.spyOn(mockMessagingRepository, 'markRead');
     Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
     renderMessages(`/messages/${MARGARET_THREAD}`);
-    await screen.findByText(/crossword questions/);
+    await screen.findAllByText(/crossword questions/);
     expect(markSpy).not.toHaveBeenCalled(); // hidden tab: nothing is marked
 
     Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
@@ -344,7 +345,7 @@ describe('message thread', () => {
 describe('desktop workspace layout', () => {
   it('L1+L2+L3+L4. full-area workspace with fixed list, flexing thread, panes that scroll and a bottom composer', async () => {
     renderMessages(`/messages/${MARGARET_THREAD}`);
-    await screen.findByText(/crossword questions/);
+    await screen.findAllByText(/crossword questions/);
     const workspace = document.querySelector('.msg-workspace') as HTMLElement;
     expect(workspace).toBeTruthy();
     // Measured height: the workspace sizes itself to the viewport rather
@@ -746,7 +747,7 @@ describe('coordinator messaging permission', () => {
 describe('thread delivery without realtime', () => {
   it('an open thread re-fetches on messages:changed and picks up missed messages', async () => {
     renderMessages(`/messages/${MARGARET_THREAD}`);
-    await screen.findByText(/crossword questions/);
+    await screen.findAllByText(/crossword questions/);
 
     // Simulate a message that arrived WITHOUT any subscription callback
     // (exactly what happens when Realtime is down): silence the listeners,

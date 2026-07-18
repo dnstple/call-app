@@ -8,6 +8,7 @@ import { DEMO_IDENTITIES } from '../data/seed';
 import { getDataMode, isSupabaseMode } from '../config/dataMode';
 import { useAuth } from '../auth/AuthProvider';
 import { useUnreadTotal } from '../messaging/hooks';
+import { useUnreadNotifications } from '../messaging/NotificationsSupabase';
 import { ToastStack } from './ui';
 
 const NAV = [
@@ -32,6 +33,9 @@ export function Shell({ children }: { children: ReactNode }) {
   // 2F2B: unread messages badge on the Messages nav item. Active in mock
   // mode and for signed-in Supabase sessions; RLS scopes what it can see.
   const unreadMessages = useUnreadTotal(!supabase || auth.status === 'authenticated');
+  // 2F2C: the bell shows REAL notification unreads in Supabase mode.
+  const unreadNotifications = useUnreadNotifications(supabase && auth.status === 'authenticated');
+  const bellCount = supabase ? unreadNotifications : unread;
 
   const navBadge = (to: string) =>
     to === '/messages' && unreadMessages > 0 ? (
@@ -155,9 +159,9 @@ export function Shell({ children }: { children: ReactNode }) {
               )
             )}
 
-            <NavLink to="/notifications" className="icon-btn" aria-label={`Notifications, ${unread} unread`}>
+            <NavLink to="/notifications" className="icon-btn" aria-label={`Notifications, ${bellCount} unread`}>
               <Bell size={22} aria-hidden="true" />
-              {unread > 0 && <span className="notif-dot">{unread}</span>}
+              {bellCount > 0 && <span className="notif-dot">{bellCount}</span>}
             </NavLink>
           </header>
 

@@ -15,6 +15,7 @@ import { getSupabaseClient } from '../supabase/client';
 import { isSupabaseMode } from '../config/dataMode';
 import { RepoError, type RepoErrorKind } from './profileRepository';
 import type {
+  ConversationLastMessage,
   ConversationRow,
   ConversationSummaryPayload,
   MessageKind,
@@ -40,6 +41,8 @@ export interface ConversationSummary {
   createdAt: string;
   lastMessageAt: string | null;
   unreadCount: number;
+  /** 2F2C: inline preview — the inbox is ONE server call, never N+1. */
+  lastMessage: ConversationLastMessage | null;
 }
 
 export interface ChatMessage {
@@ -193,6 +196,7 @@ export const supabaseMessagingRepository: MessagingRepository = {
       createdAt: c.created_at,
       lastMessageAt: c.last_message_at,
       unreadCount: Number(c.unread_count),
+      lastMessage: c.last_message ?? null,
     }));
   },
 
@@ -354,6 +358,24 @@ export function ensureMockMessagingSeed(): void {
     { from: 'me', body: 'Yes please, Tuesday suits me well.', minutes: 190 },
     { from: 'them', body: 'Perfect. I’ll bring my crossword questions!', minutes: 25 },
   ], 60);
+  // A trusted lifecycle event in the demo thread.
+  {
+    const t = mockThreadFor('u-mem-dorothy', 'u2');
+    mockCounter += 1;
+    const sys: ChatMessage = {
+      id: `mock-message-${String(mockCounter).padStart(6, '0')}`,
+      conversationId: t.row.id,
+      senderAccountId: null,
+      kind: 'system',
+      body: null,
+      systemEvent: 'booking_confirmed',
+      systemPayload: { starts_at: minutesAgo(-1440), duration_minutes: 30 },
+      createdAt: minutesAgo(120),
+      senderRole: 'system',
+      senderName: null,
+    };
+    t.messages.push(sys);
+  }
   seed('u-mem-dorothy', 'u3', [
     { from: 'me', body: 'Thank you for the book recommendation.', minutes: 2000 },
     { from: 'them', body: 'You’re very welcome — tell me what you think of chapter three.', minutes: 1950 },
@@ -365,19 +387,30 @@ export const mockMessagingRepository: MessagingRepository = {
     const names: Record<string, string> = {
       'u-mem-dorothy': 'Dorothy F.', u2: 'Margaret H.', u3: 'Tom B.',
     };
-    return [...mockThreads.values()].map((t) => ({
-      id: t.row.id,
-      memberProfileId: t.row.member_profile_id,
-      companionProfileId: t.row.companion_profile_id,
-      memberName: names[t.row.member_profile_id] ?? 'Member',
-      companionName: names[t.row.companion_profile_id] ?? 'Companion',
-      createdAt: t.row.created_at,
-      lastMessageAt: t.row.last_message_at,
-      unreadCount: t.messages.filter(
-        (m) => m.senderAccountId !== MOCK_ACCOUNT
-          && m.createdAt > (t.lastReadAt.get(MOCK_ACCOUNT) ?? ''),
-      ).length,
-    }));
+    return [...mockThreads.values()].map((t) => {
+      const sorted = [...t.messages].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      const last = sorted[sorted.length - 1];
+      return {
+        id: t.row.id,
+        memberProfileId: t.row.member_profile_id,
+        companionProfileId: t.row.companion_profile_id,
+        memberName: names[t.row.member_profile_id] ?? 'Member',
+        companionName: names[t.row.companion_profile_id] ?? 'Companion',
+        createdAt: t.row.created_at,
+        lastMessageAt: t.row.last_message_at,
+        unreadCount: t.messages.filter(
+          (m) => m.senderAccountId !== MOCK_ACCOUNT
+            && m.createdAt > (t.lastReadAt.get(MOCK_ACCOUNT) ?? ''),
+        ).length,
+        lastMessage: last ? {
+          kind: last.kind,
+          body: last.body,
+          system_event: last.systemEvent,
+          created_at: last.createdAt,
+          mine: last.senderAccountId === MOCK_ACCOUNT,
+        } : null,
+      };
+    });
   },
 
   async getOrCreateConversation(memberProfileId, companionProfileId) {

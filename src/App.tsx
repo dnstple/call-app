@@ -1,5 +1,5 @@
 import { HashRouter, Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
-import { useEffect, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, type ReactNode } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Shell } from './components/Shell';
 import Home from './pages/Home';
@@ -8,12 +8,12 @@ import ProfileDetail from './pages/ProfileDetail';
 import MyProfile from './pages/MyProfile';
 import Conversations from './pages/Conversations';
 import BookingDetail from './pages/BookingDetail';
-import CallRoom from './pages/CallRoom';
-import PlanMemberProfile from './pages/PlanMemberProfile';
-import PlansPage from './pages/PlansPage';
-import MessagesPage from './pages/MessagesPage';
-import PlanDetail from './pages/PlanDetail';
-import Notifications from './pages/Notifications';
+const CallRoom = lazy(() => import('./pages/CallRoom'));
+const PlanMemberProfile = lazy(() => import('./pages/PlanMemberProfile'));
+const PlansPage = lazy(() => import('./pages/PlansPage'));
+const MessagesPage = lazy(() => import('./pages/MessagesPage'));
+const PlanDetail = lazy(() => import('./pages/PlanDetail'));
+const Notifications = lazy(() => import('./pages/Notifications'));
 import Settings from './pages/Settings';
 import AvailabilityRates from './pages/AvailabilityRates';
 import SignupWizard from './signup/SignupWizard';
@@ -115,6 +115,16 @@ function AppRoutes() {
         element={
           <Protected>
             <Shell>
+              {/* Heavy routes (LiveKit, messaging, plans, notifications)
+                  load as separate chunks so the shell paints promptly. */}
+              <Suspense
+                fallback={
+                  <div className="row" style={{ justifyContent: 'center', padding: 48 }}>
+                    <Loader2 size={22} aria-hidden="true" />
+                    <span className="visually-hidden">Loading page</span>
+                  </div>
+                }
+              >
               <Routes>
                 <Route path="/" element={<Home />} />
                 <Route path="/explore" element={<Explore />} />
@@ -143,6 +153,7 @@ function AppRoutes() {
                   }
                 />
               </Routes>
+              </Suspense>
             </Shell>
           </Protected>
         }

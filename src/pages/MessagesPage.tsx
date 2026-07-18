@@ -25,6 +25,7 @@ import {
 } from '../repositories/messagingRepository';
 import { EmptyState } from '../components/ui';
 import { browserTimezone } from '../domain/timezones';
+import { SystemEventMessage } from '../messaging/systemEvents';
 
 /* ---------------- small formatting helpers ---------------- */
 
@@ -129,12 +130,9 @@ function ConversationList({ selectedId }: { selectedId: string | null }) {
 
 /* ---------------- messages ---------------- */
 
+// 2F2C: canonical event copy + icons live in systemEvents.tsx.
 function SystemMessage({ message }: { message: ChatMessage }) {
-  return (
-    <div className="msg-system" role="note">
-      {message.systemEvent?.replace(/_/g, ' ')}
-    </div>
-  );
+  return <SystemEventMessage message={message} />;
 }
 
 /**

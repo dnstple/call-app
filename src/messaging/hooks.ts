@@ -17,6 +17,7 @@ import {
 } from '../repositories/messagingRepository';
 import { isSupabaseMode } from '../config/dataMode';
 import { useAuthSnapshot } from '../state/authBridge';
+import { systemEventCopy } from './systemEvents';
 
 /** Local event so the nav badge and list refresh after activity. */
 export const MESSAGES_CHANGED_EVENT = 'messages:changed';
@@ -33,6 +34,27 @@ function prepareRepository() {
   return messagingRepository();
 }
 
+/**
+ * Shared in-flight fetch: the nav badge, the inbox and StrictMode's
+ * double-invoked effects all coalesce into ONE listConversations request
+ * at a time. No caching beyond the in-flight promise — data stays fresh.
+ */
+let conversationsInFlight: Promise<ConversationSummary[]> | null = null;
+/** Test hook: forget a pending shared fetch between test cases. */
+export function __resetConversationsInFlight(): void {
+  conversationsInFlight = null;
+}
+export function fetchConversationsShared(): Promise<ConversationSummary[]> {
+  if (!conversationsInFlight) {
+    conversationsInFlight = prepareRepository()
+      .listConversations()
+      .finally(() => {
+        conversationsInFlight = null;
+      });
+  }
+  return conversationsInFlight;
+}
+
 /* ---------------- conversation list ---------------- */
 
 export interface ConversationWithPreview extends ConversationSummary {
@@ -46,10 +68,14 @@ export interface ConversationsState {
   reload: () => void;
 }
 
-function previewOf(m: ChatMessage | undefined): string | null {
-  if (!m) return null;
-  if (m.kind === 'system') return (m.systemEvent ?? '').replace(/_/g, ' ');
-  return m.body;
+/** 2F2C: previews come embedded in the summary — ONE server call, no N+1. */
+function previewFromSummary(c: ConversationSummary): string | null {
+  const last = c.lastMessage;
+  if (!last) return null;
+  if (last.kind === 'system') {
+    return systemEventCopy(last.system_event, null);
+  }
+  return `${last.mine ? 'You: ' : ''}${last.body ?? ''}`;
 }
 
 export function useConversations(): ConversationsState {
@@ -57,21 +83,9 @@ export function useConversations(): ConversationsState {
   const [failed, setFailed] = useState(false);
 
   const reload = useCallback(() => {
-    const repo = prepareRepository();
-    repo
-      .listConversations()
-      .then(async (list) => {
-        // Previews: newest message per thread (prototype-scale N+1; the
-        // 2F2C candidate is a preview field on list_conversations).
-        const withPreviews: ConversationWithPreview[] = await Promise.all(
-          list.map(async (c) => {
-            const page = c.lastMessageAt
-              ? await repo.listMessages(c.id).catch(() => null)
-              : null;
-            return { ...c, preview: previewOf(page?.messages[page.messages.length - 1]) };
-          }),
-        );
-        setConversations(withPreviews);
+    fetchConversationsShared()
+      .then((list) => {
+        setConversations(list.map((c) => ({ ...c, preview: previewFromSummary(c) })));
         setFailed(false);
       })
       .catch(() => {
@@ -96,8 +110,7 @@ export function useUnreadTotal(active: boolean): number {
     if (!active) return;
     let live = true;
     const refresh = () => {
-      prepareRepository()
-        .listConversations()
+      fetchConversationsShared()
         .then((c) => live && setTotal(c.reduce((sum, x) => sum + x.unreadCount, 0)))
         .catch(() => undefined);
     };

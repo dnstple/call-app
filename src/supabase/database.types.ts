@@ -98,6 +98,38 @@ export type MessageRow = {
   system_payload: Record<string, unknown> | null;
   deleted_at: string | null;
   created_at: string;
+  /** 2F2C: idempotency key for trusted lifecycle events (null for user msgs). */
+  event_key?: string | null;
+};
+
+/**
+ * 2F2C: in-app notifications — recipients only ever see their own rows.
+ * Reconciled with the Stage-1 table (0001): user_id is the recipient
+ * ACCOUNT (re-pointed by 0023), `type` is the kind, related_booking_id is
+ * the booking link, and read_at supersedes the legacy `read` flag.
+ */
+export type NotificationRow = {
+  id: string;
+  user_id: string;
+  type: string;
+  title: string;
+  body: string;
+  related_booking_id: string | null;
+  conversation_id: string | null;
+  plan_id: string | null;
+  dedupe_key: string | null;
+  read: boolean;
+  created_at: string;
+  read_at: string | null;
+};
+
+/** 2F2C: last-message preview embedded in the conversation summary. */
+export type ConversationLastMessage = {
+  kind: MessageKind;
+  body: string | null;
+  system_event: string | null;
+  created_at: string;
+  mine: boolean;
 };
 
 export type ConversationReadStateRow = {
@@ -124,6 +156,8 @@ export type ConversationSummaryPayload = {
   created_at: string;
   last_message_at: string | null;
   unread_count: number;
+  /** 2F2C: inline preview — the inbox never fetches per-conversation pages. */
+  last_message?: ConversationLastMessage | null;
 };
 
 export type PrivateDetailsRow = {
@@ -628,6 +662,7 @@ export type Database = {
       conversations: Table<ConversationRow>;
       messages: Table<MessageRow>;
       conversation_read_state: Table<ConversationReadStateRow>;
+      notifications: Table<NotificationRow>;
       plan_schedule_slots: Table<PlanScheduleSlotRow>;
       plan_generation_log: Table<PlanGenerationLogRow>;
       platform_config: Table<{
@@ -853,6 +888,8 @@ export type Database = {
         Args: { p_profile: string; p_account: string; p_allowed: boolean };
         Returns: ProfileAccessRow;
       };
+      mark_notification_read: { Args: { p_notification: string }; Returns: NotificationRow };
+      mark_all_notifications_read: { Args: Record<string, never>; Returns: number };
       get_companion_public_reviews: {
         Args: { p_profile: string; p_limit?: number; p_offset?: number };
         Returns: PublicReviewRow[];
