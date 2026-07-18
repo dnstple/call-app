@@ -78,8 +78,9 @@ export function GuestInvitationPanel({ bookingId, memberName }: { bookingId: str
         {status?.hasActive && <span className="pill pill-ready">Active</span>}
       </div>
       <p className="muted small" style={{ margin: 0 }}>
-        {memberName} joins this call with a secure link and a 6-digit code — no account needed.
-        Share them however suits you both; nothing is sent automatically.
+        Send this private link to {memberName}. They can open it and press
+        “Join conversation” — no account or access code is required. Share it
+        however suits you both; nothing is sent automatically.
       </p>
 
       {error && <p className="small" role="alert" style={{ color: 'var(--color-danger-text)', margin: 0 }}>{error}</p>}
@@ -87,38 +88,34 @@ export function GuestInvitationPanel({ bookingId, memberName }: { bookingId: str
       {fresh ? (
         <div className="col guest-secret-box" style={{ gap: 8 }}>
           <p className="small bold" style={{ margin: 0 }}>
-            Save these now — for security, they’re shown only once.
+            Save the link now — for security, it’s shown only once.
           </p>
           <div className="row wrap" style={{ gap: 8, alignItems: 'center' }}>
             <Link2 size={16} aria-hidden="true" />
             <code className="guest-secret">{fresh.link}</code>
-            <button className="btn btn-ghost btn-small" onClick={() => void copy('link', fresh.link)}>
+          </div>
+          <div className="row wrap" style={{ gap: 8 }}>
+            <button className="btn btn-primary btn-small" onClick={() => void copy('link', fresh.link)}>
               {copied === 'link' ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
-              Copy link
+              Copy guest link
             </button>
+            {manualShareDelivery.canShareNatively() && (
+              <button
+                className="btn btn-secondary btn-small"
+                onClick={() => void manualShareDelivery.shareNatively(fresh, memberName)}
+              >
+                <Share2 size={16} aria-hidden="true" /> Share guest link
+              </button>
+            )}
           </div>
-          <div className="row wrap" style={{ gap: 8, alignItems: 'center' }}>
-            <span className="small muted">Access code</span>
-            <code className="guest-secret" style={{ letterSpacing: 3 }}>{fresh.code}</code>
-            <button className="btn btn-ghost btn-small" onClick={() => void copy('code', fresh.code)}>
-              {copied === 'code' ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
-              Copy code
-            </button>
-          </div>
-          {manualShareDelivery.canShareNatively() && (
-            <button
-              className="btn btn-secondary btn-small"
-              style={{ alignSelf: 'flex-start' }}
-              onClick={() => void manualShareDelivery.shareNatively(fresh, memberName)}
-            >
-              <Share2 size={16} aria-hidden="true" /> Share…
-            </button>
-          )}
+          {/* The 0024 six-digit code still exists in the database for
+              backward compatibility, but it is no longer part of joining —
+              the secure link is the whole journey, so it is not shown. */}
         </div>
       ) : status?.hasActive ? (
         <p className="small muted" style={{ margin: 0 }}>
-          An invitation is active. The link and code were shown when it was created —
-          if they’ve been lost, generate a new invitation (the old one stops working).
+          An invitation is active. The link was shown when it was created —
+          if it’s been lost, generate a new link (the old one stops working).
         </p>
       ) : null}
 

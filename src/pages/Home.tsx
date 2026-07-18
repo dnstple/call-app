@@ -18,6 +18,8 @@ import {
 } from '../state/selectors';
 import { ConversationRow, NextConversationCard } from '../components/ConversationRow';
 import { ManagingContext } from '../components/ManagingContext';
+import { ProfileAvatar } from '../components/ProfileAvatar';
+import { useProfileAvatars } from '../state/avatars';
 import { ProfileCardCompact } from '../components/ProfileCard';
 import { EmptyState, ProfilePhoto, RatingStars } from '../components/ui';
 import { remainingCredits } from '../domain/packages';
@@ -144,24 +146,36 @@ export default function Home() {
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
 
+  // Redesign Phase E derived data (computed unconditionally so the avatar
+  // hook below never runs conditionally).
+  const attention = [
+    ...real.needsConfirmation.map((b) => ({ b, why: 'Confirm how it went' })),
+    ...real.proposed.map((b) => ({ b, why: 'A new time was proposed' })),
+    ...real.requests.map((b) => ({
+      b,
+      why: me.role === 'companion' ? 'New booking request' : 'Awaiting the Companion’s reply',
+    })),
+  ];
+  const nextUp = [...real.confirmed]
+    .filter((b) => new Date(b.ends_at).getTime() > Date.now())
+    .sort((a, b) => a.starts_at.localeCompare(b.starts_at));
+  const hero = nextUp[0];
+  const glance = nextUp.slice(hero ? 1 : 0, (hero ? 1 : 0) + 3);
+  const heroCounterpartId = hero
+    ? (me.role === 'companion' ? hero.member_profile_id : hero.companion_profile_id)
+    : null;
+  // Batched avatar lookup for every person shown on Home (one request).
+  const homeAvatarOf = useProfileAvatars([
+    heroCounterpartId,
+    ...attention.slice(0, 4).map(({ b }) =>
+      me.role === 'companion' ? b.member_profile_id : b.companion_profile_id),
+  ]);
+
   // Supabase mode — Redesign Phase E: an ACTION dashboard, not a second
   // Conversations page. One needs-attention section, one next-conversation
   // hero, a compact glance, role-specific support. Full schedule lives in
   // /conversations.
   if (isSupabaseMode()) {
-    const attention = [
-      ...real.needsConfirmation.map((b) => ({ b, why: 'Confirm how it went' })),
-      ...real.proposed.map((b) => ({ b, why: 'A new time was proposed' })),
-      ...real.requests.map((b) => ({
-        b,
-        why: me.role === 'companion' ? 'New booking request' : 'Awaiting the Companion’s reply',
-      })),
-    ];
-    const nextUp = [...real.confirmed]
-      .filter((b) => new Date(b.ends_at).getTime() > Date.now())
-      .sort((a, b) => a.starts_at.localeCompare(b.starts_at));
-    const hero = nextUp[0];
-    const glance = nextUp.slice(hero ? 1 : 0, (hero ? 1 : 0) + 3);
 
     return (
       <div>
@@ -177,6 +191,12 @@ export default function Home() {
             <div className="stack-list">
               {attention.slice(0, 4).map(({ b, why }) => (
                 <div key={b.id} className="agenda-row" style={{ cursor: 'default' }}>
+                  <ProfileAvatar
+                    name={me.role === 'companion' ? b.member_first_name : b.companion_first_name}
+                    url={homeAvatarOf(me.role === 'companion' ? b.member_profile_id : b.companion_profile_id)}
+                    size="xs"
+                    alt=""
+                  />
                   <span className="col grow" style={{ gap: 2, minWidth: 0 }}>
                     <span className="bold">
                       {me.role === 'companion' ? b.member_first_name : b.companion_first_name}
@@ -204,13 +224,23 @@ export default function Home() {
             <span className="faint small" style={{ textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 700 }}>
               Next conversation
             </span>
-            <div className="row wrap" style={{ gap: 12, alignItems: 'baseline' }}>
-              <span className="bold" style={{ fontSize: '1.35em' }}>
-                {me.role === 'companion'
-                  ? hero.member_first_name
-                  : `${hero.member_first_name} & ${hero.companion_first_name}`}
+            <div className="row wrap" style={{ gap: 14, alignItems: 'center' }}>
+              <ProfileAvatar
+                name={me.role === 'companion' ? hero.member_first_name : hero.companion_first_name}
+                url={homeAvatarOf(heroCounterpartId)}
+                size="lg"
+                eager
+              />
+              <span className="col" style={{ gap: 4, minWidth: 0 }}>
+                <span className="bold" style={{ fontSize: '1.35em' }}>
+                  {me.role === 'companion'
+                    ? `Conversation with ${hero.member_first_name}`
+                    : `${hero.member_first_name}’s conversation with ${hero.companion_first_name}`}
+                </span>
+                <span className="pill pill-info" style={{ alignSelf: 'flex-start' }}>
+                  {hero.plan_id ? 'Weekly plan' : hero.is_trial ? 'Trial' : 'One-off'}
+                </span>
               </span>
-              <span className="pill pill-info">{hero.plan_id ? 'Weekly plan' : hero.is_trial ? 'Trial' : 'One-off'}</span>
             </div>
             <p style={{ margin: 0 }}>
               {new Date(hero.starts_at).toLocaleString('en-GB', {

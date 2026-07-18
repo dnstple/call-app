@@ -162,9 +162,10 @@ export const manualShareDelivery: GuestInviteDeliveryAdapter = {
   },
   async shareNatively(invitation, memberName) {
     try {
+      // 0028: the link is the whole journey — no access code is shared.
       await navigator.share({
         title: 'Your conversation link',
-        text: `Join ${memberName ? `${memberName}'s` : 'your'} conversation: ${invitation.link}\nAccess code: ${invitation.code}`,
+        text: `Join ${memberName ? `${memberName}'s` : 'your'} conversation — just open this link and press “Join conversation”: ${invitation.link}`,
       });
       return true;
     } catch {

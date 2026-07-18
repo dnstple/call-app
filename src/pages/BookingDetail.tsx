@@ -40,6 +40,8 @@ import { IN_APP_CALL_EXPLAINER, IN_APP_CALL_LABEL } from '../components/FlowModa
 import { RatingPanel } from '../components/RatingPanel';
 import { BookingCreditPanel } from '../components/BookingCreditBadge';
 import { GuestInvitationPanel } from '../components/GuestInvitationPanel';
+import { ProfileAvatar } from '../components/ProfileAvatar';
+import { useProfileAvatars } from '../state/avatars';
 
 const STATUS_BADGE: Record<string, string> = {
   requested: 'badge-neutral',
@@ -109,6 +111,9 @@ export default function BookingDetail() {
     () => !!booking && auth.profiles.some((p) => p.profile.id === booking.companion_profile_id),
     [booking, auth.profiles],
   );
+  const detailAvatarOf = useProfileAvatars([
+    booking ? (isCompanionSide ? booking.member_profile_id : booking.companion_profile_id) : null,
+  ]);
   const isRequesterSide = useMemo(
     () =>
       !!booking &&
@@ -178,14 +183,24 @@ export default function BookingDetail() {
       </button>
 
       <header className="row wrap between" style={{ gap: 12, alignItems: 'flex-start' }}>
-        <div className="col" style={{ gap: 4 }}>
-          <h1 style={{ margin: 0 }}>
-            {booking.member_first_name} &amp; {booking.companion_first_name}
-            {booking.companion_last_initial ? ` ${booking.companion_last_initial}.` : ''}
-          </h1>
-          <span className="muted">
-            {booking.is_trial ? 'Trial conversation' : 'Standard conversation'} · {booking.duration_minutes} minutes
-          </span>
+        <div className="row" style={{ gap: 14, alignItems: 'center' }}>
+          <ProfileAvatar
+            name={isCompanionSide ? booking.member_first_name : booking.companion_first_name}
+            url={detailAvatarOf(isCompanionSide ? booking.member_profile_id : booking.companion_profile_id)}
+            size="md"
+            eager
+          />
+          <div className="col" style={{ gap: 4 }}>
+            <h1 style={{ margin: 0 }}>
+              Conversation with {isCompanionSide
+                ? booking.member_first_name
+                : `${booking.companion_first_name}${booking.companion_last_initial ? ` ${booking.companion_last_initial}.` : ''}`}
+            </h1>
+            <span className="muted">
+              {!isCompanionSide && `For ${booking.member_first_name} · `}
+              {booking.is_trial ? 'Trial conversation' : 'Standard conversation'} · {booking.duration_minutes} minutes
+            </span>
+          </div>
         </div>
         <span className={`badge ${STATUS_BADGE[booking.status] ?? 'badge-neutral'}`}>
           {derivedStatusLabel(booking)}

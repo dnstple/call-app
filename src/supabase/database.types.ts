@@ -909,6 +909,11 @@ export type Database = {
         Args: { p_token: string };
         Returns: Record<string, unknown>;
       };
+      /* Avatar stage (0029) — batched relationship-scoped avatar lookup. */
+      get_profile_avatar_paths: {
+        Args: { p_profiles: string[] };
+        Returns: { profile_id: string; avatar_path: string | null }[];
+      };
       /* Redesign Phase F — companion completeness. */
       activate_companion_profile: { Args: { p_profile: string }; Returns: { active: boolean } };
       companion_completion_checklist: { Args: { p_profile: string }; Returns: Record<string, unknown> };

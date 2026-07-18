@@ -1,10 +1,11 @@
 /**
- * Redesign Phase C — the managed Member's ONLY surface: /join/:token.
+ * 0028 — the managed Member's ONLY surface: /join/:token.
  *
- * No session, no navigation, no messages, no payments — safe call details,
- * an access code, a device check and a Join button. Every failure state is
- * neutral; nothing reveals whether other bookings exist. Reconnecting
- * within the grace window simply exchanges the invitation again.
+ * Accessibility-first: the secure link IS the credential. No account, no
+ * six-digit code, one dominant "Join conversation" action, large text,
+ * calm states. Opening the page never activates media or joins a room —
+ * joining is always an intentional press. Every rule (expiry, revocation,
+ * booking status, join window, rate limits) stays server-side.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
@@ -29,9 +30,8 @@ type Phase =
   | 'checking'      // validating the link
   | 'invalid'       // unknown / revoked / ineligible — one neutral state
   | 'expired'
-  | 'waiting'       // too early; shows details + countdown
-  | 'ready'         // open: code entry + device check + join
-  | 'wrong_code'
+  | 'waiting'       // valid but too early — calm, never error-styled
+  | 'ready'         // open: one dominant Join action
   | 'rate_limited'
   | 'connecting'
   | 'in_call'
@@ -41,7 +41,6 @@ export default function GuestJoin() {
   const { token } = useParams();
   const [phase, setPhase] = useState<Phase>('checking');
   const [details, setDetails] = useState<GuestValidation | null>(null);
-  const [code, setCode] = useState('');
   const [micOn, setMicOn] = useState(true);
   const [camOn, setCamOn] = useState(false);
   const [deviceOk, setDeviceOk] = useState<boolean | null>(null);
@@ -70,14 +69,15 @@ export default function GuestJoin() {
     validate();
   }, [validate]);
 
-  // Waiting → re-check periodically until the room opens.
+  // Too early → re-check quietly until the room opens. Nothing joins
+  // automatically; the page simply swaps to the Join button when ready.
   useEffect(() => {
     if (phase !== 'waiting') return;
     const t = setInterval(validate, 30_000);
     return () => clearInterval(t);
   }, [phase, validate]);
 
-  // Device check (local preview only; never connects anywhere).
+  // Optional local device check — never connects anywhere.
   const runDeviceCheck = useCallback(async () => {
     previewRef.current?.stop();
     try {
@@ -95,20 +95,19 @@ export default function GuestJoin() {
     void callRef.current?.disconnect();
   }, []);
 
+  // Joining is ALWAYS an intentional button press.
   const join = useCallback(async () => {
     if (!token) return;
     setPhase('connecting');
     previewRef.current?.stop();
     previewRef.current = null;
     try {
-      const prepared = await prepareGuestSession(token, code.trim());
+      const prepared = await prepareGuestSession(token);
       const state = prepared.state as string;
-      if (state === 'wrong_code') { setPhase('wrong_code'); return; }
       if (state === 'rate_limited') { setPhase('rate_limited'); return; }
-      if (state === 'invalid') { setPhase('invalid'); return; }
-      if (prepared.state === 'too_early') { setPhase('waiting'); return; }
-      if (prepared.state === 'ended') { setPhase('expired'); return; }
-      if (prepared.state !== 'joinable') { setPhase('invalid'); return; }
+      if (state === 'too_early') { setPhase('waiting'); return; }
+      if (state === 'ended') { setPhase('expired'); return; }
+      if (state !== 'joinable') { setPhase('invalid'); return; }
 
       const call = await connectCall(prepared as PreparedSession, {
         audioEnabled: micOn,
@@ -137,7 +136,7 @@ export default function GuestJoin() {
     } catch {
       setPhase('invalid');
     }
-  }, [token, code, micOn, camOn]);
+  }, [token, micOn, camOn]);
 
   const leave = useCallback(async () => {
     await callRef.current?.disconnect();
@@ -166,7 +165,7 @@ export default function GuestJoin() {
         {(phase === 'invalid' || phase === 'expired') && (
           <div className="col" style={{ gap: 8, textAlign: 'center' }}>
             <h1 className="guest-title">This link isn’t available</h1>
-            <p className="muted" style={{ margin: 0 }}>
+            <p className="muted guest-body" style={{ margin: 0 }}>
               {phase === 'expired'
                 ? 'This conversation has finished, so the link no longer works.'
                 : 'The link may have been replaced or cancelled. Please ask the person who arranged the conversation to send a new one.'}
@@ -174,53 +173,45 @@ export default function GuestJoin() {
           </div>
         )}
 
-        {(phase === 'waiting' || phase === 'ready' || phase === 'wrong_code' || phase === 'rate_limited') && details && (
-          <div className="col" style={{ gap: 14 }}>
+        {(phase === 'waiting' || phase === 'ready' || phase === 'rate_limited') && details && (
+          <div className="col" style={{ gap: 16 }}>
             <div className="col" style={{ gap: 4, textAlign: 'center' }}>
               <h1 className="guest-title">
-                {details.memberName ? `${details.memberName}, your conversation` : 'Your conversation'}
+                Your conversation with {details.companionName}
               </h1>
-              <p style={{ margin: 0 }}>
-                with <strong>{details.companionName}</strong>
-              </p>
-              <p className="muted" style={{ margin: 0 }}>
-                {timeLabel} · {details.durationMinutes} minutes
+              <p className="guest-body" style={{ margin: 0 }}>{timeLabel}</p>
+              <p className="muted guest-body" style={{ margin: 0 }}>
+                {details.durationMinutes} minutes
               </p>
             </div>
 
             {phase === 'waiting' ? (
-              <p className="muted" style={{ textAlign: 'center', margin: 0 }}>
-                The room opens shortly before the start time. Keep this page open —
-                the Join button will appear automatically.
+              <p className="muted guest-body" style={{ textAlign: 'center', margin: 0 }}>
+                This conversation is not open yet. Please return shortly before
+                the scheduled time — or keep this page open and the Join button
+                will appear by itself.
               </p>
             ) : (
               <>
-                <div className="field" style={{ marginBottom: 0 }}>
-                  <label htmlFor="guest-code">Access code</label>
-                  <input
-                    id="guest-code"
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    maxLength={6}
-                    placeholder="6-digit code"
-                    value={code}
-                    onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
-                    style={{ letterSpacing: 4, textAlign: 'center', fontSize: '1.2em' }}
-                  />
-                  {phase === 'wrong_code' && (
-                    <p className="small" role="alert" style={{ color: 'var(--color-danger-text)', margin: '4px 0 0' }}>
-                      That code doesn’t match. Check it and try again.
-                    </p>
-                  )}
-                  {phase === 'rate_limited' && (
-                    <p className="small" role="alert" style={{ color: 'var(--color-danger-text)', margin: '4px 0 0' }}>
-                      Too many attempts. Please wait 15 minutes and try again.
-                    </p>
-                  )}
-                </div>
+                <button
+                  className="btn btn-primary guest-join-btn"
+                  disabled={phase === 'rate_limited'}
+                  onClick={() => void join()}
+                >
+                  Join conversation
+                </button>
+                {phase === 'rate_limited' && (
+                  <p className="guest-body" role="status" style={{ textAlign: 'center', margin: 0, color: 'var(--color-warning-text)' }}>
+                    This link has been tried many times just now. Please wait a
+                    few minutes and press Join again.
+                  </p>
+                )}
+                <p className="muted small" style={{ textAlign: 'center', margin: 0 }}>
+                  Camera and microphone can be checked before joining.
+                </p>
 
                 <div className="col" style={{ gap: 8 }}>
-                  <div className="row" style={{ gap: 8, justifyContent: 'center' }}>
+                  <div className="row wrap" style={{ gap: 8, justifyContent: 'center' }}>
                     <button
                       className={`btn btn-small ${micOn ? 'btn-secondary' : 'btn-ghost'}`}
                       onClick={() => setMicOn((v) => !v)}
@@ -238,31 +229,20 @@ export default function GuestJoin() {
                       Camera {camOn ? 'on' : 'off'}
                     </button>
                     <button className="btn btn-ghost btn-small" onClick={() => void runDeviceCheck()}>
-                      Test my devices
+                      Check camera and microphone
                     </button>
                   </div>
-                  {deviceOk === true && <p className="small muted" style={{ textAlign: 'center', margin: 0 }}>Your microphone is working.</p>}
+                  {deviceOk === true && (
+                    <p className="small muted" style={{ textAlign: 'center', margin: 0 }}>Your microphone is working.</p>
+                  )}
                   {deviceOk === false && (
                     <p className="small" style={{ textAlign: 'center', margin: 0, color: 'var(--color-warning-text)' }}>
-                      We couldn’t reach your microphone. Check your browser permissions —
-                      you can still try joining.
+                      We couldn’t reach your microphone. Check your browser
+                      permissions — you can still try joining.
                     </p>
                   )}
                   <video ref={videoRef} className="guest-self-video" muted playsInline style={{ display: camOn ? 'block' : 'none' }} />
                 </div>
-
-                <button
-                  className="btn btn-primary"
-                  style={{ width: '100%' }}
-                  disabled={code.trim().length !== 6 || phase === 'rate_limited'}
-                  onClick={() => void join()}
-                >
-                  Join the conversation
-                </button>
-                <p className="faint small" style={{ textAlign: 'center', margin: 0 }}>
-                  Having trouble? Make sure you’re using the newest link you were sent,
-                  and allow microphone access when your browser asks.
-                </p>
               </>
             )}
           </div>
@@ -277,7 +257,7 @@ export default function GuestJoin() {
 
         {phase === 'in_call' && (
           <div className="col" style={{ gap: 12 }}>
-            <p style={{ textAlign: 'center', margin: 0 }}>
+            <p className="guest-body" style={{ textAlign: 'center', margin: 0 }}>
               {remoteName
                 ? <>You’re talking with <strong>{remoteName}</strong></>
                 : connState === 'reconnecting'
@@ -286,7 +266,7 @@ export default function GuestJoin() {
             </p>
             <div ref={remoteAudioRef} className="guest-remote-media" />
             <video ref={videoRef} className="guest-self-video" muted playsInline style={{ display: camOn ? 'block' : 'none' }} />
-            <div className="row" style={{ gap: 8, justifyContent: 'center' }}>
+            <div className="row wrap" style={{ gap: 8, justifyContent: 'center' }}>
               <button
                 className="btn btn-secondary btn-small"
                 onClick={() => { setMicOn((v) => { void callRef.current?.toggleMicrophone(!v); return !v; }); }}
@@ -304,9 +284,9 @@ export default function GuestJoin() {
         {phase === 'ended' && (
           <div className="col" style={{ gap: 8, textAlign: 'center' }}>
             <h1 className="guest-title">You’ve left the conversation</h1>
-            <p className="muted" style={{ margin: 0 }}>
-              If that was a mistake, you can rejoin with the same link and code
-              while the conversation is still running.
+            <p className="muted guest-body" style={{ margin: 0 }}>
+              If that was a mistake, you can rejoin with the same link while
+              the conversation is still running.
             </p>
             <button className="btn btn-secondary" onClick={() => { setPhase('checking'); validate(); }}>
               Rejoin

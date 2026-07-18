@@ -55,9 +55,11 @@ function json(body: unknown, status = 200): Response {
  */
 async function handleGuestJoin(body: Record<string, unknown>): Promise<Response> {
   const invitationToken = typeof body?.invitationToken === 'string' ? body.invitationToken : null;
-  const accessCode = typeof body?.accessCode === 'string' ? body.accessCode : '';
   if (!invitationToken) return json({ state: 'invalid' }, 200);
 
+  // 0028: the high-entropy invitation link alone is the credential — no
+  // access code. Expiry, revocation, booking status, the join window and
+  // per-invitation rate limiting all stay server-side.
   // Service-role client: exchange_guest_invitation is locked to service_role.
   const admin = createClient(
     Deno.env.get('SUPABASE_URL')!,
@@ -66,14 +68,12 @@ async function handleGuestJoin(body: Record<string, unknown>): Promise<Response>
   );
   const { data: result, error } = await admin.rpc('exchange_guest_invitation', {
     p_token: invitationToken,
-    p_code: accessCode,
   });
   if (error) return json({ state: 'invalid' }, 200);
   const r = result as { ok?: boolean; reason?: string; booking_id?: string; invitation_id?: string };
   if (!r?.ok) {
     // Neutral states only — nothing about other bookings leaks.
     if (r?.reason === 'rate_limited') return json({ state: 'rate_limited' }, 429);
-    if (r?.reason === 'wrong_code') return json({ state: 'wrong_code' }, 200);
     return json({ state: 'invalid' }, 200);
   }
 

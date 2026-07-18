@@ -26,6 +26,8 @@ import {
   type ChatMessage,
 } from '../repositories/messagingRepository';
 import { EmptyState } from '../components/ui';
+import { ProfileAvatar } from '../components/ProfileAvatar';
+import { useProfileAvatars } from '../state/avatars';
 import { browserTimezone } from '../domain/timezones';
 import { SystemEventMessage } from '../messaging/systemEvents';
 
@@ -60,6 +62,13 @@ function ConversationListItem({ conversation, viewer, selected }: {
   const viewerTz = browserTimezone();
   const name = counterpartName(conversation, viewer);
   const unread = conversation.unreadCount > 0;
+  // Role-aware: Coordinators see the Companion's image; the Companion
+  // sees the managed Member's image (the Coordinator stays in text).
+  const counterpartId = viewer.profileIds.has(conversation.companionProfileId)
+    && !viewer.profileIds.has(conversation.memberProfileId)
+    ? conversation.memberProfileId
+    : conversation.companionProfileId;
+  const avatarOf = useProfileAvatars([counterpartId]);
   return (
     <li>
       <Link
@@ -67,7 +76,7 @@ function ConversationListItem({ conversation, viewer, selected }: {
         className={`msg-item${selected ? ' selected' : ''}${unread ? ' unread' : ''}`}
         aria-current={selected ? 'true' : undefined}
       >
-        <span className="avatar msg-avatar" aria-hidden="true">{initialsOf(name)}</span>
+        <ProfileAvatar name={name} url={avatarOf(counterpartId)} size="sm" alt="" />
         <span className="msg-item-main">
           <span className="row between" style={{ gap: 8 }}>
             <span className="msg-item-name">{name}</span>
@@ -304,6 +313,12 @@ function Thread({ conversationId, summary, viewer, onBack }: {
 
   const name = summary ? counterpartName(summary, viewer) : 'Conversation';
   const behalf = summary ? onBehalfOfName(summary, viewer) : null;
+  const headerCounterpartId = summary
+    ? (viewer.profileIds.has(summary.companionProfileId) && !viewer.profileIds.has(summary.memberProfileId)
+        ? summary.memberProfileId
+        : summary.companionProfileId)
+    : null;
+  const headerAvatarOf = useProfileAvatars([headerCounterpartId]);
 
   // Keep the newest message in view, but preserve position exactly when
   // older messages are prepended above.
@@ -347,7 +362,12 @@ function Thread({ conversationId, summary, viewer, onBack }: {
             <ArrowLeft size={20} aria-hidden="true" />
           </button>
         )}
-        <span className="avatar msg-avatar" aria-hidden="true">{initialsOf(name)}</span>
+        <ProfileAvatar
+          name={name}
+          url={headerAvatarOf(headerCounterpartId)}
+          size="md"
+          eager
+        />
         <span className="col" style={{ gap: 0, minWidth: 0 }}>
           <span className="bold longform">{name}</span>
           {behalf && <span className="faint">Messaging on behalf of {behalf}</span>}
