@@ -102,3 +102,39 @@ decision and are not a chat substitute.
   downscales to ≤1600 px and re-encodes to JPEG (~0.85 quality) before
   upload, so stored objects stay small. Replacement remains
   upload-new → repoint → delete-old; failures keep the previous photo.
+
+## Stage 2F1 — in-app calling (LiveKit)
+
+**Token lifecycle.** The browser never holds LiveKit credentials. To join,
+the client POSTs `{ bookingId }` to the `livekit-token` Edge Function with
+its Supabase session JWT. The function verifies the session, loads the
+booking through the RLS-scoped `my_bookings` view AS the caller (so
+unrelated accounts — including unrelated Coordinators — get a detail-free
+`unauthorised`), checks eligibility (CONFIRMED only) and the join window,
+then mints a 15-minute token for the server-derived room
+`booking-{bookingId}` with the server-derived identity
+`member-{profileId}` / `companion-{profileId}`. Grants are roomJoin +
+publish + subscribe on that one room only: no room creation, no admin, no
+data channel, no recording.
+
+**Join window (single documented rule — `src/calls/joinRules.ts`,
+mirrored in the Edge Function; server clock is authority):**
+waiting-room page at `starts_at − 10 min`; media/token from
+`starts_at − 5 min`; joinable until `ends_at + 30 min`. Typed states:
+`too_early | joinable | ended | unauthorised | booking_not_eligible`.
+
+**Provider boundary.** Pages use `callProvider`
+(`prepareSession/connect/disconnect/toggleMicrophone/toggleCamera/
+switchDevice/getConnectionState`); every LiveKit-specific object lives in
+`src/calls/livekit.ts`. Swapping providers means replacing that file and
+the Edge Function.
+
+**Behaviour.** Media never connects on page load: the pre-join screen
+previews devices locally and the user explicitly joins. Leaving stops all
+local tracks and never changes booking state — completion remains the
+two-sided confirmation after `ends_at`. Mock mode shows a demo room and
+needs no credentials.
+
+**Deferred:** chat, recording, transcription, moderation monitoring,
+screen sharing, SIP/dial-in, external notifications, Stripe, identity
+verification.

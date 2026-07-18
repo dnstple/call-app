@@ -524,7 +524,7 @@ describe('call route', () => {
     expect(callWindowState('2026-07-20T12:05:00Z', '2026-07-20T12:35:00Z', now)).toBe('open');
     expect(callWindowState('2026-07-20T10:00:00Z', '2026-07-20T10:30:00Z', now)).toBe('ended');
     // And the provider boundary refuses to pretend it works.
-    await expect(placeholderCallProvider.createSession('b1')).rejects.toThrow(/not integrated/);
+    await expect(placeholderCallProvider.createSession()).rejects.toThrow(/not integrated/);
   });
 });
 

@@ -86,3 +86,19 @@ provider boundary (LiveKit/Daily/Twilio are **not** integrated yet).
 - **Trust & Safety** — see `docs/TRUST_AND_SAFETY.md`. Profiles activate
   automatically in the prototype ("Profile active"); nothing is described as
   identity-verified until a real workflow exists.
+
+## In-app calling (Stage 2F1)
+
+Real audio/video conversations run on LiveKit Cloud behind the
+`CallProvider` boundary. Setup:
+
+1. `npm install` (adds `livekit-client` and `@livekit/components-react`).
+2. Create a LiveKit Cloud project; note the URL, API key and secret.
+3. Store secrets ONLY as Supabase Function secrets (never `VITE_`):
+   `supabase secrets set LIVEKIT_URL=... LIVEKIT_API_KEY=... LIVEKIT_API_SECRET=...`
+4. `supabase functions deploy livekit-token`
+
+Rooms open 10 minutes before a confirmed conversation (media 5 minutes
+before) and close 30 minutes after it ends. Mock mode shows a demo room
+and requires no credentials. See ARCHITECTURE.md for the full token and
+privacy design.

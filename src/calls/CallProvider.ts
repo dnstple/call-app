@@ -1,59 +1,78 @@
 /**
- * Stage 2E4D — provider-neutral calling boundary. NOT an implementation.
+ * Stage 2F1 — provider-neutral calling boundary (now implemented).
  *
- * /calls/:bookingId renders around this interface; when a real provider
- * (LiveKit, Daily, Twilio…) is chosen, only an implementation of
- * CallProvider and its server-side token endpoint are added — no booking
- * logic changes.
+ * Pages talk to this surface; the LiveKit specifics live in
+ * src/calls/livekit.ts and never leak into unrelated pages. Swapping the
+ * provider later means re-implementing livekit.ts and the livekit-token
+ * Edge Function — nothing else.
  *
- * Integration rules (see also ARCHITECTURE.md):
+ * Integration rules (enforced by the Edge Function):
  * - join tokens are minted SERVER-side for authorised booking participants
- *   only, scoped to the booking's time window; the browser never holds
- *   provider secrets;
- * - joining or leaving a call must not change booking state — completion
+ *   only, scoped to the booking's room and time window; the browser never
+ *   holds provider secrets and cannot choose rooms or identities;
+ * - joining or leaving a call never changes booking state — completion
  *   remains the two-sided confirmation flow (Stage 2E1A);
- * - no provider identifiers are stored on bookings until the milestone
- *   genuinely lands.
+ * - no provider identifiers are stored on bookings.
  */
+import {
+  connectCall,
+  listDevices,
+  prepareSession,
+  startPreview,
+  type ActiveCall,
+  type ActiveCallHandlers,
+  type CallConnectionState,
+  type MediaDeviceOption,
+  type PreparedSession,
+  type PreviewHandle,
+} from './livekit';
+import {
+  ROOM_CLOSE_AFTER_END_MINUTES,
+  WAITING_ROOM_OPEN_MINUTES,
+} from './joinRules';
 
-export interface CallSession {
-  /** Provider session/room identifier (opaque to the app). */
-  readonly id: string;
-  /** Detach the local participant and release devices. */
-  leave(): Promise<void>;
-}
+export type {
+  ActiveCall,
+  ActiveCallHandlers,
+  CallConnectionState,
+  MediaDeviceOption,
+  PreparedSession,
+  PreviewHandle,
+};
 
-export interface CallProvider {
-  /** Ask the SERVER to create (or fetch) the session for a booking. */
-  createSession(bookingId: string): Promise<{ sessionId: string; joinToken: string }>;
-  /** Join with a server-minted token, rendering into the given element. */
-  joinSession(target: HTMLElement, joinToken: string): Promise<CallSession>;
-  /** Leave and clean up. Safe to call twice. */
-  leaveSession(session: CallSession): Promise<void>;
-}
+/**
+ * The provider surface. prepareSession asks the server for permission and
+ * a token; connect joins with the user's explicit device choices — never
+ * automatically on page load.
+ */
+export const callProvider = {
+  prepareSession,
+  connect: connectCall,
+  startPreview,
+  listDevices,
+};
 
-/** Minutes before the scheduled start when joining becomes possible. */
-export const CALL_JOIN_WINDOW_MINUTES = 10;
+/** Minutes before the scheduled start when the waiting room opens. */
+export const CALL_JOIN_WINDOW_MINUTES = WAITING_ROOM_OPEN_MINUTES;
 
 export type CallWindowState = 'before' | 'open' | 'ended';
 
-/** Where a booking sits relative to its (future) join window. */
+/** Where a booking sits relative to the waiting-room window (page state;
+ * the media window itself is enforced server-side — see joinRules.ts). */
 export function callWindowState(
   startsAt: string,
   endsAt: string,
   now: Date = new Date(),
 ): CallWindowState {
-  const open = new Date(startsAt).getTime() - CALL_JOIN_WINDOW_MINUTES * 60_000;
+  const open = Date.parse(startsAt) - CALL_JOIN_WINDOW_MINUTES * 60_000;
+  const close = Date.parse(endsAt) + ROOM_CLOSE_AFTER_END_MINUTES * 60_000;
   if (now.getTime() < open) return 'before';
-  if (now.getTime() <= new Date(endsAt).getTime()) return 'open';
+  if (now.getTime() <= close) return 'open';
   return 'ended';
 }
 
-/**
- * The only provider that exists today. It is honest about that: nothing
- * connects, and the UI copy says so.
- */
-export const placeholderCallProvider: CallProvider = {
+/** @deprecated 2F1: the real provider exists; kept for older imports. */
+export const placeholderCallProvider = {
   async createSession(): Promise<never> {
     throw new Error('In-app calling is not integrated yet.');
   },
