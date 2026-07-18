@@ -215,6 +215,18 @@ export default function BookingDetail() {
             {IN_APP_CALL_EXPLAINER}{' '}
             {canRescheduleBooking(booking) ? RESCHEDULE_OPEN_COPY : ''}
           </p>
+          {/* 2F1: the way into the call room. The room itself opens ten
+              minutes before the start; the server decides admission. */}
+          {booking.status === 'confirmed' && !ended && (
+            <div className="col" style={{ gap: 4 }}>
+              <Link to={`/calls/${booking.id}`} className="btn btn-primary" style={{ alignSelf: 'flex-start' }}>
+                <Phone size={18} aria-hidden="true" /> Open the call room
+              </Link>
+              <span className="faint">
+                The room opens ten minutes before your conversation starts.
+              </span>
+            </div>
+          )}
         </div>
       </section>
 

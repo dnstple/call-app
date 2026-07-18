@@ -481,6 +481,18 @@ describe('pause, resume, end and skip', () => {
   });
 });
 
+describe('availability weekday regression (0016)', () => {
+  it('the stale 0–6 weekday check is dropped so Sunday (ISO 7) can be saved', () => {
+    const sql = readFileSync(
+      join(ROOT, 'supabase', 'migrations', '0016_availability_weekday_check_fix.sql'), 'utf-8');
+    expect(sql).toContain('drop constraint availability_rules_weekday_check');
+    // the ISO rule from 0004 stays the single authority
+    const sql0004 = readFileSync(
+      join(ROOT, 'supabase', 'migrations', '0004_companion_availability_offers.sql'), 'utf-8');
+    expect(sql0004).toContain('check (day_of_week between 1 and 7)');
+  });
+});
+
 describe('plan allowance regression (0015)', () => {
   it('a one-per-week plan allowance passes the purchases check constraint', () => {
     // 0011/0013 insert conversation_count = frequency (1–7) with a null
