@@ -909,6 +909,8 @@ export type Database = {
         Args: { p_token: string };
         Returns: Record<string, unknown>;
       };
+      /* 2G1 (0030) — billing foundation. */
+      get_credit_summary: { Args: Record<string, never>; Returns: Record<string, unknown> };
       /* Avatar stage (0029) — batched relationship-scoped avatar lookup. */
       get_profile_avatar_paths: {
         Args: { p_profiles: string[] };

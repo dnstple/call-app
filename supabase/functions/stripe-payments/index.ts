@@ -1,0 +1,183 @@
+/**
+ * 2G1 — Stripe TEST-MODE payment foundation (authenticated actions).
+ *
+ * The ONLY browser-reachable Stripe surface. Every Stripe object is
+ * created server-side with idempotency keys; the browser receives only
+ * client secrets / publishable-safe data. Secrets live in Function
+ * secrets, never VITE_ variables, never the database:
+ *
+ *   supabase secrets set STRIPE_SECRET_KEY=sk_test_...
+ *   supabase functions deploy stripe-payments
+ *
+ * Actions:
+ *   ensure_customer   → creates/returns the Coordinator's Stripe Customer
+ *   create_setup_intent → SetupIntent for saving an off-session card
+ *   billing_status    → customer + payment-method readiness (no card data)
+ */
+import { createClient } from 'npm:@supabase/supabase-js@2';
+import Stripe from 'npm:stripe@17';
+
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, content-type, apikey, x-client-info',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+};
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { ...CORS, 'Content-Type': 'application/json' } });
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
+  if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
+
+  const secretKey = Deno.env.get('STRIPE_SECRET_KEY') ?? '';
+  if (!secretKey.startsWith('sk_test_')) {
+    // TEST MODE ONLY — a live key is refused outright.
+    return json({ error: 'stripe_not_configured', detail: 'Test-mode secret key required.' }, 200);
+  }
+  const stripe = new Stripe(secretKey);
+
+  // Caller identity from the verified Supabase session.
+  const authed = createClient(
+    Deno.env.get('SUPABASE_URL')!,
+    Deno.env.get('SUPABASE_ANON_KEY')!,
+    { global: { headers: { Authorization: req.headers.get('Authorization') ?? '' } }, auth: { persistSession: false } },
+  );
+  const { data: userData } = await authed.auth.getUser();
+  const user = userData?.user;
+  if (!user) return json({ error: 'unauthorised' }, 401);
+
+  const admin = createClient(
+    Deno.env.get('SUPABASE_URL')!,
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    { auth: { persistSession: false } },
+  );
+
+  let body: Record<string, unknown> = {};
+  try {
+    body = await req.json();
+  } catch {
+    body = {};
+  }
+  const action = typeof body.action === 'string' ? body.action : '';
+
+  // ---------- ensure the Coordinator's Stripe Customer ----------
+  async function ensureCustomer(): Promise<{ customerId: string }> {
+    const { data: existing } = await admin
+      .from('stripe_customers').select('stripe_customer_id').eq('account_id', user!.id).maybeSingle();
+    if (existing?.stripe_customer_id) return { customerId: existing.stripe_customer_id };
+    const customer = await stripe.customers.create(
+      {
+        email: user!.email ?? undefined,
+        // Internal UUID only — never Member details in Stripe metadata.
+        metadata: { account_id: user!.id },
+      },
+      { idempotencyKey: `customer-${user!.id}` },
+    );
+    await admin.from('stripe_customers').upsert({
+      account_id: user!.id,
+      stripe_customer_id: customer.id,
+    }, { onConflict: 'account_id' });
+    return { customerId: customer.id };
+  }
+
+  try {
+    if (action === 'ensure_customer') {
+      const { customerId } = await ensureCustomer();
+      return json({ ok: true, customerId });
+    }
+
+    if (action === 'create_setup_intent') {
+      const { customerId } = await ensureCustomer();
+      const intent = await stripe.setupIntents.create(
+        {
+          customer: customerId,
+          usage: 'off_session',
+          metadata: { account_id: user.id },
+        },
+        { idempotencyKey: `setup-${user.id}-${new Date().toISOString().slice(0, 10)}` },
+      );
+      return json({ ok: true, clientSecret: intent.client_secret });
+    }
+
+    // Card-setup approach: Stripe-HOSTED Checkout Session in setup mode.
+    // The app has no embedded Stripe frontend SDK, so the hosted page is
+    // the smallest, safest surface: Stripe collects the card, the webhook
+    // confirms it — the redirect back is never trusted as proof.
+    if (action === 'create_setup_session') {
+      const { customerId } = await ensureCustomer();
+      // Return URLs derive ONLY from the allowlisted app origin.
+      const allowed = (Deno.env.get('APP_ORIGINS') ?? 'http://localhost:5173')
+        .split(',').map((s) => s.trim()).filter(Boolean);
+      const requested = typeof body.origin === 'string' ? body.origin : '';
+      const origin = allowed.includes(requested) ? requested : allowed[0];
+      const session = await stripe.checkout.sessions.create(
+        {
+          mode: 'setup',
+          customer: customerId,
+          payment_method_types: ['card'],
+          // Metadata rides on the SetupIntent so the existing
+          // setup_intent.succeeded webhook handler confirms completion.
+          setup_intent_data: { metadata: { account_id: user.id } },
+          success_url: `${origin}/#/settings?setup=success`,
+          cancel_url: `${origin}/#/settings?setup=cancelled`,
+        },
+        { idempotencyKey: `setup-session-${user.id}-${Date.now()}` },
+      );
+      return json({ ok: true, url: session.url });
+    }
+
+    if (action === 'remove_payment_method') {
+      const { data: row } = await admin
+        .from('stripe_customers')
+        .select('default_payment_method_id')
+        .eq('account_id', user.id)
+        .maybeSingle();
+      if (row?.default_payment_method_id) {
+        await stripe.paymentMethods.detach(row.default_payment_method_id);
+      }
+      await admin.from('stripe_customers').update({
+        default_payment_method_id: null,
+        payment_method_ready: false,
+        updated_at: new Date().toISOString(),
+      }).eq('account_id', user.id);
+      return json({ ok: true });
+    }
+
+    if (action === 'billing_status') {
+      const { data: row } = await admin
+        .from('stripe_customers')
+        .select('stripe_customer_id, payment_method_ready, default_payment_method_id')
+        .eq('account_id', user.id)
+        .maybeSingle();
+      // Safe summary ONLY — brand, last4, expiry. Card numbers and CVC
+      // never exist anywhere in this system.
+      let card: { brand: string; last4: string; expMonth: number; expYear: number } | null = null;
+      if (row?.default_payment_method_id) {
+        try {
+          const pm = await stripe.paymentMethods.retrieve(row.default_payment_method_id);
+          if (pm.card) {
+            card = {
+              brand: pm.card.brand,
+              last4: pm.card.last4,
+              expMonth: pm.card.exp_month,
+              expYear: pm.card.exp_year,
+            };
+          }
+        } catch {
+          card = null;
+        }
+      }
+      return json({
+        ok: true,
+        hasCustomer: Boolean(row?.stripe_customer_id),
+        paymentMethodReady: Boolean(row?.payment_method_ready),
+        card,
+        testMode: true,
+      });
+    }
+
+    return json({ error: 'unknown_action' }, 400);
+  } catch (e) {
+    return json({ error: 'stripe_error', detail: e instanceof Error ? e.message : 'unknown' }, 200);
+  }
+});

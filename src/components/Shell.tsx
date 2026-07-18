@@ -14,6 +14,7 @@ import { useAccountRole } from '../state/managedMember';
 import { useUnreadTotal } from '../messaging/hooks';
 import { useUnreadNotifications } from '../messaging/NotificationsSupabase';
 import { ToastStack } from './ui';
+import { APP_NAME } from '../config/branding';
 
 /**
  * Redesign Phase B — role-based navigation.
@@ -100,7 +101,10 @@ export function Shell({ children }: { children: ReactNode }) {
       <div className="shell">
         <nav className="sidenav" aria-label="Primary">
           <div className="brand">
-            <div className="name">App Name</div>
+            <div className="name brand-lockup">
+              <img src="/icon.svg" alt="" className="brand-icon" />
+              {APP_NAME}
+            </div>
           </div>
           {nav.map(({ to, label, Icon }) => (
             <NavLink key={to} to={to} end={to === '/'}>
@@ -115,7 +119,10 @@ export function Shell({ children }: { children: ReactNode }) {
 
         <div className="main-col">
           <header className="topbar">
-            <span className="brand-mobile">App Name</span>
+            <span className="brand-mobile brand-lockup">
+              <img src="/icon.svg" alt="" className="brand-icon" />
+              {APP_NAME}
+            </span>
 
             {!supabase && (
               /* Mock mode only: prototype identity switcher (development control). */

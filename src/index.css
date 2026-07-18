@@ -965,3 +965,7 @@ table.plain th { color: var(--color-text-secondary); font-weight: 600; }
   width: 10px; height: 10px; border-radius: 50%;
   background: var(--palette-sage); border: 2px solid var(--color-surface);
 }
+
+/* ---------- Branding: Apricoti lockup ---------- */
+.brand-lockup { display: inline-flex; align-items: center; gap: 8px; }
+.brand-icon { width: 26px; height: 26px; flex-shrink: 0; }

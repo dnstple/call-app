@@ -4,6 +4,7 @@ import { Check, X } from 'lucide-react';
 import { ChipGroup, Modal, OverflowMenu, type MenuItem } from '../components/ui';
 import { markSignupSeen, clearDraft } from './storage';
 import { DAY_OPTIONS, DAYPART_OPTIONS } from './types';
+import { APP_NAME } from '../config/branding';
 
 /* ---------------- Layout ---------------- */
 
@@ -22,7 +23,7 @@ export function SignupLayout({
   return (
     <div className="signup-shell">
       <header className="signup-header">
-        <span className="bold" style={{ letterSpacing: '-0.01em' }}>App Name</span>
+        <span className="bold brand-lockup" style={{ letterSpacing: '-0.01em' }}><img src="/icon.svg" alt="" className="brand-icon" />{APP_NAME}</span>
         <div className="row" style={{ gap: 2 }}>
           {menuItems && menuItems.length > 0 && <OverflowMenu items={menuItems} label="Prototype options" />}
           <button className="icon-btn" aria-label="Exit sign-up" onClick={() => setExitOpen(true)}>

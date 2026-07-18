@@ -246,6 +246,11 @@ describe('Conversations page', () => {
   });
 
   it('9+10. Today gets priority treatment and highlights the NEXT conversation', async () => {
+    // Pin the clock to 09:00 local so "+2h / +5h" always stays TODAY —
+    // without this the test flakes when run late in the evening.
+    const morning = new Date();
+    morning.setHours(9, 0, 0, 0);
+    vi.useFakeTimers({ shouldAdvanceTime: true, now: morning });
     signInAs('coordinator');
     const soon = booking({ starts_at: new Date(Date.now() + 2 * HOUR).toISOString() });
     const laterToday = booking({ starts_at: new Date(Date.now() + 5 * HOUR).toISOString() });
@@ -256,9 +261,13 @@ describe('Conversations page', () => {
     expect(today.className).toContain('agenda-today');
     expect(within(today).getByText('Today')).toBeTruthy();
     // The soonest not-yet-ended conversation carries the Next highlight.
-    const next = within(today).getByLabelText(new RegExp(`Conversation with Daniel P., .*`));
-    expect(document.querySelector('.agenda-next')).toBeTruthy();
-    expect(next).toBeTruthy();
+    const rows = within(today).getAllByLabelText(new RegExp(`Conversation with Daniel P., .*`));
+    expect(rows.length).toBe(2);
+    // Exactly ONE row carries the Next highlight — the soonest upcoming.
+    const highlighted = document.querySelectorAll('.agenda-next');
+    expect(highlighted.length).toBe(1);
+    expect(highlighted[0].getAttribute('aria-label')).toContain('11:00');
+    vi.useRealTimers();
   });
 
   it('11. an empty Today shows the calm compact state and later days continue', async () => {

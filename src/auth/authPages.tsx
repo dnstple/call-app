@@ -9,6 +9,7 @@ import { useAuth } from './AuthProvider';
 import { AuthAppError } from './authErrors';
 import { safeInternalPath } from './redirects';
 import { isSupabaseConfigured } from '../supabase/client';
+import { APP_NAME } from '../config/branding';
 
 /* ---------------- Shared layout ---------------- */
 
@@ -16,7 +17,7 @@ function AuthLayout({ title, intro, children }: { title: string; intro?: string;
   return (
     <div className="signup-shell">
       <header className="signup-header">
-        <span className="bold">App Name</span>
+        <span className="bold brand-lockup"><img src="/icon.svg" alt="" className="brand-icon" />{APP_NAME}</span>
         <Link to="/login" className="btn btn-ghost btn-small">Sign in</Link>
       </header>
       <main className="signup-main" style={{ maxWidth: 480 }}>

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Apricoti mark: flat apricot with cleft + leaf -->
+  <g>
+    <!-- stem -->
+    <path d="M296 148 c-6 -34 -2 -62 18 -84" fill="none" stroke="#8fb173" stroke-width="26" stroke-linecap="round"/>
+    <!-- leaf -->
+    <path d="M282 122 C230 60 140 52 62 96 c60 52 158 64 220 26 z" fill="#a2c173"/>
+    <!-- fruit body -->
+    <ellipse cx="238" cy="316" rx="158" ry="168" fill="#f0975c"/>
+    <ellipse cx="330" cy="308" rx="120" ry="158" fill="#f0975c"/>
+    <!-- cleft highlight -->
+    <path d="M330 172 c34 60 40 190 -10 262 c-12 -6 -16 -18 -10 -34 c30 -66 28 -160 6 -212 c-4 -10 6 -18 14 -16 z" fill="#ffffff"/>
+  </g>
+</svg>
