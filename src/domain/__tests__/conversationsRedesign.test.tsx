@@ -280,6 +280,10 @@ describe('Conversations page', () => {
   });
 
   it('12+13+14+15+16+20. range navigation moves by seven days, loads data ONCE, updates counts', async () => {
+    // Pin to 09:00 so relative fixtures never straddle midnight.
+    const morning = new Date();
+    morning.setHours(9, 0, 0, 0);
+    vi.useFakeTimers({ shouldAdvanceTime: true, now: morning });
     signInAs('coordinator');
     const nextWeek = booking({ starts_at: new Date(Date.now() + 9 * DAY).toISOString() });
     mock.bookings = [booking({}), nextWeek];
@@ -288,12 +292,12 @@ describe('Conversations page', () => {
 
     // Beyond-the-week booking is not in the initial visible agenda…
     const initialStrip = screen.getByRole('group', { name: 'Choose a day' });
-    expect(within(initialStrip).getAllByText('1')).toHaveLength(1);
+    expect(initialStrip.querySelectorAll('.date-strip-count')).toHaveLength(1);
 
     // …next moves the range 7 days forward and shows it.
     fireEvent.click(screen.getByRole('button', { name: 'Next seven days' }));
     const strip2 = screen.getByRole('group', { name: 'Choose a day' });
-    await waitFor(() => expect(within(strip2).getAllByText('1')).toHaveLength(1));
+    await waitFor(() => expect(strip2.querySelectorAll('.date-strip-count')).toHaveLength(1));
     expect(screen.getByRole('button', { name: 'Today' })).toBeTruthy();
 
     // Previous works, and Today returns to the anchored range.
@@ -304,6 +308,7 @@ describe('Conversations page', () => {
 
     // ONE data request regardless of how much the range moved.
     expect(mock.listCalls).toBe(1);
+    vi.useRealTimers();
   });
 
   it('17. clicking a date filters to it; an empty day says so with a way back', async () => {
