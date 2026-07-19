@@ -916,6 +916,23 @@ export type Database = {
         Args: { p_profiles: string[] };
         Returns: { profile_id: string; avatar_path: string | null }[];
       };
+      /* 2G4A/B — completion + attendance. */
+      submit_companion_attendance: {
+        Args: { p_booking: string; p_outcome: string; p_explanation: string | null };
+        Returns: Record<string, unknown>;
+      };
+      submit_conversation_review: {
+        Args: { p_booking: string; p_rating: number | null; p_feedback: string | null; p_message_idempotency: string | null };
+        Returns: Record<string, unknown>;
+      };
+      report_conversation_issue: {
+        Args: { p_booking: string; p_category: string; p_description: string };
+        Returns: Record<string, unknown>;
+      };
+      get_companion_completion_state: {
+        Args: { p_booking: string };
+        Returns: Record<string, unknown>;
+      };
       /* Redesign Phase F — companion completeness. */
       activate_companion_profile: { Args: { p_profile: string }; Returns: { active: boolean } };
       companion_completion_checklist: { Args: { p_profile: string }; Returns: Record<string, unknown> };

@@ -40,6 +40,7 @@ import { IN_APP_CALL_EXPLAINER, IN_APP_CALL_LABEL } from '../components/FlowModa
 import { RatingPanel } from '../components/RatingPanel';
 import { BookingCreditPanel } from '../components/BookingCreditBadge';
 import { GuestInvitationPanel } from '../components/GuestInvitationPanel';
+import { AttendanceCard } from '../components/AttendanceCard';
 import { ProfileAvatar } from '../components/ProfileAvatar';
 import { useProfileAvatars } from '../state/avatars';
 
@@ -257,6 +258,13 @@ export default function BookingDetail() {
           )}
         </div>
       </section>
+
+      {/* 2G4B: Companion post-call attendance (server-authoritative). */}
+      {isCompanionSide && ended && booking.status === 'confirmed' && (
+        <section className="section-tight">
+          <AttendanceCard bookingId={booking.id} memberName={booking.member_first_name} />
+        </section>
+      )}
 
       {/* Redesign Phase C: guest access for the managed Member. Only the
           member-side (Coordinator) sees this; the server re-checks. */}
