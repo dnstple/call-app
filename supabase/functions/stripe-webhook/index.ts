@@ -20,19 +20,31 @@ Deno.serve(async (req) => {
   if (req.method !== 'POST') return new Response('method_not_allowed', { status: 405 });
 
   const secretKey = Deno.env.get('STRIPE_SECRET_KEY') ?? '';
-  const webhookSecret = Deno.env.get('STRIPE_WEBHOOK_SECRET') ?? '';
-  if (!secretKey.startsWith('sk_test_') || !webhookSecret) {
+  // Two sandbox destinations, two signing secrets: "Your account" events
+  // and "Connected accounts" events. Either may be configured; at least
+  // one must be. Secrets are never logged or echoed.
+  const platformSecret = Deno.env.get('STRIPE_WEBHOOK_SECRET') ?? '';
+  const connectSecret = Deno.env.get('STRIPE_CONNECT_WEBHOOK_SECRET') ?? '';
+  if (!secretKey.startsWith('sk_test_') || (!platformSecret && !connectSecret)) {
     return new Response('not_configured', { status: 500 });
   }
   const stripe = new Stripe(secretKey);
 
-  // RAW body first — the signature covers these exact bytes.
+  // RAW body first — every signature check covers these exact bytes.
   const rawBody = await req.text();
   const signature = req.headers.get('stripe-signature') ?? '';
-  let event: Stripe.Event;
-  try {
-    event = await stripe.webhooks.constructEventAsync(rawBody, signature, webhookSecret);
-  } catch {
+  let event: Stripe.Event | null = null;
+  for (const secret of [platformSecret, connectSecret]) {
+    if (!secret) continue;
+    try {
+      event = await stripe.webhooks.constructEventAsync(rawBody, signature, secret);
+      break;
+    } catch {
+      // Try the other configured secret; never weaken verification.
+    }
+  }
+  if (!event) {
+    // Neither configured secret validates this signature → reject.
     return new Response('invalid_signature', { status: 400 });
   }
 
@@ -123,17 +135,49 @@ Deno.serve(async (req) => {
         break;
       }
       case 'account.updated': {
-        // 2G3 fills the full lifecycle; the sync itself is safe now.
+        // 2G3: safe status sync + deduplicated notifications on MEANINGFUL
+        // state changes only (never one per webhook).
         const acct = event.data.object as Stripe.Account;
-        await admin.from('connected_accounts').update({
+        const { data: before } = await admin.from('connected_accounts')
+          .select('account_id, details_submitted, payouts_enabled, transfers_capability, disabled_reason')
+          .eq('stripe_account_id', acct.id).maybeSingle();
+        const next = {
           details_submitted: Boolean(acct.details_submitted),
           charges_enabled: Boolean(acct.charges_enabled),
           payouts_enabled: Boolean(acct.payouts_enabled),
+          transfers_capability: String(acct.capabilities?.transfers ?? 'inactive'),
           requirements_due: acct.requirements?.currently_due ?? [],
           requirements_past_due: acct.requirements?.past_due ?? [],
+          requirements_eventually_due: acct.requirements?.eventually_due ?? [],
           disabled_reason: acct.requirements?.disabled_reason ?? null,
           last_synced_at: new Date().toISOString(),
-        }).eq('stripe_account_id', acct.id);
+          updated_at: new Date().toISOString(),
+        };
+        await admin.from('connected_accounts').update(next).eq('stripe_account_id', acct.id);
+
+        // Derived headline state — notify only when it changes.
+        const derive = (r: { details_submitted: boolean; payouts_enabled: boolean; transfers_capability: string; disabled_reason: string | null }) =>
+          r.disabled_reason ? 'restricted'
+            : r.payouts_enabled && r.transfers_capability === 'active' && r.details_submitted ? 'ready'
+            : r.details_submitted ? 'in_review'
+            : 'incomplete';
+        const prevState = before ? derive(before as never) : 'incomplete';
+        const nextState = derive(next as never);
+        if (before?.account_id && nextState !== prevState) {
+          const copy: Record<string, { title: string; body: string }> = {
+            ready: { title: 'Payment account ready', body: 'Your payment account is ready. Earnings will become available after eligible conversations are completed.' },
+            in_review: { title: 'Verification in progress', body: 'Stripe is reviewing your information.' },
+            incomplete: { title: 'Payment setup incomplete', body: 'Stripe still needs some information to finish your payment setup.' },
+            restricted: { title: 'Payments restricted', body: 'Your payment account needs attention. Continue setup to resolve it.' },
+          };
+          await admin.from('notifications').insert({
+            user_id: before.account_id,
+            type: `connect_${nextState}`,
+            title: copy[nextState].title,
+            body: copy[nextState].body,
+            dedupe_key: `connect:${acct.id}:${nextState}`,
+          });
+        }
         result = 'account_synced';
         break;
       }

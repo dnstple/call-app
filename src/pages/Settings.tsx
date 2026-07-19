@@ -34,6 +34,7 @@ import { DataModePanel } from '../components/DataModePanel';
 import { AuthStatusPanel } from '../components/AuthStatusPanel';
 import { getDataMode, isSupabaseMode } from '../config/dataMode';
 import { BillingPanel } from '../components/BillingPanel';
+import { ConnectPanel } from '../components/ConnectPanel';
 import { useAuth } from '../auth/AuthProvider';
 import { KeyRound, LogOut, ShieldCheck } from 'lucide-react';
 import { roleLabel } from '../components/Shell';
@@ -88,6 +89,8 @@ export default function Settings() {
       <div className="col" style={{ gap: 28 }}>
         {/* 2G1: payments + credit (coordinator-facing; Stripe test mode). */}
         {isSupabaseMode() && me.role !== 'companion' && <BillingPanel />}
+        {/* 2G3: Companion Connect onboarding + payment readiness. */}
+        {isSupabaseMode() && me.role === 'companion' && <ConnectPanel />}
 
         <section>
           <h3 className="muted mb-2" style={{ fontWeight: 600 }}>Account</h3>

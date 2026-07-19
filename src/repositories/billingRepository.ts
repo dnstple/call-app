@@ -133,6 +133,36 @@ export async function getPaymentOrderState(orderId: string): Promise<string | nu
   return ((data as { order?: { status?: string } }).order?.status) ?? null;
 }
 
+/* ---------------- 2G3: Companion Connect status ---------------- */
+
+export interface ConnectStatus {
+  hasAccount: boolean;
+  detailsSubmitted?: boolean;
+  payoutsEnabled?: boolean;
+  transfersCapability?: string;
+  requirementsDue?: string[];
+  requirementsPastDue?: string[];
+  disabledReason?: string | null;
+  ready?: boolean;
+}
+
+export async function getConnectStatus(refresh = false): Promise<ConnectStatus> {
+  if (!isSupabaseMode()) return { hasAccount: false };
+  const { data, error } = await getSupabaseClient().functions.invoke('stripe-payments', {
+    body: { action: refresh ? 'refresh_connect_status' : 'get_connect_status' },
+  });
+  if (error || !data) return { hasAccount: false };
+  return ((data as { status?: ConnectStatus }).status) ?? { hasAccount: false };
+}
+
+export async function createConnectOnboardingLink(): Promise<string | null> {
+  const { data, error } = await getSupabaseClient().functions.invoke('stripe-payments', {
+    body: { action: 'create_connect_onboarding_link', origin: window.location.origin },
+  });
+  if (error || !data) return null;
+  return (data as { url?: string }).url ?? null;
+}
+
 export async function removePaymentMethod(): Promise<boolean> {
   const { data, error } = await getSupabaseClient().functions.invoke('stripe-payments', {
     body: { action: 'remove_payment_method' },

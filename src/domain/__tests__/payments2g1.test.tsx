@@ -101,7 +101,8 @@ describe('Edge Function contracts', () => {
 
   it('79. webhook signatures verify against the RAW body, id persisted BEFORE effects', () => {
     expect(WEBHOOK_FN).toContain('await req.text()');
-    expect(WEBHOOK_FN).toContain('constructEventAsync(rawBody, signature, webhookSecret)');
+    // Dual-destination secrets: each attempt still verifies the RAW body.
+    expect(WEBHOOK_FN).toContain('constructEventAsync(rawBody, signature, secret)');
     const persistIdx = WEBHOOK_FN.indexOf("from('stripe_webhook_events').insert");
     const effectIdx = WEBHOOK_FN.indexOf('switch (event.type)');
     expect(persistIdx).toBeGreaterThan(-1);

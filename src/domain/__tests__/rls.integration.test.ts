@@ -2514,3 +2514,85 @@ describe.skipIf(!enabled)('2G2 paid requests (requires live Supabase)', () => {
     })).error).not.toBeNull();
   });
 });
+
+/* ============================================================
+ * 2G3 — Connect status isolation + paid-acceptance gate (live).
+ * Stripe itself is not called: rows are shaped by the service role,
+ * exactly as the webhook/edge sync would.
+ * ============================================================ */
+describe.skipIf(!enabled)('2G3 connect gate (requires live Supabase)', () => {
+  it('paid acceptance is blocked before readiness, allowed after; status is private', async () => {
+    const admin = adminClient();
+    const y = await signedInClient(`rls-y-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    const z = await signedInClient(`rls-z-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    const yAccountId = (await y.auth.getUser()).data.user!.id;
+
+    const yc = await y.rpc('complete_companion_signup', {
+      p_first_name: 'GateCompanion', p_date_of_birth: '1980-01-01',
+    });
+    expect(yc.error).toBeNull();
+    const yCompanionId = yc.data.id as string;
+    expect((await y.rpc('replace_companion_availability', {
+      p_profile: yCompanionId, p_timezone: 'Europe/London',
+      p_rules: [1, 2, 3, 4, 5, 6, 7].map((day) => ({ day, start: '09:00', end: '18:00' })),
+    })).error).toBeNull();
+    const offer = await y.from('conversation_offers').insert({
+      companion_profile_id: yCompanionId, offer_type: 'single',
+      duration_minutes: 30, price_minor: 1000, supported_methods: ['in_app'],
+    }).select('id').single();
+
+    const zc = await z.rpc('complete_coordinator_signup', {
+      p_first_name: 'GateCoord', p_consent_confirmed: true, p_member_first_name: 'GateMum',
+    });
+    const zMemberId = (zc.data as { member_profile_id: string }).member_profile_id;
+    const zAccountId = (await z.auth.getUser()).data.user!.id;
+
+    // Fund a paid booking deterministically (credit-only + finalisation).
+    expect((await admin.rpc('issue_account_credit', {
+      p_account: zAccountId, p_amount: 5000, p_source_type: 'support_adjustment',
+      p_source: null, p_reason: 'gate test', p_idempotency: `gate-credit-${suffix}`,
+    })).error).toBeNull();
+    const s = await z.rpc('get_available_slots', {
+      p_companion: yCompanionId, p_offer: offer.data!.id,
+      p_from: new Date().toISOString(),
+      p_to: new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString(),
+    });
+    const slot = (s.data ?? [])[1] as { slot_start: string };
+    const created = await z.rpc('create_paid_request', {
+      p_member: zMemberId, p_companion: yCompanionId, p_offer: offer.data!.id,
+      p_starts_at: slot.slot_start, p_idempotency: `gate-order-${suffix}`,
+    });
+    expect(created.error).toBeNull();
+    expect(created.data.status).toBe('succeeded'); // credit fully covered
+
+    const booking = await y.from('bookings').select('id')
+      .eq('companion_profile_id', yCompanionId).eq('starts_at', slot.slot_start).single();
+
+    // 15+17. no connected account → paid acceptance refused, decline open.
+    const blocked = await y.rpc('accept_booking', { p_booking: booking.data!.id });
+    expect(String(blocked.error?.message ?? '')).toContain('not_ready');
+
+    // Browser cannot forge readiness.
+    const forged = await y.from('connected_accounts').insert({
+      account_id: yAccountId, stripe_account_id: `acct_forged_${suffix}`,
+      payouts_enabled: true, transfers_capability: 'active', details_submitted: true,
+    });
+    expect(forged.error).not.toBeNull();
+
+    // Service role marks the account ready (as the webhook sync would)…
+    expect((await admin.from('connected_accounts').insert({
+      account_id: yAccountId, companion_profile_id: yCompanionId,
+      stripe_account_id: `acct_test_${suffix}`,
+      details_submitted: true, payouts_enabled: true, transfers_capability: 'active',
+    })).error).toBeNull();
+
+    // 12+13. status is private: the coordinator/anon see nothing.
+    expect((await z.from('connected_accounts').select('*')).data ?? []).toHaveLength(0);
+    expect((await client().from('connected_accounts').select('*')).data ?? []).toHaveLength(0);
+    const own = await y.from('connected_accounts').select('payouts_enabled').single();
+    expect(own.data!.payouts_enabled).toBe(true);
+
+    // 16. acceptance now succeeds.
+    expect((await y.rpc('accept_booking', { p_booking: booking.data!.id })).error).toBeNull();
+  }, 120_000);
+});

@@ -256,6 +256,121 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ---------- 2G3: Stripe Connect onboarding (Companions) ----------
+    // Safe status projection — never bank/identity data (Stripe holds it).
+    const safeConnectStatus = (row: Record<string, unknown> | null) => row && ({
+      hasAccount: true,
+      detailsSubmitted: Boolean(row.details_submitted),
+      payoutsEnabled: Boolean(row.payouts_enabled),
+      transfersCapability: String(row.transfers_capability ?? 'inactive'),
+      requirementsDue: (row.requirements_due as string[]) ?? [],
+      requirementsPastDue: (row.requirements_past_due as string[]) ?? [],
+      disabledReason: (row.disabled_reason as string | null) ?? null,
+      lastSyncedAt: (row.last_synced_at as string | null) ?? null,
+      ready: Boolean(row.payouts_enabled) && row.transfers_capability === 'active' && Boolean(row.details_submitted),
+    });
+
+    // The caller's OWN companion profile (owner access) — the only person
+    // who may create or view their Connect account.
+    async function callerCompanionProfile(): Promise<string | null> {
+      const { data } = await authed
+        .from('profile_access')
+        .select('profile_id, access_role, profiles!inner(role)')
+        .eq('account_id', user!.id)
+        .eq('access_role', 'owner');
+      const row = (data ?? []).find((r: { profiles?: { role?: string } }) => r.profiles?.role === 'companion');
+      return row ? (row as { profile_id: string }).profile_id : null;
+    }
+
+    async function ensureConnectAccount(): Promise<{ stripeAccountId: string } | { error: string }> {
+      const companionProfileId = await callerCompanionProfile();
+      if (!companionProfileId) return { error: 'not_companion' };
+      const { data: existing } = await admin
+        .from('connected_accounts').select('stripe_account_id').eq('account_id', user!.id).maybeSingle();
+      if (existing?.stripe_account_id) return { stripeAccountId: existing.stripe_account_id };
+      // Express, GB/GBP, transfers capability only — the platform charges
+      // customers; transfers to Companions come in a later phase.
+      const account = await stripe.accounts.create(
+        {
+          type: 'express',
+          country: 'GB',
+          default_currency: 'gbp',
+          capabilities: { transfers: { requested: true } },
+          metadata: { account_id: user!.id, companion_profile_id: companionProfileId },
+        },
+        { idempotencyKey: `connect-${user!.id}` },
+      );
+      await admin.from('connected_accounts').upsert({
+        account_id: user!.id,
+        companion_profile_id: companionProfileId,
+        stripe_account_id: account.id,
+        account_type: 'express',
+        country: 'GB',
+        default_currency: 'gbp',
+        onboarding_started_at: new Date().toISOString(),
+      }, { onConflict: 'account_id' });
+      return { stripeAccountId: account.id };
+    }
+
+    async function syncConnectStatus(stripeAccountId: string) {
+      const acct = await stripe.accounts.retrieve(stripeAccountId);
+      const update = {
+        details_submitted: Boolean(acct.details_submitted),
+        charges_enabled: Boolean(acct.charges_enabled),
+        payouts_enabled: Boolean(acct.payouts_enabled),
+        transfers_capability: String(acct.capabilities?.transfers ?? 'inactive'),
+        requirements_due: acct.requirements?.currently_due ?? [],
+        requirements_past_due: acct.requirements?.past_due ?? [],
+        requirements_eventually_due: acct.requirements?.eventually_due ?? [],
+        disabled_reason: acct.requirements?.disabled_reason ?? null,
+        last_synced_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      await admin.from('connected_accounts').update(update).eq('stripe_account_id', stripeAccountId);
+      return update;
+    }
+
+    if (action === 'ensure_connect_account') {
+      const made = await ensureConnectAccount();
+      if ('error' in made) return json({ error: made.error }, 200);
+      return json({ ok: true });
+    }
+
+    if (action === 'create_connect_onboarding_link') {
+      const made = await ensureConnectAccount();
+      if ('error' in made) return json({ error: made.error }, 200);
+      const allowed = (Deno.env.get('APP_ORIGINS') ?? 'http://localhost:5173')
+        .split(',').map((s) => s.trim()).filter(Boolean);
+      const requested = typeof body.origin === 'string' ? body.origin : '';
+      const origin = allowed.includes(requested) ? requested : allowed[0];
+      // Account Links are short-lived and single-use by Stripe design; an
+      // expired link is simply regenerated here ("Continue setup").
+      const link = await stripe.accountLinks.create({
+        account: made.stripeAccountId,
+        refresh_url: `${origin}/#/settings?connect=refresh`,
+        return_url: `${origin}/#/settings?connect=return`,
+        type: 'account_onboarding',
+      });
+      return json({ ok: true, url: link.url });
+    }
+
+    if (action === 'get_connect_status') {
+      const { data: row } = await admin
+        .from('connected_accounts').select('*').eq('account_id', user.id).maybeSingle();
+      return json({ ok: true, status: row ? safeConnectStatus(row) : { hasAccount: false } });
+    }
+
+    if (action === 'refresh_connect_status') {
+      // The redirect back is NEVER proof — this retrieves from Stripe.
+      const { data: row } = await admin
+        .from('connected_accounts').select('stripe_account_id').eq('account_id', user.id).maybeSingle();
+      if (!row?.stripe_account_id) return json({ ok: true, status: { hasAccount: false } });
+      await syncConnectStatus(row.stripe_account_id);
+      const { data: fresh } = await admin
+        .from('connected_accounts').select('*').eq('account_id', user.id).maybeSingle();
+      return json({ ok: true, status: safeConnectStatus(fresh as Record<string, unknown>) });
+    }
+
     if (action === 'payment_state') {
       const { data: row } = await authed.from('payment_orders')
         .select('id, status, card_amount_minor, credit_applied_minor, total_minor')
