@@ -362,16 +362,30 @@ function Thread({ conversationId, summary, viewer, onBack }: {
             <ArrowLeft size={20} aria-hidden="true" />
           </button>
         )}
-        <ProfileAvatar
-          name={name}
-          url={headerAvatarOf(headerCounterpartId)}
-          size="md"
-          eager
-        />
-        <span className="col" style={{ gap: 0, minWidth: 0 }}>
-          <span className="bold longform">{name}</span>
-          {behalf && <span className="faint">Messaging on behalf of {behalf}</span>}
-        </span>
+        {/* Companion counterparts link to their public profile; managed
+            Members have no public page, so their tile stays plain. */}
+        {summary && headerCounterpartId === summary.companionProfileId ? (
+          <Link
+            to={`/people/${summary.companionProfileId}`}
+            className="row"
+            style={{ gap: 12, textDecoration: 'none', color: 'inherit', minWidth: 0 }}
+            aria-label={`View ${name}'s profile`}
+          >
+            <ProfileAvatar name={name} url={headerAvatarOf(headerCounterpartId)} size="md" eager />
+            <span className="col" style={{ gap: 0, minWidth: 0 }}>
+              <span className="bold longform">{name}</span>
+              {behalf && <span className="faint">Messaging on behalf of {behalf}</span>}
+            </span>
+          </Link>
+        ) : (
+          <>
+            <ProfileAvatar name={name} url={headerAvatarOf(headerCounterpartId)} size="md" eager />
+            <span className="col" style={{ gap: 0, minWidth: 0 }}>
+              <span className="bold longform">{name}</span>
+              {behalf && <span className="faint">Messaging on behalf of {behalf}</span>}
+            </span>
+          </>
+        )}
       </header>
 
       <div className="msg-scroll" ref={scrollRef} onScroll={(e) => {

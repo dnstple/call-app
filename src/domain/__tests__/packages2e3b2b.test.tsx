@@ -202,7 +202,9 @@ describe('wizard: choosing between offers and package credits', () => {
     renderWizard();
     fireEvent.click(await screen.findByRole('radio', { name: /Four pack/ }));
     fireEvent.click(screen.getByRole('button', { name: /Choose a time/ }));
-    await screen.findAllByRole('button', { name: /^\d\d:\d\d$/ }); // slots rendered
+    await screen.findByText('Choose a date');
+    fireEvent.click(screen.getAllByRole('button', { name: /times available/i })[0]);
+    await screen.findAllByRole('button', { name: / at \d\d:\d\d /i }); // slots rendered
     expect(mock.rpcCalls.some((c) => c.fn === 'get_available_package_slots')).toBe(true);
     const slotCall = mock.rpcCalls.find((c) => c.fn === 'get_available_package_slots')!;
     expect(slotCall.args.p_purchase).toBe('pp1');
@@ -213,7 +215,8 @@ describe('wizard: choosing between offers and package credits', () => {
     const view = renderWizard();
     fireEvent.click(await screen.findByRole('radio', { name: /Four pack/ }));
     fireEvent.click(screen.getByRole('button', { name: /Choose a time/ }));
-    const slotButtons = await screen.findAllByRole('button', { name: /^\d\d:\d\d$/ });
+    fireEvent.click((await screen.findAllByRole('button', { name: /times available/i }))[0]);
+    const slotButtons = await screen.findAllByRole('button', { name: / at \d\d:\d\d /i });
     fireEvent.click(slotButtons[0]);
     fireEvent.click(screen.getByRole('button', { name: /Review request/ }));
 
@@ -232,7 +235,8 @@ describe('wizard: choosing between offers and package credits', () => {
     renderWizard();
     fireEvent.click(await screen.findByRole('radio', { name: /Four pack/ }));
     fireEvent.click(screen.getByRole('button', { name: /Choose a time/ }));
-    const slotButtons = await screen.findAllByRole('button', { name: /^\d\d:\d\d$/ });
+    fireEvent.click((await screen.findAllByRole('button', { name: /times available/i }))[0]);
+    const slotButtons = await screen.findAllByRole('button', { name: / at \d\d:\d\d /i });
     fireEvent.click(slotButtons[0]);
     fireEvent.click(screen.getByRole('button', { name: /Review request/ }));
     expect(screen.queryByText(/How should the call happen/)).toBeNull();
@@ -246,7 +250,8 @@ describe('wizard: choosing between offers and package credits', () => {
     renderWizard();
     fireEvent.click(await screen.findByRole('radio', { name: /Four pack/ }));
     fireEvent.click(screen.getByRole('button', { name: /Choose a time/ }));
-    const slotButtons = await screen.findAllByRole('button', { name: /^\d\d:\d\d$/ });
+    fireEvent.click((await screen.findAllByRole('button', { name: /times available/i }))[0]);
+    const slotButtons = await screen.findAllByRole('button', { name: / at \d\d:\d\d /i });
     fireEvent.click(slotButtons[0]);
     fireEvent.click(screen.getByRole('button', { name: /Review request/ }));
     const send = await screen.findByRole('button', { name: /Send request|Sending/ });
@@ -263,7 +268,8 @@ describe('wizard: choosing between offers and package credits', () => {
     renderWizard();
     fireEvent.click(await screen.findByRole('radio', { name: /Four pack/ }));
     fireEvent.click(screen.getByRole('button', { name: /Choose a time/ }));
-    const slotButtons = await screen.findAllByRole('button', { name: /^\d\d:\d\d$/ });
+    fireEvent.click((await screen.findAllByRole('button', { name: /times available/i }))[0]);
+    const slotButtons = await screen.findAllByRole('button', { name: / at \d\d:\d\d /i });
     fireEvent.click(slotButtons[0]);
     fireEvent.click(screen.getByRole('button', { name: /Review request/ }));
     fireEvent.click(await screen.findByRole('button', { name: /Send request/ }));

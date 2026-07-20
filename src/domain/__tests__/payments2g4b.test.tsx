@@ -94,7 +94,10 @@ describe('0035 evidence-backed no-show', () => {
 describe('Companion attendance UI', () => {
   it('36–38+48. server-authoritative visibility (ended + funded + companion side only)', () => {
     expect(CARD).toContain('if (!isSupabaseMode() || state === null || !state.ended || !state.funded) return null;');
-    expect(DETAIL).toContain('isCompanionSide && ended && booking.status === \'confirmed\'');
+    // The detail page shows the attendance card for any ended Companion-side
+    // conversation (no client status gate); the card self-hides unless the
+    // server reports ended & funded.
+    expect(DETAIL).toContain('{isCompanionSide && ended && (');
     expect(CARD).toContain("rpc('get_companion_completion_state'");
   });
 

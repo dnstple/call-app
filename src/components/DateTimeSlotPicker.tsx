@@ -1,18 +1,20 @@
 /**
- * Corrective Stage 2E4B — the shared date & time chooser.
+ * The ONE shared date & time chooser — calm, multi-step, reusable.
  *
- * A month calendar (react-day-picker) beside a panel of real times.
- * EVERY time shown comes from the server's slot generation — the browser
- * never invents availability. Dates with no server slots are disabled, as
- * are past dates and anything outside the Companion's notice or horizon
- * (the server simply returns nothing for those).
+ * Redesign: one decision at a time. Step 1 shows EVERY available date in
+ * the horizon as a scrollable grid (Today/Tomorrow labelled in the
+ * viewer's timezone) so the flow's action buttons keep a fixed position.
+ * Step 2 shows ONLY that date's times, grouped Morning/Afternoon/Evening
+ * with progressive "Show more times". A persistent summary line and Back
+ * keep the choice visible; the parent flow provides the confirm step and
+ * ALL business logic — every slot here is server-generated, and the
+ * emitted value is the untouched authoritative slot.
  *
- * Mobile: calendar stacked above the times. Desktop: side by side.
+ * Used by: TestCallWizard, SupabaseBookingWizard/SlotPicker (booking +
+ * proposals), BookingDetail reschedule, PlanDetail.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { DayPicker } from 'react-day-picker';
-import 'react-day-picker/style.css';
-import { CalendarClock, Loader2 } from 'lucide-react';
+import { ArrowLeft, CalendarClock, Loader2 } from 'lucide-react';
 import type { AvailableSlot } from '../repositories/bookingRepository';
 import { browserTimezone } from '../domain/timezones';
 
@@ -29,13 +31,6 @@ export function timeInTz(iso: string, tz: string): string {
   return new Intl.DateTimeFormat('en-GB', {
     timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false,
   }).format(new Date(iso));
-}
-
-function dateToKey(date: Date): string {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
 }
 
 function keyToDate(key: string): Date {
@@ -56,6 +51,26 @@ export function groupSlotsByDay(slots: AvailableSlot[], tz: string): Map<string,
   return map;
 }
 
+/** Today/Tomorrow in the DISPLAYED timezone, else "Mon 20 July". */
+function friendlyDay(key: string, tz: string): string {
+  const todayKey = dayKeyInTz(new Date().toISOString(), tz);
+  const tomorrowKey = dayKeyInTz(new Date(Date.now() + 24 * 3600_000).toISOString(), tz);
+  if (key === todayKey) return 'Today';
+  if (key === tomorrowKey) return 'Tomorrow';
+  return new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
+    .format(keyToDate(key));
+}
+
+/** Morning < 12:00 ≤ afternoon < 17:00 ≤ evening (displayed timezone). */
+function daypartOf(iso: string, tz: string): 'Morning' | 'Afternoon' | 'Evening' {
+  const hour = Number(new Intl.DateTimeFormat('en-GB', {
+    timeZone: tz, hour: '2-digit', hour12: false,
+  }).format(new Date(iso)));
+  return hour < 12 ? 'Morning' : hour < 17 ? 'Afternoon' : 'Evening';
+}
+
+const INITIAL_TIMES_PER_PART = 8;
+
 export function DateTimeSlotPicker({
   slots,
   loading = false,
@@ -63,7 +78,9 @@ export function DateTimeSlotPicker({
   selected,
   onSelect,
   onRetry,
-  emptyMessage = 'No available times in the next few weeks.',
+  emptyMessage = 'No available dates found.',
+  dateHeading = 'Choose a date',
+  timeHeading = 'Choose a time',
 }: {
   /** Server-generated slots. Never fabricate these client-side. */
   slots: AvailableSlot[];
@@ -73,32 +90,27 @@ export function DateTimeSlotPicker({
   onSelect: (slot: AvailableSlot) => void;
   onRetry?: () => void;
   emptyMessage?: string;
+  /** Context copy, e.g. "Choose a new date" for rescheduling. */
+  dateHeading?: string;
+  timeHeading?: string;
 }) {
   const viewerTz = browserTimezone();
   const byDay = useMemo(() => groupSlotsByDay(slots, viewerTz), [slots, viewerTz]);
   const availableKeys = useMemo(() => [...byDay.keys()].sort(), [byDay]);
-  const firstKey = availableKeys[0];
 
-  const [dayKey, setDayKey] = useState<string | null>(null);
-  const [month, setMonth] = useState<Date | undefined>(undefined);
+  const [dayKey, setDayKey] = useState<string | null>(
+    selected ? dayKeyInTz(selected.startsAt, viewerTz) : null,
+  );
+  const [expandedParts, setExpandedParts] = useState<Record<string, boolean>>({});
 
-  // Follow the data: land on the first day that genuinely has times.
+  // A vanished day (stale availability) drops back to the date step.
   useEffect(() => {
-    if (!firstKey) return;
-    setDayKey((prev) => (prev && byDay.has(prev) ? prev : firstKey));
-    setMonth((prev) => prev ?? keyToDate(firstKey));
-  }, [firstKey, byDay]);
-
-  // Keep the selected time consistent with the chosen day.
-  useEffect(() => {
-    if (selected && dayKey && dayKeyInTz(selected.startsAt, viewerTz) !== dayKey) {
-      // The user moved to another date: its times are shown below.
-    }
-  }, [selected, dayKey, viewerTz]);
+    if (dayKey && availableKeys.length > 0 && !byDay.has(dayKey)) setDayKey(null);
+  }, [dayKey, byDay, availableKeys.length]);
 
   if (loading) {
     return (
-      <div className="row" style={{ gap: 10 }}>
+      <div className="dtp2 row" style={{ gap: 10 }}>
         <Loader2 size={20} aria-hidden="true" />
         <span className="muted">Finding available times…</span>
       </div>
@@ -106,8 +118,8 @@ export function DateTimeSlotPicker({
   }
   if (error) {
     return (
-      <div className="col" style={{ gap: 10 }}>
-        <p className="muted" role="alert">{error}</p>
+      <div className="dtp2 col" style={{ gap: 10 }}>
+        <p className="muted" role="alert" style={{ margin: 0 }}>{error}</p>
         {onRetry && (
           <button className="btn btn-secondary btn-small" style={{ alignSelf: 'flex-start' }} onClick={onRetry}>
             Try again
@@ -117,89 +129,127 @@ export function DateTimeSlotPicker({
     );
   }
   if (slots.length === 0) {
-    return <p className="muted">{emptyMessage}</p>;
+    return <p className="muted dtp2">{emptyMessage}</p>;
   }
 
-  const dayTimes = dayKey ? byDay.get(dayKey) ?? [] : [];
-  const availableDates = availableKeys.map(keyToDate);
-  const nextAvailable = firstKey ? keyToDate(firstKey) : undefined;
+  const summary = (
+    <p className="dtp2-summary" aria-live="polite">
+      {dayKey ? (
+        <>
+          <strong>
+            {new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })
+              .format(keyToDate(dayKey))}
+          </strong>
+          {' · '}
+          {selected && dayKeyInTz(selected.startsAt, viewerTz) === dayKey
+            ? <strong>{timeInTz(selected.startsAt, viewerTz)}</strong>
+            : 'Select a time'}
+        </>
+      ) : 'Select a date'}
+    </p>
+  );
+
+  /* ---------------- Step 1: choose a date ---------------- */
+  if (!dayKey) {
+    return (
+      <div className="dtp2 col" style={{ gap: 10 }}>
+        <div className="row between wrap" style={{ gap: 8 }}>
+          <h4 className="dtp2-heading">{dateHeading}</h4>
+          <span className="dtp2-steps" aria-label="Step 1 of 3: date">Date → Time → Confirm</span>
+        </div>
+        {/* EVERY future date with real availability, in one scrollable
+            grid — the flow's action buttons keep their fixed place below. */}
+        <div className="dtp2-dates" role="group" aria-label="Available dates">
+          {availableKeys.map((key) => (
+            <button
+              key={key}
+              className="dtp2-date"
+              aria-label={`${new Intl.DateTimeFormat('en-GB', {
+                weekday: 'long', day: 'numeric', month: 'long',
+              }).format(keyToDate(key))}, ${byDay.get(key)!.length} times available`}
+              onClick={() => setDayKey(key)}
+            >
+              <span className="dtp2-date-day">{friendlyDay(key, viewerTz)}</span>
+              <span className="faint small">
+                {byDay.get(key)!.length} time{byDay.get(key)!.length === 1 ? '' : 's'}
+              </span>
+            </button>
+          ))}
+        </div>
+        <span className="faint row" style={{ gap: 6 }}>
+          <CalendarClock size={14} aria-hidden="true" /> Times shown in {viewerTz}
+        </span>
+      </div>
+    );
+  }
+
+  /* ---------------- Step 2: choose a time ---------------- */
+  const dayTimes = byDay.get(dayKey) ?? [];
+  const parts: ['Morning' | 'Afternoon' | 'Evening', AvailableSlot[]][] =
+    (['Morning', 'Afternoon', 'Evening'] as const)
+      .map((p) => [p, dayTimes.filter((s) => daypartOf(s.startsAt, viewerTz) === p)] as
+        ['Morning' | 'Afternoon' | 'Evening', AvailableSlot[]])
+      .filter(([, list]) => list.length > 0);
 
   return (
-    <div className="col" style={{ gap: 12 }}>
-      <div className="row wrap between" style={{ gap: 8 }}>
-        <span className="faint row" style={{ gap: 6 }}>
-          <CalendarClock size={14} aria-hidden="true" />
-          Times shown in your timezone ({viewerTz})
-        </span>
-        {nextAvailable && dayKey !== firstKey && (
-          <button
-            className="btn btn-ghost btn-small"
-            onClick={() => {
-              setDayKey(firstKey);
-              setMonth(nextAvailable);
-            }}
-          >
-            Next available
-          </button>
-        )}
+    <div className="dtp2 col" style={{ gap: 10 }}>
+      <div className="row between wrap" style={{ gap: 8 }}>
+        <h4 className="dtp2-heading">{timeHeading}</h4>
+        <span className="dtp2-steps" aria-label="Step 2 of 3: time">Date → Time → Confirm</span>
       </div>
-
-      <div className="dtp">
-        <DayPicker
-          mode="single"
-          month={month}
-          onMonthChange={setMonth}
-          selected={dayKey ? keyToDate(dayKey) : undefined}
-          onSelect={(date) => date && setDayKey(dateToKey(date))}
-          // Only days the SERVER offered are choosable: past dates, notice
-          // and horizon are already excluded by its slot generation.
-          disabled={(date) => !availableKeys.includes(dateToKey(date))}
-          startMonth={availableDates[0]}
-          endMonth={availableDates[availableDates.length - 1]}
-          weekStartsOn={1}
-          showOutsideDays={false}
-          aria-label="Choose a date"
-        />
-
+      {summary}
+      {dayTimes.length === 0 ? (
         <div className="col" style={{ gap: 8 }}>
-          <span className="bold">
-            {dayKey
-              ? new Intl.DateTimeFormat('en-GB', {
-                  weekday: 'long', day: 'numeric', month: 'long',
-                }).format(keyToDate(dayKey))
-              : 'Choose a date'}
-          </span>
-          {dayTimes.length === 0 ? (
-            <p className="muted" style={{ margin: 0 }}>No times left on this day — try another date.</p>
-          ) : (
-            <div className="dtp-times" role="group" aria-label="Available times">
-              {dayTimes.map((slot) => {
-                const isSelected = selected?.startsAt === slot.startsAt;
-                return (
-                  <button
-                    key={slot.startsAt}
-                    className={`btn btn-small ${isSelected ? 'btn-primary' : 'btn-secondary'}`}
-                    aria-pressed={isSelected}
-                    onClick={() => onSelect(slot)}
-                  >
-                    {timeInTz(slot.startsAt, viewerTz)}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-          {selected && (
-            <p className="faint" style={{ margin: 0 }}>
-              Chosen:{' '}
-              <strong style={{ color: 'var(--color-text-primary)' }}>
-                {new Intl.DateTimeFormat('en-GB', {
-                  timeZone: viewerTz, weekday: 'long', day: 'numeric', month: 'long',
-                  hour: '2-digit', minute: '2-digit', hour12: false,
-                }).format(new Date(selected.startsAt))}
-              </strong>
-            </p>
-          )}
+          <p className="muted" style={{ margin: 0 }}>No times are available on this date.</p>
+          <button className="btn btn-secondary btn-small" style={{ alignSelf: 'flex-start' }} onClick={() => setDayKey(null)}>
+            Choose another date
+          </button>
         </div>
+      ) : (
+        parts.map(([part, list]) => {
+          const expanded = expandedParts[part];
+          const shown = expanded ? list : list.slice(0, INITIAL_TIMES_PER_PART);
+          return (
+            <div key={part} className="col" style={{ gap: 6 }}>
+              <span className="dtp2-part">{part}</span>
+              <div className="dtp2-times" role="group" aria-label={`${part} times`}>
+                {shown.map((slot) => {
+                  const isSelected = selected?.startsAt === slot.startsAt;
+                  return (
+                    <button
+                      key={slot.startsAt}
+                      className={`dtp2-time${isSelected ? ' selected' : ''}`}
+                      aria-pressed={isSelected}
+                      aria-label={`${new Intl.DateTimeFormat('en-GB', {
+                        timeZone: viewerTz, weekday: 'long', day: 'numeric', month: 'long',
+                      }).format(new Date(slot.startsAt))} at ${timeInTz(slot.startsAt, viewerTz)} ${viewerTz}`}
+                      onClick={() => onSelect(slot)}
+                    >
+                      {timeInTz(slot.startsAt, viewerTz)}
+                    </button>
+                  );
+                })}
+              </div>
+              {!expanded && list.length > INITIAL_TIMES_PER_PART && (
+                <button
+                  className="btn btn-ghost btn-small"
+                  style={{ alignSelf: 'flex-start' }}
+                  onClick={() => setExpandedParts((e) => ({ ...e, [part]: true }))}
+                >
+                  Show more times
+                </button>
+              )}
+            </div>
+          );
+        })
+      )}
+      <div className="row between wrap" style={{ gap: 8 }}>
+        <button className="btn btn-ghost btn-small" onClick={() => setDayKey(null)}>
+          <ArrowLeft size={16} aria-hidden="true" /> Back to dates
+        </button>
+        <span className="faint row" style={{ gap: 6 }}>
+          <CalendarClock size={14} aria-hidden="true" /> Times shown in {viewerTz}
+        </span>
       </div>
     </div>
   );

@@ -191,12 +191,19 @@ export default function Home() {
             <div className="stack-list">
               {attention.slice(0, 4).map(({ b, why }) => (
                 <div key={b.id} className="agenda-row" style={{ cursor: 'default' }}>
-                  <ProfileAvatar
-                    name={me.role === 'companion' ? b.member_first_name : b.companion_first_name}
-                    url={homeAvatarOf(me.role === 'companion' ? b.member_profile_id : b.companion_profile_id)}
-                    size="xs"
-                    alt=""
-                  />
+                  {/* Companion counterparts have public profiles — their
+                      picture links there. Managed Members don't. */}
+                  {me.role === 'companion' ? (
+                    <ProfileAvatar name={b.member_first_name} url={homeAvatarOf(b.member_profile_id)} size="xs" alt="" />
+                  ) : (
+                    <Link
+                      to={`/people/${b.companion_profile_id}`}
+                      aria-label={`View ${b.companion_first_name}’s profile`}
+                      style={{ display: 'inline-flex', flexShrink: 0 }}
+                    >
+                      <ProfileAvatar name={b.companion_first_name} url={homeAvatarOf(b.companion_profile_id)} size="xs" alt="" />
+                    </Link>
+                  )}
                   <span className="col grow" style={{ gap: 2, minWidth: 0 }}>
                     <span className="bold">
                       {me.role === 'companion' ? b.member_first_name : b.companion_first_name}
@@ -225,12 +232,17 @@ export default function Home() {
               Next conversation
             </span>
             <div className="row wrap" style={{ gap: 14, alignItems: 'center' }}>
-              <ProfileAvatar
-                name={me.role === 'companion' ? hero.member_first_name : hero.companion_first_name}
-                url={homeAvatarOf(heroCounterpartId)}
-                size="lg"
-                eager
-              />
+              {me.role === 'companion' ? (
+                <ProfileAvatar name={hero.member_first_name} url={homeAvatarOf(heroCounterpartId)} size="lg" eager />
+              ) : (
+                <Link
+                  to={`/people/${hero.companion_profile_id}`}
+                  aria-label={`View ${hero.companion_first_name}’s profile`}
+                  style={{ display: 'inline-flex', flexShrink: 0 }}
+                >
+                  <ProfileAvatar name={hero.companion_first_name} url={homeAvatarOf(heroCounterpartId)} size="lg" eager />
+                </Link>
+              )}
               <span className="col" style={{ gap: 4, minWidth: 0 }}>
                 <span className="bold" style={{ fontSize: '1.35em' }}>
                   {me.role === 'companion'

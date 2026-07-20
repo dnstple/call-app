@@ -37,6 +37,7 @@ import {
 } from '../components/ui';
 import { BookingWizard, PackagePurchaseDialog } from '../components/BookingWizard';
 import { SupabaseBookingWizard } from '../components/SupabaseBookingWizard';
+import { PublicPackages } from '../components/PackagePurchaseSupabase';
 import { CardRatingSummary, CompanionReviews } from '../components/CompanionReviews';
 import { CompanionPlanHero } from '../components/CompanionPlanHero';
 import { IN_APP_CALL_LABEL } from '../components/FlowModal';
@@ -69,6 +70,7 @@ export default function ProfileDetail() {
   const [realOffers, setRealOffers] = useState<ConversationOfferRow[]>([]);
   const [realRules, setRealRules] = useState<AvailabilityRuleRow[]>([]);
   const [realBooking, setRealBooking] = useState(false);
+  const [showPackages, setShowPackages] = useState(false);
 
   useEffect(() => {
     if (supabase) void ensureFavouritesLoaded();
@@ -135,6 +137,10 @@ export default function ProfileDetail() {
   const blocked = settingsFor(state, me.id).blockedUserIds.includes(user.id);
   const canBook =
     user.role === 'companion' && (me.role === 'member' || me.role === 'coordinator') && !supabase;
+  // Supabase-mode booking permission: this account manages a Member who may book.
+  const canBookReal =
+    realOffers.length > 0 &&
+    authSnap.profiles.some((p) => p.profile.role === 'member' && p.access.can_book);
   const bookingMemberId = me.role === 'coordinator' ? (state.session.activeMemberId ?? '') : me.id;
   const trialOk = bookingMemberId ? trialEligible(state.bookings, bookingMemberId, user.id) : true;
   const fav = supabase ? supaFavs.ids.includes(user.id) : isFavourite(state, user.id);
@@ -303,19 +309,42 @@ export default function ProfileDetail() {
           <div className="grid-2">
             {realOffers
               .filter((o) => o.offer_type === 'single')
-              .map((o) => (
-                <div key={o.id} className="card card-tight row between wrap">
-                  <div className="faint">{o.duration_minutes}-minute conversation</div>
-                  <span className="bold">{formatMinor(o.price_minor)}</span>
-                </div>
-              ))}
+              .map((o) =>
+                canBookReal ? (
+                  // The tile itself opens the full booking flow (all options).
+                  <button
+                    key={o.id}
+                    className="card card-tight card-click row between wrap"
+                    style={{ textAlign: 'left' }}
+                    onClick={() => setRealBooking(true)}
+                    aria-label={`Book a ${o.duration_minutes}-minute conversation with ${user.firstName}`}
+                  >
+                    <div className="faint">{o.duration_minutes}-minute conversation</div>
+                    <span className="bold">{formatMinor(o.price_minor)}</span>
+                  </button>
+                ) : (
+                  <div key={o.id} className="card card-tight row between wrap">
+                    <div className="faint">{o.duration_minutes}-minute conversation</div>
+                    <span className="bold">{formatMinor(o.price_minor)}</span>
+                  </div>
+                ),
+              )}
           </div>
-          {realOffers.length > 0 &&
-            authSnap.profiles.some((p) => p.profile.role === 'member' && p.access.can_book) && (
-              <button className="btn btn-ghost btn-small mt-4" onClick={() => setRealBooking(true)}>
-                Book a single conversation
-              </button>
-            )}
+          {!showPackages ? (
+            <button className="btn btn-ghost btn-small mt-4" onClick={() => setShowPackages(true)}>
+              See more
+            </button>
+          ) : (
+            /* "See more" reveals the Companion's package bundles too. */
+            <div className="mt-4">
+              <PublicPackages companion={user} />
+              {canBookReal && (
+                <button className="btn btn-primary btn-small mt-2" onClick={() => setRealBooking(true)}>
+                  Book a conversation
+                </button>
+              )}
+            </div>
+          )}
           <p className="faint mt-2">No payment will be taken yet.</p>
         </section>
       )}

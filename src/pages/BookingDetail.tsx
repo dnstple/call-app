@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, CalendarDays, Clock, Loader2, Phone, ShieldQuestion } from 'lucide-react';
 import { isSupabaseMode } from '../config/dataMode';
+import { getSupabaseClient } from '../supabase/client';
 import { useAuthSnapshot } from '../state/authBridge';
 import {
   acceptBooking,
@@ -32,8 +33,8 @@ import { MEDIUM_LABELS } from '../domain/format';
 import type { BookingHistoryRow, BookingProposalRow, MyBookingRow } from '../supabase/database.types';
 import { EmptyState } from '../components/ui';
 import { SlotPicker, slotDayLabel, slotTimeLabel } from '../components/SupabaseBookingWizard';
-import { getAvailablePackageSlots } from '../repositories/packageRepository';
-import { DateTimeSlotPicker } from '../components/DateTimeSlotPicker';
+import { getAllAvailablePackageSlots } from '../repositories/packageRepository';
+import { DateTimeSlotPicker, SLOT_WINDOW_DAYS } from '../components/DateTimeSlotPicker';
 import { CompletionPanel } from '../components/CompletionPanel';
 import { MessageActionButton } from '../messaging/MessageAction';
 import { IN_APP_CALL_EXPLAINER, IN_APP_CALL_LABEL } from '../components/FlowModal';
@@ -41,6 +42,7 @@ import { RatingPanel } from '../components/RatingPanel';
 import { BookingCreditPanel } from '../components/BookingCreditBadge';
 import { GuestInvitationPanel } from '../components/GuestInvitationPanel';
 import { AttendanceCard } from '../components/AttendanceCard';
+import { CoordinatorPostConversationCard } from '../components/CoordinatorPostConversationCard';
 import { ProfileAvatar } from '../components/ProfileAvatar';
 import { useProfileAvatars } from '../state/avatars';
 
@@ -123,6 +125,37 @@ export default function BookingDetail() {
     [booking, auth.userId, auth.profiles],
   );
 
+  // 2G4B/2G4C authority: ask the SERVER (never the client) whether this is a
+  // real, FUNDED conversation. For a funded booking after it ends there is
+  // exactly ONE role-appropriate post-conversation card — AttendanceCard for
+  // the Companion, CoordinatorPostConversationCard for the member side — and
+  // the legacy CompletionPanel/RatingPanel are never rendered. Each side
+  // reads its OWN authoritative RPC (the Companion cannot read the payment
+  // order directly). null = unknown (nothing legacy shows while we wait);
+  // false = a non-funded historical/mock record where the legacy outcome +
+  // rating UI may still appear.
+  const [funded, setFunded] = useState<boolean | null>(null);
+  useEffect(() => {
+    const hasEnded = !!booking && new Date(booking.ends_at).getTime() <= Date.now();
+    if (!isSupabaseMode() || !booking || !hasEnded) {
+      setFunded(null);
+      return;
+    }
+    let live = true;
+    const request = isCompanionSide
+      ? getSupabaseClient().rpc('get_companion_completion_state', { p_booking: booking.id })
+      : getSupabaseClient().rpc('get_review_state', { p_booking: booking.id });
+    request.then(({ data, error: e }) => {
+      if (!live || e || !data) return;
+      const r = data as Record<string, unknown>;
+      // completion-state exposes `funded`; review-state exposes `eligible`.
+      setFunded(Boolean(r.funded ?? r.eligible));
+    });
+    return () => {
+      live = false;
+    };
+  }, [booking, isCompanionSide]);
+
   if (!isSupabaseMode()) {
     return (
       <EmptyState
@@ -184,25 +217,40 @@ export default function BookingDetail() {
       </button>
 
       <header className="row wrap between" style={{ gap: 12, alignItems: 'flex-start' }}>
-        <div className="row" style={{ gap: 14, alignItems: 'center' }}>
-          <ProfileAvatar
-            name={isCompanionSide ? booking.member_first_name : booking.companion_first_name}
-            url={detailAvatarOf(isCompanionSide ? booking.member_profile_id : booking.companion_profile_id)}
-            size="md"
-            eager
-          />
-          <div className="col" style={{ gap: 4 }}>
-            <h1 style={{ margin: 0 }}>
-              Conversation with {isCompanionSide
-                ? booking.member_first_name
-                : `${booking.companion_first_name}${booking.companion_last_initial ? ` ${booking.companion_last_initial}.` : ''}`}
-            </h1>
-            <span className="muted">
-              {!isCompanionSide && `For ${booking.member_first_name} · `}
-              {booking.is_trial ? 'Trial conversation' : 'Standard conversation'} · {booking.duration_minutes} minutes
-            </span>
-          </div>
-        </div>
+        {/* The counterpart's picture + name link to their profile when one
+            exists (Companions have public pages; managed Members don't). */}
+        {(() => {
+          const identity = (
+            <div className="row" style={{ gap: 14, alignItems: 'center' }}>
+              <ProfileAvatar
+                name={isCompanionSide ? booking.member_first_name : booking.companion_first_name}
+                url={detailAvatarOf(isCompanionSide ? booking.member_profile_id : booking.companion_profile_id)}
+                size="md"
+                eager
+              />
+              <div className="col" style={{ gap: 4 }}>
+                <h1 style={{ margin: 0 }}>
+                  Conversation with {isCompanionSide
+                    ? booking.member_first_name
+                    : `${booking.companion_first_name}${booking.companion_last_initial ? ` ${booking.companion_last_initial}.` : ''}`}
+                </h1>
+                <span className="muted">
+                  {!isCompanionSide && `For ${booking.member_first_name} · `}
+                  {booking.is_trial ? 'Trial conversation' : 'Standard conversation'} · {booking.duration_minutes} minutes
+                </span>
+              </div>
+            </div>
+          );
+          return isCompanionSide ? identity : (
+            <Link
+              to={`/people/${booking.companion_profile_id}`}
+              aria-label={`View ${booking.companion_first_name}’s profile`}
+              style={{ textDecoration: 'none', color: 'inherit' }}
+            >
+              {identity}
+            </Link>
+          );
+        })()}
         <span className={`badge ${STATUS_BADGE[booking.status] ?? 'badge-neutral'}`}>
           {derivedStatusLabel(booking)}
         </span>
@@ -259,8 +307,26 @@ export default function BookingDetail() {
         </div>
       </section>
 
-      {/* 2G4B: Companion post-call attendance (server-authoritative). */}
-      {isCompanionSide && ended && booking.status === 'confirmed' && (
+      {/* Funded, ended conversations get EXACTLY ONE post-conversation card
+          per role. Each card self-hides unless the server confirms the
+          booking is funded & eligible, so the legacy CompletionPanel /
+          RatingPanel below are additionally gated on `funded === false`.
+
+          Member side → the single combined outcome + review card. */}
+      {!isCompanionSide && isRequesterSide && ended && (
+        <section className="section-tight">
+          <CoordinatorPostConversationCard
+            bookingId={booking.id}
+            memberName={booking.member_first_name}
+            companionName={booking.companion_first_name}
+          />
+        </section>
+      )}
+
+      {/* Companion side → ONLY the 2G4B attendance card (no status gate, so a
+          funded booking the old flow moved confirmed → completed still shows
+          it; the card self-hides unless ended & funded). */}
+      {isCompanionSide && ended && (
         <section className="section-tight">
           <AttendanceCard bookingId={booking.id} memberName={booking.member_first_name} />
         </section>
@@ -301,11 +367,15 @@ export default function BookingDetail() {
         </section>
       )}
 
-      {/* Completion confirmation (Stage 2E1B) — ended conversations only */}
-      <CompletionPanel booking={booking} onStatusChange={() => void load()} />
-
-      {/* Rating (Stage 2E2B) — member side, completed conversations only */}
-      <RatingPanel booking={booking} />
+      {/* Legacy completion (2E1B) + rating (2E2B). These are the OLD mutual
+          "Did it take place?" + direct-`ratings` writer. For a funded booking
+          they are fully replaced by the single role card above, so they are
+          shown ONLY when the server explicitly says the booking is NOT funded
+          (`funded === false`) — i.e. a historical/mock non-funded record.
+          While unknown (null) or funded (true) neither renders, so a funded
+          conversation never shows two overlapping completion systems. */}
+      {funded === false && <CompletionPanel booking={booking} onStatusChange={() => void load()} />}
+      {funded === false && <RatingPanel booking={booking} />}
 
       {/* Price snapshot — honest payment boundary. Package-credit bookings
           show their credit state instead of a payable price. */}
@@ -482,8 +552,8 @@ function PackageSlotPicker({ purchaseId, selected, onSelect }: {
     setLoading(true);
     setError(null);
     const from = new Date(Date.now() + 2 * 3600_000).toISOString();
-    const to = new Date(Date.now() + 28 * 86400_000).toISOString();
-    getAvailablePackageSlots(purchaseId, from, to)
+    const to = new Date(Date.now() + SLOT_WINDOW_DAYS * 86400_000).toISOString();
+    getAllAvailablePackageSlots(purchaseId, from, to)
       .then((s) => setSlots(s))
       .catch(() => setError('We couldn’t load available times. Please try again.'))
       .finally(() => setLoading(false));
@@ -501,7 +571,7 @@ function PackageSlotPicker({ purchaseId, selected, onSelect }: {
       selected={selected}
       onSelect={onSelect}
       onRetry={load}
-      emptyMessage="No free times in the next four weeks."
+      emptyMessage="No free times found."
     />
   );
 }

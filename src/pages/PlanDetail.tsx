@@ -36,7 +36,7 @@ import {
   skipPlanOccurrence,
   updatePlanRequestMessage,
 } from '../repositories/planRepository';
-import { getAvailablePackageSlots } from '../repositories/packageRepository';
+import { getAllAvailablePackageSlots } from '../repositories/packageRepository';
 import { formatMinor } from '../repositories/availabilityRepository';
 import { RESCHEDULE_OPEN_COPY } from '../repositories/bookingRepository';
 import type { AvailableSlot } from '../repositories/bookingRepository';
@@ -45,7 +45,7 @@ import { browserTimezone } from '../domain/timezones';
 import { scheduleSummary } from '../components/PlanWizard';
 import { PLAN_STATUS_LABELS } from '../components/PlanCards';
 import { PlanChangeWizard } from '../components/PlanChangeWizard';
-import { DateTimeSlotPicker } from '../components/DateTimeSlotPicker';
+import { DateTimeSlotPicker, SLOT_WINDOW_DAYS } from '../components/DateTimeSlotPicker';
 import { EmptyState, Modal } from '../components/ui';
 import { IN_APP_CALL_LABEL } from '../components/FlowModal';
 import { loadPlanOverview, nextConversationLabel, type PlanOverview } from './PlansPage';
@@ -101,8 +101,8 @@ function SchedulingIssues({ view, onResolved }: { view: PlanOverview; onResolved
     setSlotsLoading(true);
     if (!keepError) setError(null);
     const from = new Date(Date.now() + 2 * 3600_000).toISOString();
-    const to = new Date(Date.now() + 28 * 86400_000).toISOString();
-    getAvailablePackageSlots(view.plan.allowance_purchase_id, from, to)
+    const to = new Date(Date.now() + SLOT_WINDOW_DAYS * 86400_000).toISOString();
+    getAllAvailablePackageSlots(view.plan.allowance_purchase_id, from, to)
       .then((s) => setSlots(s.map((x) => ({ startsAt: x.startsAt, endsAt: x.endsAt }))))
       .catch(() => setError('We couldn’t load available times. Please try again.'))
       .finally(() => setSlotsLoading(false));
@@ -180,7 +180,7 @@ function SchedulingIssues({ view, onResolved }: { view: PlanOverview; onResolved
               selected={picked}
               onSelect={setPicked}
               onRetry={loadSlots}
-              emptyMessage="No free times in the next four weeks — try again after the schedule changes."
+              emptyMessage="No free times found — try again after the schedule changes."
             />
             <div className="row" style={{ justifyContent: 'flex-end', gap: 8 }}>
               <button className="btn btn-ghost" onClick={() => setResolving(null)}>Cancel</button>

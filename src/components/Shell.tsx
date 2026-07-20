@@ -101,10 +101,16 @@ export function Shell({ children }: { children: ReactNode }) {
       <div className="shell">
         <nav className="sidenav" aria-label="Primary">
           <div className="brand">
-            <div className="name brand-lockup">
+            {/* The app logo always goes home. */}
+            <NavLink
+              to="/"
+              className="name brand-lockup"
+              aria-label={`${APP_NAME} — home`}
+              style={{ textDecoration: 'none', color: 'inherit' }}
+            >
               <img src="/icon.svg" alt="" className="brand-icon" />
               {APP_NAME}
-            </div>
+            </NavLink>
           </div>
           {nav.map(({ to, label, Icon }) => (
             <NavLink key={to} to={to} end={to === '/'}>
@@ -119,10 +125,15 @@ export function Shell({ children }: { children: ReactNode }) {
 
         <div className="main-col">
           <header className="topbar">
-            <span className="brand-mobile brand-lockup">
+            <NavLink
+              to="/"
+              className="brand-mobile brand-lockup"
+              aria-label={`${APP_NAME} — home`}
+              style={{ textDecoration: 'none', color: 'inherit' }}
+            >
               <img src="/icon.svg" alt="" className="brand-icon" />
               {APP_NAME}
-            </span>
+            </NavLink>
 
             {!supabase && (
               /* Mock mode only: prototype identity switcher (development control). */
@@ -160,6 +171,7 @@ export function Shell({ children }: { children: ReactNode }) {
             <AccountMenu
               name={accountName}
               role={roleLabel(supabase ? accountRole : me.role)}
+              profileTo={supabase && accountRole === 'coordinator' ? '/members' : '/profile'}
               onSignOut={supabase ? () => void auth.signOut() : undefined}
             />
           </header>
@@ -187,7 +199,9 @@ export function Shell({ children }: { children: ReactNode }) {
 
 /** Top-right identity: the authenticated account holder ONLY — no
  * profile switching, no managed-member impersonation. */
-function AccountMenu({ name, role, onSignOut }: { name: string; role: string; onSignOut?: () => void }) {
+function AccountMenu({ name, role, profileTo, onSignOut }: {
+  name: string; role: string; profileTo: string; onSignOut?: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
@@ -217,6 +231,9 @@ function AccountMenu({ name, role, onSignOut }: { name: string; role: string; on
       </button>
       {open && (
         <div className="account-menu-pop" role="menu">
+          <button role="menuitem" onClick={() => { setOpen(false); navigate(profileTo); }}>
+            <UserRound size={16} aria-hidden="true" /> Your profile
+          </button>
           <button role="menuitem" onClick={() => { setOpen(false); navigate('/settings'); }}>
             <SettingsIcon size={16} aria-hidden="true" /> Settings
           </button>

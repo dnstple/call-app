@@ -917,6 +917,7 @@ export type Database = {
         Returns: { profile_id: string; avatar_path: string | null }[];
       };
       /* 2G4A/B — completion + attendance. */
+      get_review_state: { Args: { p_booking: string }; Returns: Record<string, unknown> };
       submit_companion_attendance: {
         Args: { p_booking: string; p_outcome: string; p_explanation: string | null };
         Returns: Record<string, unknown>;

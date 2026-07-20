@@ -342,8 +342,9 @@ describe('scheduling issues', () => {
     renderDetail();
     await screen.findByText('Needs a new time');
     fireEvent.click(screen.getByRole('button', { name: 'Choose another time' }));
-    const slotButton = await screen.findAllByRole('button', { name: /^\d\d:\d\d$/ });
-    fireEvent.click(slotButton[0]);
+    fireEvent.click((await screen.findAllByRole('button', { name: /times available/i }))[0]);
+    const slotButtons = await screen.findAllByRole('button', { name: / at \d\d:\d\d /i });
+    fireEvent.click(slotButtons[0]);
     fireEvent.click(screen.getByRole('button', { name: 'Confirm new time' }));
     await waitFor(() =>
       expect(mock.rpcCalls.some((c) => c.fn === 'resolve_plan_occurrence')).toBe(true));
@@ -360,8 +361,9 @@ describe('scheduling issues', () => {
     renderDetail();
     await screen.findByText('Needs a new time');
     fireEvent.click(screen.getByRole('button', { name: 'Choose another time' }));
-    const slotButton = await screen.findAllByRole('button', { name: /^\d\d:\d\d$/ });
-    fireEvent.click(slotButton[0]);
+    fireEvent.click((await screen.findAllByRole('button', { name: /times available/i }))[0]);
+    const slotButtons = await screen.findAllByRole('button', { name: / at \d\d:\d\d /i });
+    fireEvent.click(slotButtons[0]);
     fireEvent.click(screen.getByRole('button', { name: 'Confirm new time' }));
     expect(
       await screen.findByText('That time has just become unavailable. Please choose another.'),

@@ -20,6 +20,7 @@ import type {
   PackagePurchaseRow,
 } from '../supabase/database.types';
 import { RepoError, type RepoErrorKind } from './profileRepository';
+import { paginateSlotWindow } from './bookingRepository';
 
 export type PackageErrorCode =
   | 'unauthorised'
@@ -406,6 +407,19 @@ export async function getAvailablePackageSlots(
     startsAt: s.slot_start,
     endsAt: s.slot_end,
   }));
+}
+
+/** Every available package slot in [from, to] — paginates past the server clamp. */
+export async function getAllAvailablePackageSlots(
+  purchaseId: string,
+  from: string,
+  to: string,
+): Promise<{ startsAt: string; endsAt: string }[]> {
+  return paginateSlotWindow(
+    (f, t) => getAvailablePackageSlots(purchaseId, f, t),
+    from,
+    to,
+  );
 }
 
 export interface BookingCreditState {

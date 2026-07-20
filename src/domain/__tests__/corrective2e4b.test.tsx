@@ -208,36 +208,38 @@ describe('long unbroken profile text', () => {
 describe('DateTimeSlotPicker', () => {
   const noop = () => undefined;
 
-  it('3+4. shows a month calendar, and only days with real slots are choosable', async () => {
+  it('3+4. multi-step: the DATE step lists only days with real slots', async () => {
     render(<DateTimeSlotPicker slots={SLOTS} selected={null} onSelect={noop} />);
-    expect(await screen.findByRole('grid')).toBeTruthy(); // the month calendar
-    expect(screen.getByRole('button', { name: /Next Month/i })).toBeTruthy();
-    // 21 July 2099 has server slots; 22 July does not → disabled.
-    const day21 = screen.getByRole('button', { name: /Tuesday, July 21st, 2099/i });
-    expect((day21 as HTMLButtonElement).disabled).toBe(false);
-    const day22 = screen.getByRole('button', { name: /Wednesday, July 22nd, 2099/i });
-    expect((day22 as HTMLButtonElement).disabled).toBe(true);
+    expect(await screen.findByText('Choose a date')).toBeTruthy();
+    // 21 July 2099 has server slots and appears; 22 July has none and is
+    // simply NOT rendered (never a clickable option).
+    expect(screen.getByRole('button', { name: /Tuesday 21 July.*times available/i })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /22 July/i })).toBeNull();
+    // No wall of time pills on the date step.
+    expect(screen.queryByRole('button', { name: '18:00' })).toBeNull();
+    expect(screen.getByText(/Date → Time → Confirm/)).toBeTruthy();
   });
 
-  it('5. selecting another date shows that date’s times', async () => {
+  it('5. one date at a time: picking a date shows ONLY that date’s times', async () => {
     render(<DateTimeSlotPicker slots={SLOTS} selected={null} onSelect={noop} />);
-    await screen.findByRole('grid');
-    // The first available day (21st) shows its two times.
-    expect(screen.getByRole('button', { name: '18:00' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: /Thursday, July 23rd, 2099/i }));
-    await waitFor(() => expect(screen.getByRole('button', { name: '11:00' })).toBeTruthy());
-    expect(screen.queryByRole('button', { name: '18:00' })).toBeNull();
+    fireEvent.click(await screen.findByRole('button', { name: /Tuesday 21 July/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /at 18:00/i })).toBeTruthy());
+    // Back → the other date shows its own times, never both at once.
+    fireEvent.click(screen.getByRole('button', { name: /Back to dates/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /Thursday 23 July/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /at 11:00/i })).toBeTruthy());
+    expect(screen.queryByRole('button', { name: /at 18:00/i })).toBeNull();
   });
 
   it('shows the viewer timezone and loading/empty/error states', () => {
     const { rerender, container } = render(
       <DateTimeSlotPicker slots={SLOTS} selected={null} onSelect={noop} />,
     );
-    expect(container.textContent).toMatch(/Times shown in your timezone/);
+    expect(container.textContent).toMatch(/Times shown in/);
     rerender(<DateTimeSlotPicker slots={[]} loading selected={null} onSelect={noop} />);
     expect(screen.getByText(/Finding available times/)).toBeTruthy();
     rerender(<DateTimeSlotPicker slots={[]} selected={null} onSelect={noop} />);
-    expect(screen.getByText(/No available times/)).toBeTruthy();
+    expect(screen.getByText(/No available dates found/)).toBeTruthy();
     rerender(<DateTimeSlotPicker slots={[]} error="Nope" selected={null} onSelect={noop} />);
     expect(screen.getByRole('alert')).toBeTruthy();
   });
@@ -255,22 +257,23 @@ describe('test-call flow', () => {
 
   it('6. opens directly at date & time selection', async () => {
     renderTestCall();
-    expect(await screen.findByRole('grid')).toBeTruthy();
+    expect(await screen.findByText('Choose a date')).toBeTruthy();
     expect(screen.getAllByText(/Trial conversation/).length).toBeGreaterThan(0);
     expect(screen.getByText(/30 minutes · £5\.00/)).toBeTruthy();
   });
 
   it('7. never offers package credits, bundles or pay-per-conversation choices', async () => {
     const view = renderTestCall();
-    await screen.findByRole('grid');
+    await screen.findByText('Choose a date');
     expect(view.container.textContent).not.toMatch(/package|credit|bundle|pay per conversation|buy plan/i);
   });
 
   it('8. member selection is permission-scoped (coordinator sees only their members)', async () => {
     signInAs([profileRow('member', 'm1', 'Mum'), profileRow('member', 'm2', 'Dad')]);
     renderTestCall();
-    await screen.findByRole('grid');
-    fireEvent.click(screen.getByRole('button', { name: '18:00' }));
+    await screen.findByText('Choose a date');
+    fireEvent.click(screen.getByRole('button', { name: /21 July/i }));
+    fireEvent.click(screen.getByRole('button', { name: /at 18:00/i }));
     fireEvent.click(screen.getByRole('button', { name: /Continue/ }));
     expect(await screen.findByText(/Who is this conversation for/)).toBeTruthy();
     expect(screen.getAllByRole('radio')).toHaveLength(2); // never an unrelated member
@@ -278,8 +281,9 @@ describe('test-call flow', () => {
 
   it('a single eligible member is preselected with a simple confirmation', async () => {
     renderTestCall();
-    await screen.findByRole('grid');
-    fireEvent.click(screen.getByRole('button', { name: '18:00' }));
+    await screen.findByText('Choose a date');
+    fireEvent.click(screen.getByRole('button', { name: /21 July/i }));
+    fireEvent.click(screen.getByRole('button', { name: /at 18:00/i }));
     fireEvent.click(screen.getByRole('button', { name: /Continue/ }));
     await screen.findByText(/Who is this conversation for/);
     expect(screen.queryByRole('radio')).toBeNull();
@@ -288,8 +292,9 @@ describe('test-call flow', () => {
 
   it('9+11+28. 2G2: the Supabase pay step is the REAL paid flow — never prototype copy', async () => {
     renderTestCall();
-    await screen.findByRole('grid');
-    fireEvent.click(screen.getByRole('button', { name: '18:00' }));
+    await screen.findByText('Choose a date');
+    fireEvent.click(screen.getByRole('button', { name: /21 July/i }));
+    fireEvent.click(screen.getByRole('button', { name: /at 18:00/i }));
     fireEvent.click(screen.getByRole('button', { name: /Continue/ }));
     fireEvent.click(await screen.findByRole('button', { name: /Continue/ }));
 

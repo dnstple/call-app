@@ -19,7 +19,7 @@ import type { ConversationOfferRow } from '../supabase/database.types';
 import type { User } from '../types';
 import {
   createBookingRequest,
-  getAvailableSlots,
+  getAllAvailableSlots,
   IN_APP_METHOD,
   type AvailableSlot,
 } from '../repositories/bookingRepository';
@@ -80,7 +80,7 @@ export function TestCallWizard({
     try {
       const from = new Date().toISOString();
       const to = new Date(Date.now() + SLOT_WINDOW_DAYS * 24 * 3600 * 1000).toISOString();
-      setSlots(await getAvailableSlots({ companionProfileId: companion.id, offerId: trialOffer.id, from, to }));
+      setSlots(await getAllAvailableSlots({ companionProfileId: companion.id, offerId: trialOffer.id, from, to }));
     } catch (e) {
       setSlotError(e instanceof RepoError ? e.message : 'We couldn’t load available times.');
     } finally {

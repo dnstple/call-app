@@ -122,6 +122,55 @@ export async function getAvailableSlots(input: {
   return ((data ?? []) as SlotRow[]).map((s) => ({ startsAt: s.slot_start, endsAt: s.slot_end }));
 }
 
+/**
+ * Client-side pagination over a server-clamped slot fetcher (31 days /
+ * 200 slots per call). The SERVER still generates every slot and enforces
+ * every rule — this only issues follow-up calls so the full requested
+ * window is visible instead of silently stopping at the first clamp.
+ * Results are deduped by start time and sorted ascending.
+ */
+export async function paginateSlotWindow(
+  fetchPage: (from: string, to: string) => Promise<AvailableSlot[]>,
+  from: string,
+  to: string,
+): Promise<AvailableSlot[]> {
+  const PAGE_CAP = 200; // server slot cap per call
+  const WINDOW_MS = 31 * 24 * 3600_000; // server date clamp per call
+  const MAX_PAGES = 30; // hard safety stop
+  const byStart = new Map<string, AvailableSlot>();
+  let cursor = from;
+  const toMs = Date.parse(to);
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    const batch = await fetchPage(cursor, to);
+    for (const s of batch) byStart.set(s.startsAt, s);
+    const windowEnd = Math.min(toMs, Math.max(Date.parse(cursor), Date.now()) + WINDOW_MS);
+    if (batch.length >= PAGE_CAP) {
+      // Slot cap hit — resume just after the last generated slot.
+      cursor = batch[batch.length - 1].endsAt;
+    } else if (windowEnd < toMs) {
+      // Date clamp hit — continue with the next 31-day window.
+      cursor = new Date(windowEnd).toISOString();
+    } else {
+      break;
+    }
+  }
+  return [...byStart.values()].sort((a, b) => a.startsAt.localeCompare(b.startsAt));
+}
+
+/** Every available slot in [from, to] — see paginateSlotWindow. */
+export async function getAllAvailableSlots(input: {
+  companionProfileId: string;
+  offerId: string;
+  from: string;
+  to: string;
+}): Promise<AvailableSlot[]> {
+  return paginateSlotWindow(
+    (from, to) => getAvailableSlots({ ...input, from, to }),
+    input.from,
+    input.to,
+  );
+}
+
 /* ---------------- Create ---------------- */
 
 /**

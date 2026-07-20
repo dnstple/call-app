@@ -21,12 +21,12 @@ import type { ConversationOfferRow } from '../supabase/database.types';
 import type { User } from '../types';
 import {
   createBookingRequest,
-  getAvailableSlots,
+  getAllAvailableSlots,
   type AvailableSlot,
 } from '../repositories/bookingRepository';
 import {
   createPackageBookingRequest,
-  getAvailablePackageSlots,
+  getAllAvailablePackageSlots,
   getUsablePackagePurchases,
   PackageError,
   type UsablePackagePurchase,
@@ -38,6 +38,7 @@ import {
   getPublicCommissionSettings,
 } from '../repositories/availabilityRepository';
 import { browserTimezone } from '../domain/timezones';
+import { DateTimeSlotPicker, SLOT_WINDOW_DAYS } from './DateTimeSlotPicker';
 import { MEDIUM_LABELS } from '../domain/format';
 import { useAppState } from '../state/store';
 import { useAuthSnapshot } from '../state/authBridge';
@@ -89,11 +90,12 @@ export function SlotPicker({
     let live = true;
     setSlots(null);
     setError(null);
+    // Full horizon (server rules still clamp) — every future date is viewable.
     const from = new Date().toISOString();
-    const to = new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString();
+    const to = new Date(Date.now() + SLOT_WINDOW_DAYS * 24 * 3600 * 1000).toISOString();
     const request = purchaseId
-      ? getAvailablePackageSlots(purchaseId, from, to)
-      : getAvailableSlots({ companionProfileId, offerId: offerId ?? '', from, to });
+      ? getAllAvailablePackageSlots(purchaseId, from, to)
+      : getAllAvailableSlots({ companionProfileId, offerId: offerId ?? '', from, to });
     request
       .then((s) => live && setSlots(s))
       .catch((e) => live && setError(e instanceof RepoError ? e.message : 'We couldn’t load available times.'));
@@ -102,51 +104,19 @@ export function SlotPicker({
     };
   }, [companionProfileId, offerId, purchaseId, reloadKey]);
 
-  const byDay = useMemo(() => {
-    const map = new Map<string, AvailableSlot[]>();
-    for (const s of slots ?? []) {
-      const k = slotDayKey(s.startsAt, viewerTz);
-      map.set(k, [...(map.get(k) ?? []), s]);
-    }
-    return [...map.entries()];
-  }, [slots, viewerTz]);
+  void viewerTz; // timezone display now lives inside the shared picker
 
-  if (error) return <p className="muted" role="alert">{error}</p>;
-  if (slots === null) {
-    return (
-      <div className="row" style={{ gap: 10 }}>
-        <Loader2 size={20} aria-hidden="true" /> <span className="muted">Finding available times…</span>
-      </div>
-    );
-  }
-  if (slots.length === 0) {
-    return (
-      <p className="muted">
-        No available times in the next two weeks. This companion may be fully booked or their diary may open later.
-      </p>
-    );
-  }
+  // Redesign: ONE shared multi-step chooser everywhere. This wrapper only
+  // keeps its data-fetching contract; the wall-of-pills grid is gone.
   return (
-    <div className="col" style={{ gap: 16 }}>
-      <p className="faint" style={{ margin: 0 }}>All times are shown in your timezone ({viewerTz}).</p>
-      {byDay.map(([day, daySlots]) => (
-        <div key={day}>
-          <div className="bold mb-2">{slotDayLabel(daySlots[0].startsAt, viewerTz)}</div>
-          <div className="row wrap" style={{ gap: 8 }}>
-            {daySlots.map((s) => (
-              <button
-                key={s.startsAt}
-                className={`btn btn-small ${selected?.startsAt === s.startsAt ? 'btn-primary' : 'btn-secondary'}`}
-                aria-pressed={selected?.startsAt === s.startsAt}
-                onClick={() => onSelect(s)}
-              >
-                {slotTimeLabel(s.startsAt, viewerTz)}
-              </button>
-            ))}
-          </div>
-        </div>
-      ))}
-    </div>
+    <DateTimeSlotPicker
+      slots={slots ?? []}
+      loading={slots === null && !error}
+      error={error}
+      selected={selected ?? null}
+      onSelect={onSelect}
+      emptyMessage="No available dates found. This companion may be fully booked or their diary may open later."
+    />
   );
 }
 
