@@ -934,6 +934,32 @@ export type Database = {
         Args: { p_booking: string };
         Returns: Record<string, unknown>;
       };
+      /* 2G4E — internal issue-review queue (support/admin only). */
+      am_i_support: { Args: Record<string, never>; Returns: boolean };
+      get_internal_issue_queue: {
+        Args: {
+          p_states?: string[] | null;
+          p_priority?: string | null;
+          p_category?: string | null;
+          p_reporter_role?: string | null;
+        };
+        Returns: Record<string, unknown>[];
+      };
+      get_internal_issue_detail: {
+        Args: { p_issue: string };
+        Returns: Record<string, unknown>;
+      };
+      resolve_conversation_issue: {
+        Args: {
+          p_issue: string;
+          p_outcome: string;
+          p_note: string;
+          p_companion_minor: number | null;
+          p_credit_minor: number | null;
+          p_idempotency: string;
+        };
+        Returns: Record<string, unknown>;
+      };
       /* Redesign Phase F — companion completeness. */
       activate_companion_profile: { Args: { p_profile: string }; Returns: { active: boolean } };
       companion_completion_checklist: { Args: { p_profile: string }; Returns: Record<string, unknown> };

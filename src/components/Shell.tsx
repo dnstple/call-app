@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   Bell, CalendarHeart, ChevronDown, Compass, LogOut, MessageCircle,
-  Home as HomeIcon, Settings as SettingsIcon, UserRound, Users,
+  Home as HomeIcon, Settings as SettingsIcon, ShieldAlert, UserRound, Users,
 } from 'lucide-react';
 import { useAppState } from '../state/store';
 import { currentUser, managedMembers, settingsFor, unreadCount } from '../state/selectors';
@@ -13,6 +13,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { useAccountRole } from '../state/managedMember';
 import { useUnreadTotal } from '../messaging/hooks';
 import { useUnreadNotifications } from '../messaging/NotificationsSupabase';
+import { useIsSupport } from '../state/support';
 import { ToastStack } from './ui';
 import { APP_NAME } from '../config/branding';
 
@@ -56,6 +57,8 @@ export function Shell({ children }: { children: ReactNode }) {
   const bellCount = supabase ? unreadNotifications : unread;
 
   const nav = navForRole(supabase ? accountRole : me.role);
+  // Discreet internal entry — shown ONLY when the server confirms support.
+  const supportStatus = useIsSupport();
 
   const navBadge = (to: string) =>
     to === '/messages' && unreadMessages > 0 ? (
@@ -121,6 +124,11 @@ export function Shell({ children }: { children: ReactNode }) {
           <NavLink to="/settings">
             <SettingsIcon size={20} aria-hidden="true" /> Settings
           </NavLink>
+          {supportStatus === 'yes' && (
+            <NavLink to="/internal/issues">
+              <ShieldAlert size={20} aria-hidden="true" /> Issue queue
+            </NavLink>
+          )}
         </nav>
 
         <div className="main-col">

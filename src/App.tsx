@@ -1,5 +1,6 @@
 import { HashRouter, Link, Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import { useAccountRole } from './state/managedMember';
+import { useIsSupport } from './state/support';
 import { lazy, Suspense, useEffect, type ReactNode } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Shell } from './components/Shell';
@@ -16,6 +17,8 @@ const PlanDetail = lazy(() => import('./pages/PlanDetail'));
 const Notifications = lazy(() => import('./pages/Notifications'));
 const MembersPage = lazy(() => import('./pages/MembersPage'));
 const GuestJoin = lazy(() => import('./pages/GuestJoin'));
+const InternalIssues = lazy(() => import('./pages/InternalIssues'));
+const InternalIssueDetail = lazy(() => import('./pages/InternalIssueDetail'));
 import Settings from './pages/Settings';
 import AvailabilityRates from './pages/AvailabilityRates';
 import SignupWizard from './signup/SignupWizard';
@@ -104,6 +107,35 @@ function CoordinatorOnly({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+/**
+ * Internal route guard: authorisation is ALWAYS server-derived
+ * (public.am_i_support → DB-backed support_admins). No internal case data is
+ * rendered before authorisation resolves, and a non-support user never falls
+ * back to access — they get a neutral not-available state. Anonymous users
+ * are already redirected to sign-in by the surrounding Protected shell.
+ */
+function SupportOnly({ children }: { children: ReactNode }) {
+  const status = useIsSupport();
+  if (status === 'loading') {
+    return (
+      <div className="row" style={{ justifyContent: 'center', padding: 48 }}>
+        <Loader2 size={22} aria-hidden="true" />
+        <span className="visually-hidden">Checking access</span>
+      </div>
+    );
+  }
+  if (status !== 'yes') {
+    return (
+      <EmptyState
+        title="Not available"
+        body="This area is limited to the support team."
+        action={<Link to="/" className="btn btn-primary">Go home</Link>}
+      />
+    );
+  }
+  return <>{children}</>;
+}
+
 function PlanRedirect() {
   const { planId } = useParams();
   return <Navigate to={`/conversations/plans/${planId}`} replace />;
@@ -181,6 +213,9 @@ function AppRoutes() {
                 <Route path="/conversations/plans/:planId/member" element={<PlanMemberProfile />} />
                 <Route path="/plans/:planId/member" element={<PlanMemberRedirect />} />
                 <Route path="/notifications" element={<Notifications />} />
+                {/* Internal support queue — DB-role protected, not in normal nav. */}
+                <Route path="/internal/issues" element={<SupportOnly><InternalIssues /></SupportOnly>} />
+                <Route path="/internal/issues/:issueId" element={<SupportOnly><InternalIssueDetail /></SupportOnly>} />
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/availability" element={<AvailabilityRates />} />
                 <Route
