@@ -4349,15 +4349,82 @@ describe.skipIf(!enabled)('2G6D disputes (requires live Supabase)', () => {
     expect((await dAdmin.from('payment_refunds').select('state').eq('id', r.data.refund_id).single()).data!.state).toBe('processing');
   });
 
-  it('an unmapped dispute is retained as unresolved, then reconciled to its order', async () => {
-    const o2 = await synthOrder(2000);
+  it('0058: an unmapped dispute starts unresolved, then reconcile persists the exact order + allocations, once, idempotently', async () => {
     const id = `dp_unmap_${suffix}`;
+    // Recorded with a PaymentIntent that matches NO order → genuinely unmapped.
     expect((await upsert(id, `pi_nonexistent_${suffix}`, 'needs_response')).error).toBeNull();
     const before = await disputes(id);
+    const du = before.data![0].id as string;
     expect(before.data![0].internal_state).toBe('unresolved');
     expect(before.data![0].payment_order_id).toBeNull();
-    expect((await dAdmin.rpc('reconcile_unresolved_dispute', { p_stripe_dispute_id: id, p_payment_intent: (await dAdmin.from('payment_orders').select('stripe_payment_intent_id').eq('id', o2).single()).data!.stripe_payment_intent_id, p_charge: null })).error).toBeNull();
-    expect((await disputes(id)).data![0].payment_order_id).toBe(o2);
+    // No allocations/holds while unmapped.
+    expect((await dAdmin.from('payment_dispute_earnings').select('id').eq('dispute_id', du)).data ?? []).toHaveLength(0);
+    // The matching order (the real plan order with earnings e1/e2) is created/known
+    // AFTER the dispute; reconcile is driven with THAT order's PaymentIntent.
+    const orderPi = (await dAdmin.from('payment_orders').select('stripe_payment_intent_id').eq('id', orderId).single()).data!.stripe_payment_intent_id;
+    const res1 = await dAdmin.rpc('reconcile_unresolved_dispute', { p_stripe_dispute_id: id, p_payment_intent: orderPi, p_charge: null });
+    expect(res1.error).toBeNull();
+    expect(res1.data).toBe('mapped'); // clear result
+    const after = await disputes(id);
+    expect(after.data![0].payment_order_id).toBe(orderId); // EXACT order id persisted (the prior hosted failure)
+    expect(after.data![0].internal_state).toBe('open'); // advanced from provider_status
+    // Deterministic allocation was created exactly once (both funded earnings).
+    const alloc1 = (await dAdmin.from('payment_dispute_earnings').select('earning_id').eq('dispute_id', du)).data!;
+    expect(alloc1).toHaveLength(2);
+    // A second reconcile is an idempotent no-op: already_mapped, order unchanged, no duplicate allocations.
+    const res2 = await dAdmin.rpc('reconcile_unresolved_dispute', { p_stripe_dispute_id: id, p_payment_intent: `pi_x_${suffix}`, p_charge: null });
+    expect(res2.error).toBeNull();
+    expect(res2.data).toBe('already_mapped');
+    expect((await disputes(id)).data![0].payment_order_id).toBe(orderId);
+    expect((await dAdmin.from('payment_dispute_earnings').select('id').eq('dispute_id', du)).data!).toHaveLength(2);
+  });
+
+  it('0058: a genuinely unmatched dispute stays unresolved with no allocations', async () => {
+    const id = `dp_nomatch_${suffix}`;
+    expect((await upsert(id, `pi_ghost_${suffix}`, 'needs_response')).error).toBeNull();
+    const res = await dAdmin.rpc('reconcile_unresolved_dispute', { p_stripe_dispute_id: id, p_payment_intent: `pi_still_ghost_${suffix}`, p_charge: `ch_ghost_${suffix}` });
+    expect(res.error).toBeNull();
+    expect(res.data).toBe('still_unresolved');
+    const d = await disputes(id);
+    expect(d.data![0].payment_order_id).toBeNull();
+    expect(d.data![0].internal_state).toBe('unresolved');
+    expect((await dAdmin.from('payment_dispute_earnings').select('id').eq('dispute_id', d.data![0].id)).data ?? []).toHaveLength(0);
+  });
+
+  it('0058: charge fallback resolves the order when no PaymentIntent matches', async () => {
+    const o6 = await synthOrder(1500);
+    // A refund row is the only reliable charge linkage; give it a synthetic charge id.
+    const chg = `ch_fb_${suffix}`;
+    expect((await dAdmin.from('payment_refunds').insert({
+      payment_order_id: o6,
+      payer_account_id: payerId,
+      remedy_minor: 0,
+      stripe_charge_id: chg,
+      idempotency_key: `fb-ref-${suffix}`,
+      state: 'succeeded',
+      reason: '2G6D charge-fallback test fixture',
+    })).error).toBeNull();
+    const id = `dp_fb_${suffix}`;
+    // Recorded with a non-matching PI; reconcile supplies ONLY the charge.
+    expect((await upsert(id, `pi_fb_ghost_${suffix}`, 'needs_response')).error).toBeNull();
+    const res = await dAdmin.rpc('reconcile_unresolved_dispute', { p_stripe_dispute_id: id, p_payment_intent: null, p_charge: chg });
+    expect(res.error).toBeNull();
+    expect(res.data).toBe('mapped');
+    expect((await disputes(id)).data![0].payment_order_id).toBe(o6);
+  });
+
+  it('0058: reconcile leaves an already-mapped dispute completely unchanged', async () => {
+    // dp_a was mapped to o4 and closed 'won' by the multiple-disputes test.
+    const a = `dp_a_${suffix}`;
+    const before = (await disputes(a)).data![0];
+    expect(before.payment_order_id).not.toBeNull();
+    const res = await dAdmin.rpc('reconcile_unresolved_dispute', { p_stripe_dispute_id: a, p_payment_intent: `pi_reroute_${suffix}`, p_charge: `ch_reroute_${suffix}` });
+    expect(res.error).toBeNull();
+    expect(res.data).toBe('already_mapped');
+    const after = (await disputes(a)).data![0];
+    expect(after.payment_order_id).toBe(before.payment_order_id); // not re-routed
+    expect(after.internal_state).toBe('won'); // terminal untouched
+    expect(after.stripe_payment_intent_id).toBe(before.stripe_payment_intent_id); // identifiers not overwritten
   });
 
   it('an unknown provider status stays recordable; a terminal close is never moved backwards', async () => {
