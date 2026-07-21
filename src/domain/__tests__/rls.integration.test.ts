@@ -4196,6 +4196,17 @@ describe.skipIf(!enabled)('2G6C adjustment-on-success (requires live Supabase)',
  * after transfer, reinstatement resolves (never deletes), and allocation is
  * deterministic + capped. No Stripe calls; record RPCs are driven directly.
  * ============================================================ */
+// Fixture guard: never let a failed setup insert/lookup silently leave an id as
+// ''. Throws a clear fixture error (e.g. `missing_fixture_uuid: dp1Uuid`) so a
+// broken fixture fails loudly instead of sending "" into a uuid parameter (22P02).
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function requireUuid(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !UUID_RE.test(value)) {
+    throw new Error(`missing_fixture_uuid: ${label}`);
+  }
+  return value;
+}
+
 describe.skipIf(!enabled)('2G6D disputes (requires live Supabase)', () => {
   let dc: SupabaseClient; let dcmp: SupabaseClient; let dsup: SupabaseClient; let dAdmin: SupabaseClient;
   let orderId: string; let e1: string; let e2: string; let payerId: string; let supId3: string;
@@ -4251,7 +4262,10 @@ describe.skipIf(!enabled)('2G6D disputes (requires live Supabase)', () => {
       if ((await dcmp.rpc('submit_companion_attendance', { p_booking: bks.data![i].id, p_outcome: 'took_place', p_explanation: null })).error) throw new Error('attend');
     }
     const es = await dAdmin.from('companion_earnings').select('id, payment_order_id, payer_charge_minor').in('booking_id', bks.data!.map((b) => b.id)).order('created_at');
-    e1 = es.data![0].id as string; e2 = es.data![1].id as string; orderId = es.data![0].payment_order_id as string;
+    if (es.error) throw new Error(`earnings: ${es.error.message}`);
+    if ((es.data ?? []).length < 2) throw new Error('earnings: expected two occurrence earnings');
+    e1 = requireUuid(es.data![0].id, 'e1'); e2 = requireUuid(es.data![1].id, 'e2');
+    orderId = requireUuid(es.data![0].payment_order_id, 'orderId');
     charge1 = es.data![0].payer_charge_minor as number; charge2 = es.data![1].payer_charge_minor as number;
     const total = (await dAdmin.from('payment_orders').select('total_minor').eq('id', orderId).single()).data!.total_minor as number;
     if ((await dAdmin.from('payment_orders').update({ credit_applied_minor: 0, card_amount_minor: total, stripe_payment_intent_id: `pi_disp_${suffix}` }).eq('id', orderId)).error) throw new Error('order pi');
@@ -4261,6 +4275,19 @@ describe.skipIf(!enabled)('2G6D disputes (requires live Supabase)', () => {
     if ((await dAdmin.from('connected_accounts').upsert({ account_id: compAcct, companion_profile_id: companionId, stripe_account_id: `acct_disp_${suffix}`, details_submitted: true, charges_enabled: true, payouts_enabled: true, transfers_capability: 'active', default_currency: 'gbp' }, { onConflict: 'account_id' })).error) throw new Error('connect');
     if ((await dsup.rpc('ensure_current_account')).error) throw new Error('ensure');
     if ((await dAdmin.from('support_admins').upsert({ account_id: supId3 }, { onConflict: 'account_id', ignoreDuplicates: true })).error) throw new Error('support');
+
+    // Create the shared dp1 fixture HERE (not inside an `it`) so a filtered run
+    // (e.g. `-t "2G6E-A"`, which skips the 2G6D `it` that used to set dp1Uuid)
+    // still has a real, mapped hosted dispute. record_dispute_upsert is idempotent,
+    // so the 2G6D test re-issuing the same event is a safe duplicate delivery.
+    const dp1Up = await dAdmin.rpc('record_dispute_upsert', {
+      p_stripe_dispute_id: `dp_main_${suffix}`, p_payment_intent: `pi_disp_${suffix}`, p_charge: null,
+      p_amount: 1_000_000, p_currency: 'GBP', p_reason: 'fraudulent', p_provider_status: 'needs_response', p_evidence_due: null,
+    });
+    if (dp1Up.error) throw new Error(`dp_main upsert: ${dp1Up.error.message}`);
+    const dp1Row = await disputes(`dp_main_${suffix}`);
+    if (dp1Row.error) throw new Error(`dp_main lookup: ${dp1Row.error.message}`);
+    dp1Uuid = requireUuid(dp1Row.data?.[0]?.id, 'dp1Uuid');
   }, 120_000);
 
   afterAll(async () => {
@@ -4298,7 +4325,7 @@ describe.skipIf(!enabled)('2G6D disputes (requires live Supabase)', () => {
     expect((await upsert(id, `pi_disp_${suffix}`, 'needs_response')).error).toBeNull(); // duplicate delivery
     const d = await disputes(id);
     expect(d.data).toHaveLength(1); // exactly one record
-    dp1Uuid = d.data![0].id as string;
+    dp1Uuid = requireUuid(d.data![0].id, 'dp1Uuid'); // already created in beforeAll; same id
     expect(d.data![0].internal_state).toBe('open');
     expect(d.data![0].payment_order_id).toBe(orderId);
     expect((await dAdmin.from('payment_orders').select('status').eq('id', orderId).single()).data!.status).toBe('disputed');
