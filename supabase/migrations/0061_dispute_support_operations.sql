@@ -1,5 +1,5 @@
 -- ============================================================
--- 2G6E-A — dispute support operations & manual evidence workflow (migration 0059)
+-- 2G6E-A — dispute support operations & manual evidence workflow (migration 0061)
 --
 -- Additive to the immutable 2G6D schema (0056/0057/0058). Nothing here changes
 -- existing dispute financial behaviour: no evidence is submitted to Stripe, no

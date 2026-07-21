@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const ROOT = join(__dirname, '..', '..', '..');
-const M = readFileSync(join(ROOT, 'supabase', 'migrations', '0059_dispute_support_operations.sql'), 'utf-8');
+const M = readFileSync(join(ROOT, 'supabase', 'migrations', '0061_dispute_support_operations.sql'), 'utf-8');
 function fn(name: string): string {
   const s = M.indexOf(`create or replace function ${name}`);
   if (s < 0) throw new Error(`function not found: ${name}`);
