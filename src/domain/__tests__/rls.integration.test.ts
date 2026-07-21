@@ -5037,4 +5037,72 @@ describe.skipIf(!enabled)('2G6E-B dispute deadline alerts (requires live Supabas
     expect((await bc.from('dispute_deadline_alerts').select('id')).data ?? []).toHaveLength(0);
     expect((await bc.from('dispute_deadline_alerts').insert({ dispute_id: du, threshold: 'warn_7d', urgency_snapshot: 'due_soon', dedupe_key: `forge-${suffix}` })).error).not.toBeNull();
   });
+
+  it('multi-recipient pool fan-out gives each support admin their own alert (no silent suppression)', async () => {
+    // A second support admin joins the pool.
+    const bsup2 = await signedInClient(`rls-bsup2-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    const bsup2Id = (await bsup2.auth.getUser()).data.user!.id;
+    if ((await bsup2.rpc('ensure_current_account')).error) throw new Error('ensure bsup2');
+    if ((await bAdmin.from('support_admins').upsert({ account_id: bsup2Id }, { onConflict: 'account_id', ignoreDuplicates: true })).error) throw new Error('support2');
+    try {
+      const du = await mkDispute('fan', 24 * 5); // unassigned due_soon → pool fan-out
+      expect((await recheck(`dpb_fan_${suffix}`)).error).toBeNull();
+      const a = await alertsOf(du);
+      const warn7Recipients = a.filter((x) => x.threshold === 'warn_7d').map((x) => x.recipient_account_id);
+      // BOTH admins each received their own warn_7d row (recipient in the dedupe key).
+      expect(warn7Recipients).toContain(bsupId);
+      expect(warn7Recipients).toContain(bsup2Id);
+      // Each admin has their own notification.
+      const notifRecipients = ((await bAdmin.from('notifications').select('user_id').eq('dispute_id', du)).data ?? []).map((n) => n.user_id);
+      expect(notifRecipients).toContain(bsupId);
+      expect(notifRecipients).toContain(bsup2Id);
+    } finally {
+      await bAdmin.from('support_admins').delete().eq('account_id', bsup2Id);
+    }
+  });
+
+  it('an owner who is also in the pool is not double-notified at critical', async () => {
+    const du = await mkDispute('nodup', 12); // critical
+    expect((await bsup.rpc('support_claim_dispute', { p_dispute: du })).error).toBeNull();
+    expect((await recheck(`dpb_nodup_${suffix}`)).error).toBeNull();
+    const a = await alertsOf(du);
+    // Exactly one warn_24h row targeting the owner — the pool loop skips the owner.
+    expect(a.filter((x) => x.threshold === 'warn_24h' && x.recipient_account_id === bsupId)).toHaveLength(1);
+  });
+
+  it('a dispute reopened to needs_response after evidence alerts again; a bare deadline change re-alerts', async () => {
+    // Suppressed: evidence recorded + provider no longer needs a response.
+    const du = await mkDispute('reopen', 48, 'under_review');
+    expect((await bsup.rpc('support_record_manual_evidence', {
+      p_dispute: du, p_provider_reference: null, p_categories: [], p_packet_version: 1,
+      p_summary: 'submitted', p_internal_note: null, p_provider_status: 'under_review', p_idempotency: `b-re-${suffix}` })).error).toBeNull();
+    expect((await recheck(`dpb_reopen_${suffix}`)).data.suppressed).toBe('evidence_recorded');
+    expect(await alertsOf(du)).toHaveLength(0);
+    // Reopened: provider now needs a NEW response → alerts resume despite old evidence.
+    await bAdmin.from('payment_disputes').update({ provider_status: 'needs_response' }).eq('id', du);
+    expect((await recheck(`dpb_reopen_${suffix}`)).error).toBeNull();
+    const afterReopen = (await alertsOf(du)).filter((x) => x.threshold === 'warn_3d').length;
+    expect(afterReopen).toBeGreaterThanOrEqual(1);
+    // A later deadline change (still needs_response) starts a fresh alert series.
+    await bAdmin.from('payment_disputes').update({ evidence_due_at: isoIn(50) }).eq('id', du);
+    expect((await recheck(`dpb_reopen_${suffix}`)).error).toBeNull();
+    expect((await alertsOf(du)).filter((x) => x.threshold === 'warn_3d').length).toBeGreaterThan(afterReopen);
+  });
+
+  it('alert rows record delivery_state=created (no external-delivery claim) and escalation_active is derived', async () => {
+    const du = await mkDispute('deriv', 12); // critical, unassigned → escalates
+    expect((await recheck(`dpb_deriv_${suffix}`)).error).toBeNull();
+    const a = await alertsOf(du);
+    // Ledger is created, not "delivered".
+    expect(((await bAdmin.from('dispute_deadline_alerts').select('delivery_state').eq('dispute_id', du)).data ?? []).every((x) => x.delivery_state === 'created')).toBe(true);
+    expect(a.some((x) => x.threshold === 'escalation')).toBe(true);
+    // While still critical + unresolved → escalation_active true.
+    const live = await bsup.rpc('support_dispute_alerts', { p_dispute: du });
+    expect(live.data.escalation_active).toBe(true);
+    // Once terminal, the historical flag persists but escalation_active is false.
+    expect((await bAdmin.rpc('record_dispute_closed', { p_stripe_dispute_id: `dpb_deriv_${suffix}`, p_provider_status: 'lost', p_outcome: 'lost' })).error).toBeNull();
+    const after = await bsup.rpc('support_dispute_alerts', { p_dispute: du });
+    expect(after.data.escalated).toBe(true); // historical fact retained
+    expect(after.data.escalation_active).toBe(false); // no longer actionable
+  });
 });

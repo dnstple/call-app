@@ -73,6 +73,7 @@ export interface DisputeQueueRow {
   assignedAccountId: string | null;
   assignedDisplayName: string | null;
   escalated: boolean;
+  escalationActive: boolean;
   hasManualEvidence: boolean;
   hasOpenAdjustment: boolean;
   latestAlertThreshold: AlertThreshold | null;
@@ -100,6 +101,7 @@ function toQueueRow(r: any): DisputeQueueRow {
     assignedAccountId: r.assigned_account_id ?? null,
     assignedDisplayName: r.assigned_display_name ?? null,
     escalated: Boolean(r.escalated),
+    escalationActive: Boolean(r.escalation_active),
     hasManualEvidence: Boolean(r.has_manual_evidence),
     hasOpenAdjustment: Boolean(r.has_open_adjustment),
     latestAlertThreshold: (r.latest_alert_threshold ?? null) as AlertThreshold | null,

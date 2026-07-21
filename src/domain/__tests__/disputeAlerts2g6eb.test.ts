@@ -128,19 +128,52 @@ describe('0062 security + grants', () => {
   });
 });
 
-describe('0062 scheduling is safe, hourly and unique', () => {
-  it('guards pg_cron availability, unschedules by stable name then reschedules hourly', () => {
-    expect(M).toContain("if not exists (select 1 from pg_available_extensions where name = 'pg_cron')");
-    expect(M).toContain("perform cron.unschedule(jobid) from cron.job where jobname = 'dispute-deadline-alerts'");
-    expect(M).toContain("perform cron.schedule('dispute-deadline-alerts', '0 * * * *',");
+describe('0062 scheduling is DEFERRED (never auto-activated on apply)', () => {
+  it('does not schedule the cron on apply; documents an hourly, unique, disable-able job', () => {
+    // Applying 0062 must NOT create/activate the job (no perform cron.schedule).
+    expect(M).not.toMatch(/perform\s+cron\.schedule/);
+    expect(M).not.toMatch(/^\s*create extension if not exists pg_cron;/m);
+    expect(M).toContain('NOT scheduled automatically');
+    // The exact hourly activation + inspect + disable commands are documented.
+    expect(M).toContain("cron.schedule('dispute-deadline-alerts', '0 * * * *'");
     expect(M).toContain('select app_private.process_dispute_deadline_alerts();');
+    expect(M).toContain("cron.unschedule(jobid) from cron.job where jobname = 'dispute-deadline-alerts'");
+    expect(M).toContain('cron.job_run_details');
   });
 });
 
-describe('0062 audit widening for system escalation events', () => {
-  it('allows a null (system) actor and adds the escalated action type additively', () => {
+describe('0062 processor limit is bounded (zero/negative/excessive safe)', () => {
+  it('caps the batch limit between 1 and 1000', () => {
+    expect(fn('app_private.process_dispute_deadline_alerts')).toContain('limit least(greatest(coalesce(p_limit, 200), 1), 1000)');
+  });
+});
+
+describe('0062 audit widening enforces the actor invariant', () => {
+  it('allows a null actor ONLY for system escalation; human actions require an actor', () => {
     expect(M).toContain('alter table public.dispute_support_audit alter column actor_account_id drop not null');
-    expect(M).toContain("'escalated'));");
+    expect(M).toContain("check (actor_account_id is not null or action_type = 'escalated')");
+    expect(M).toContain("'escalated'));"); // action type widened
+  });
+});
+
+describe('0062 delivery semantics do not over-claim external delivery', () => {
+  it('records in-app alerts as created (delivered/delivered_at reserved for an external channel)', () => {
+    expect(M).toContain("delivery_state text not null default 'created' check (delivery_state in ('created', 'pending', 'delivered', 'failed'))");
+    expect(M).not.toMatch(/'notification', 'delivered', v_now/);
+    expect(M).not.toMatch(/'escalation', 'delivered', v_now/);
+    expect(fn('app_private.process_one_dispute_alert')).toContain("'notification', 'created', null, v_dedupe");
+  });
+});
+
+describe('0062 escalation surfaces an actionable (not stale) signal', () => {
+  it('derives escalation_active from current urgency + non-resolved handling', () => {
+    expect(fn('public.support_dispute_queue')).toContain("'escalation_active'");
+    expect(fn('public.support_dispute_queue')).toContain("app_private.dispute_urgency(d.evidence_due_at, d.internal_state, v_now) in ('critical', 'overdue')");
+    expect(fn('public.support_dispute_queue')).toContain("coalesce(c.handling_status, 'unassigned') <> 'resolved'");
+    expect(fn('public.support_dispute_alerts')).toContain("'escalation_active'");
+    // Frontend badge uses the derived active signal, not the raw historical flag.
+    expect(QUEUE).toContain('r.escalationActive');
+    expect(DETAIL).toContain('alerts?.escalation_active');
   });
 });
 

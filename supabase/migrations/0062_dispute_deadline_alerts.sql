@@ -49,6 +49,13 @@ begin
       ('case_claimed', 'case_released', 'status_changed', 'note_added',
        'evidence_recorded', 'reconcile_attempted', 'adjustment_acknowledged', 'adjustment_resolved',
        'escalated'));
+  -- A null actor is permitted ONLY for the system-generated 'escalated' event.
+  -- Every human action (claim/release/note/evidence/reconcile/ack/resolve/status)
+  -- MUST record a non-null actor, so an actorless human action cannot be forged.
+  -- Existing 0061 rows all have a non-null actor, so this validates cleanly.
+  alter table public.dispute_support_audit drop constraint if exists dispute_support_audit_actor_present_check;
+  alter table public.dispute_support_audit add constraint dispute_support_audit_actor_present_check
+    check (actor_account_id is not null or action_type = 'escalated');
 end $$;
 
 -- ------------------------------------------------------------
@@ -63,7 +70,10 @@ create table if not exists public.dispute_deadline_alerts (
   evidence_due_at_snapshot timestamptz,
   recipient_account_id uuid references public.accounts(id),  -- null for pool escalation ledger rows
   channel text not null default 'notification' check (channel in ('notification', 'escalation')),
-  delivery_state text not null default 'delivered' check (delivery_state in ('pending', 'delivered', 'failed')),
+  -- 'created' = the in-app alert record + notification were created in this txn.
+  -- 'delivered'/'delivered_at' are reserved for a future EXTERNAL channel (email/
+  -- Slack) confirmation — we never claim external delivery at insert time.
+  delivery_state text not null default 'created' check (delivery_state in ('created', 'pending', 'delivered', 'failed')),
   delivered_at timestamptz,
   failure_reason text,
   -- Dedupe scope encodes dispute + threshold + DEADLINE SNAPSHOT + recipient, so a
@@ -172,7 +182,7 @@ begin
     v_dedupe := 'dda:' || p_dispute::text || ':' || v_threshold || ':' || v_epoch || ':owner:' || v_owner::text;
     insert into public.dispute_deadline_alerts
       (dispute_id, threshold, urgency_snapshot, evidence_due_at_snapshot, recipient_account_id, channel, delivery_state, delivered_at, dedupe_key)
-    values (p_dispute, v_threshold, v_urgency, v_d.evidence_due_at, v_owner, 'notification', 'delivered', v_now, v_dedupe)
+    values (p_dispute, v_threshold, v_urgency, v_d.evidence_due_at, v_owner, 'notification', 'created', null, v_dedupe)
     on conflict (dedupe_key) do nothing returning id into v_alert_id;
     if v_alert_id is not null then
       v_alerts := v_alerts + 1;
@@ -188,7 +198,7 @@ begin
       v_dedupe := 'dda:' || p_dispute::text || ':' || v_threshold || ':' || v_epoch || ':pool:' || r_admin.account_id::text;
       insert into public.dispute_deadline_alerts
         (dispute_id, threshold, urgency_snapshot, evidence_due_at_snapshot, recipient_account_id, channel, delivery_state, delivered_at, dedupe_key)
-      values (p_dispute, v_threshold, v_urgency, v_d.evidence_due_at, r_admin.account_id, 'notification', 'delivered', v_now, v_dedupe)
+      values (p_dispute, v_threshold, v_urgency, v_d.evidence_due_at, r_admin.account_id, 'notification', 'created', null, v_dedupe)
       on conflict (dedupe_key) do nothing returning id into v_alert_id;
       if v_alert_id is not null then
         v_alerts := v_alerts + 1;
@@ -204,7 +214,7 @@ begin
     v_dedupe := 'dda:' || p_dispute::text || ':escalation:' || v_epoch;
     insert into public.dispute_deadline_alerts
       (dispute_id, threshold, urgency_snapshot, evidence_due_at_snapshot, recipient_account_id, channel, delivery_state, delivered_at, dedupe_key)
-    values (p_dispute, 'escalation', v_urgency, v_d.evidence_due_at, null, 'escalation', 'delivered', v_now, v_dedupe)
+    values (p_dispute, 'escalation', v_urgency, v_d.evidence_due_at, null, 'escalation', 'created', null, v_dedupe)
     on conflict (dedupe_key) do nothing returning id into v_alert_id;
     if v_alert_id is not null then
       v_escalations := v_escalations + 1;
@@ -244,7 +254,8 @@ begin
     where d.internal_state not in ('won', 'lost', 'closed_warning')
       and d.evidence_due_at is not null
     order by d.evidence_due_at asc
-    limit greatest(coalesce(p_limit, 200), 1)
+    -- Bounded: null → 200; zero/negative → 1; excessive → capped at 1000.
+    limit least(greatest(coalesce(p_limit, 200), 1), 1000)
   loop
     v := app_private.process_one_dispute_alert(r.id);
     v_processed := v_processed + 1;
@@ -294,6 +305,10 @@ begin
       else extract(epoch from (v_d.evidence_due_at - v_now))::bigint end,
     'escalated', coalesce((select c.escalated from public.dispute_support_cases c where c.dispute_id = p_dispute), false),
     'escalated_at', (select c.escalated_at from public.dispute_support_cases c where c.dispute_id = p_dispute),
+    'escalation_active', (
+      coalesce((select c.escalated from public.dispute_support_cases c where c.dispute_id = p_dispute), false)
+      and app_private.dispute_urgency(v_d.evidence_due_at, v_d.internal_state, v_now) in ('critical', 'overdue')
+      and coalesce((select c.handling_status from public.dispute_support_cases c where c.dispute_id = p_dispute), 'unassigned') <> 'resolved'),
     'has_manual_evidence', exists (select 1 from public.dispute_manual_evidence me where me.dispute_id = p_dispute),
     'alerts', coalesce((select jsonb_agg(jsonb_build_object(
         'id', a.id, 'threshold', a.threshold, 'urgency_snapshot', a.urgency_snapshot,
@@ -335,6 +350,12 @@ begin
       'assigned_account_id', c.assigned_account_id,
       'assigned_display_name', (select a.display_name from public.accounts a where a.id = c.assigned_account_id),
       'escalated', coalesce(c.escalated, false),
+      -- Actionable escalation is DERIVED from current state so a historical
+      -- escalated=true never makes a resolved/closed/no-longer-urgent dispute
+      -- appear actionable.
+      'escalation_active', (coalesce(c.escalated, false)
+        and app_private.dispute_urgency(d.evidence_due_at, d.internal_state, v_now) in ('critical', 'overdue')
+        and coalesce(c.handling_status, 'unassigned') <> 'resolved'),
       'has_manual_evidence', exists (select 1 from public.dispute_manual_evidence me where me.dispute_id = d.id),
       'has_open_adjustment', exists (
         select 1 from public.settlement_adjustments sa where sa.dispute_id = d.id and sa.state <> 'resolved'),
@@ -349,24 +370,28 @@ revoke all on function public.support_dispute_queue() from public, anon;
 grant execute on function public.support_dispute_queue() to authenticated;
 
 -- ============================================================
--- 8. Hourly schedule (guarded + idempotent). The processor is pure SQL (no Stripe,
---    no Vault, no external call), so it is safe to schedule directly. Re-running
---    the migration never duplicates the job. If pg_cron is unavailable, the exact
---    manual activation command is printed instead.
+-- 8. Scheduling is DEFERRED — applying this migration must NOT begin processing
+--    existing hosted disputes. The processor and schema are created here, but the
+--    hourly job is NOT scheduled automatically. Activate it ONLY after focused
+--    hosted tests pass, actionable disputes are reviewed, support recipients are
+--    verified, and a manual dry run is completed.
+--
+--    ACTIVATE (hourly, idempotent — safe to re-run, never duplicates the job):
+--      create extension if not exists pg_cron;
+--      select cron.unschedule(jobid) from cron.job where jobname = 'dispute-deadline-alerts';
+--      select cron.schedule('dispute-deadline-alerts', '0 * * * *',
+--        $$select app_private.process_dispute_deadline_alerts();$$);
+--
+--    MANUAL DRY RUN (no schedule needed):  select app_private.process_dispute_deadline_alerts();
+--    INSPECT:   select jobid, schedule, active from cron.job where jobname = 'dispute-deadline-alerts';
+--               select status, return_message, start_time from cron.job_run_details
+--                 where jobid = (select jobid from cron.job where jobname = 'dispute-deadline-alerts')
+--                 order by start_time desc limit 10;
+--    DISABLE:   select cron.unschedule(jobid) from cron.job where jobname = 'dispute-deadline-alerts';
 -- ============================================================
 do $$
 begin
-  if not exists (select 1 from pg_available_extensions where name = 'pg_cron') then
-    raise notice 'pg_cron unavailable — schedule hourly: select app_private.process_dispute_deadline_alerts();';
-    return;
-  end if;
-  create extension if not exists pg_cron;
-  perform cron.unschedule(jobid) from cron.job where jobname = 'dispute-deadline-alerts';
-  perform cron.schedule('dispute-deadline-alerts', '0 * * * *',
-    $cron$select app_private.process_dispute_deadline_alerts();$cron$);
-  raise notice 'Scheduled dispute-deadline-alerts hourly via pg_cron.';
-exception when others then
-  raise notice 'dispute-deadline-alerts scheduling skipped (%). Invoke app_private.process_dispute_deadline_alerts() hourly.', sqlerrm;
+  raise notice 'dispute-deadline-alerts NOT scheduled automatically. Activate via cron.schedule() only after hosted validation + dry run.';
 end $$;
 
 select pg_notify('pgrst', 'reload schema');

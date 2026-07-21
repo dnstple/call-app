@@ -147,7 +147,7 @@ export default function InternalDisputes() {
                     <span className="rounded-full bg-stone-50 px-2 py-0.5 text-xs text-stone-500">Stripe: {r.providerStatus}</span>
                   )}
                   <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${u.cls}`}>{u.label}</span>
-                  {r.escalated && (
+                  {r.escalationActive && (
                     <span className="rounded-full bg-red-600 px-2 py-0.5 text-xs font-medium text-white">Escalated</span>
                   )}
                   {r.isUnresolvedMapping && (

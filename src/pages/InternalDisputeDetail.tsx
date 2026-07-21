@@ -179,10 +179,13 @@ export default function InternalDisputeDetail() {
           <Field label="Urgency (server)" value={alerts ? (URGENCY_LABEL[alerts.urgency] ?? alerts.urgency) : '—'} />
           <Field label="Deadline" value={when(d.evidence_due_at)} />
           <Field label="Countdown" value={alerts ? countdown(alerts.seconds_remaining) : '—'} />
-          {alerts?.escalated && (
+          {alerts?.escalation_active && (
             <p className="mt-2 rounded bg-red-50 px-2 py-1 text-xs font-medium text-red-700">
-              Escalated for immediate review{alerts.escalated_at ? ` · ${when(alerts.escalated_at)}` : ''}.
+              Actively escalated for immediate review{alerts.escalated_at ? ` · ${when(alerts.escalated_at)}` : ''}.
             </p>
+          )}
+          {alerts?.escalated && !alerts?.escalation_active && (
+            <p className="mt-2 text-xs text-stone-400">Previously escalated (no longer actionable).</p>
           )}
           <p className="mt-2 text-xs text-stone-500">
             Urgency is computed server-side from the Stripe deadline. Evidence must be prepared and submitted <strong>manually</strong> in Stripe — this tool never submits it.
