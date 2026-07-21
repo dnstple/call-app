@@ -49,7 +49,10 @@ export async function amISupport(): Promise<boolean> {
 
 export type HandlingStatus =
   | 'unassigned' | 'in_review' | 'evidence_prepared' | 'evidence_submitted' | 'waiting_provider' | 'resolved';
-export type QueueUrgency = 'overdue' | 'urgent' | 'normal' | 'none' | 'closed';
+// Server-derived 7-state urgency (0062). The browser NEVER classifies urgency.
+export type QueueUrgency =
+  | 'no_deadline' | 'normal' | 'due_soon' | 'urgent' | 'critical' | 'overdue' | 'closed';
+export type AlertThreshold = 'warn_7d' | 'warn_3d' | 'warn_24h' | 'overdue' | 'escalation';
 
 export interface DisputeQueueRow {
   id: string;
@@ -60,6 +63,7 @@ export interface DisputeQueueRow {
   currency: string;
   reason: string | null;
   evidenceDueAt: string | null;
+  secondsRemaining: number | null;
   isUnresolvedMapping: boolean;
   fundsWithdrawn: boolean;
   fundsReinstated: boolean;
@@ -68,7 +72,10 @@ export interface DisputeQueueRow {
   handlingStatus: HandlingStatus;
   assignedAccountId: string | null;
   assignedDisplayName: string | null;
+  escalated: boolean;
+  hasManualEvidence: boolean;
   hasOpenAdjustment: boolean;
+  latestAlertThreshold: AlertThreshold | null;
   urgency: QueueUrgency;
 }
 
@@ -83,6 +90,7 @@ function toQueueRow(r: any): DisputeQueueRow {
     currency: r.currency ?? 'GBP',
     reason: r.reason ?? null,
     evidenceDueAt: r.evidence_due_at ?? null,
+    secondsRemaining: r.seconds_remaining ?? null,
     isUnresolvedMapping: Boolean(r.is_unresolved_mapping),
     fundsWithdrawn: Boolean(r.funds_withdrawn),
     fundsReinstated: Boolean(r.funds_reinstated),
@@ -91,9 +99,32 @@ function toQueueRow(r: any): DisputeQueueRow {
     handlingStatus: (r.handling_status ?? 'unassigned') as HandlingStatus,
     assignedAccountId: r.assigned_account_id ?? null,
     assignedDisplayName: r.assigned_display_name ?? null,
+    escalated: Boolean(r.escalated),
+    hasManualEvidence: Boolean(r.has_manual_evidence),
     hasOpenAdjustment: Boolean(r.has_open_adjustment),
-    urgency: (r.urgency ?? 'none') as QueueUrgency,
+    latestAlertThreshold: (r.latest_alert_threshold ?? null) as AlertThreshold | null,
+    urgency: (r.urgency ?? 'no_deadline') as QueueUrgency,
   };
+}
+
+/** The signed-in support account id (for "assigned to me" filtering). */
+export async function currentAccountId(): Promise<string | null> {
+  const { data } = await getSupabaseClient().auth.getUser();
+  return data.user?.id ?? null;
+}
+
+/** Alert + escalation history and current server urgency/countdown (0062). */
+export async function getDisputeAlerts(disputeId: string): Promise<any> {
+  const { data, error } = await db().rpc('support_dispute_alerts', { p_dispute: disputeId });
+  if (error) throw mapError(error);
+  return data;
+}
+
+/** Support "recheck now": re-run the alert logic for one dispute (provider-safe). */
+export async function recheckDisputeAlerts(disputeId: string): Promise<any> {
+  const { data, error } = await db().rpc('support_recheck_dispute_alerts', { p_dispute: disputeId });
+  if (error) throw mapError(error);
+  return data;
 }
 
 /** The internal dispute queue (support-gated). */

@@ -14,10 +14,22 @@ import { AlertTriangle, ArrowLeft, Loader2 } from 'lucide-react';
 import { ConfirmDialog, EmptyState, PageHeader } from '../components/ui';
 import { formatMinor } from '../repositories/availabilityRepository';
 import {
-  acknowledgeAdjustment, addNote, claimDispute, DisputeSupportError, getDisputeDetail,
-  getEvidencePacket, recordManualEvidence, releaseDispute, reconcileDispute, resolveAdjustment,
+  acknowledgeAdjustment, addNote, claimDispute, DisputeSupportError, getDisputeAlerts, getDisputeDetail,
+  getEvidencePacket, recheckDisputeAlerts, recordManualEvidence, releaseDispute, reconcileDispute, resolveAdjustment,
   setCaseStatus, type HandlingStatus,
 } from '../repositories/disputeSupportRepository';
+
+const URGENCY_LABEL: Record<string, string> = {
+  no_deadline: 'No deadline', normal: 'On track', due_soon: 'Due soon',
+  urgent: 'Urgent (<72h)', critical: 'Critical (<24h)', overdue: 'Overdue', closed: 'Closed',
+};
+function countdown(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined) return 'No deadline';
+  const abs = Math.abs(seconds);
+  const d = Math.floor(abs / 86400); const h = Math.floor((abs % 86400) / 3600); const m = Math.floor((abs % 3600) / 60);
+  const label = d > 0 ? `${d}d ${h}h` : `${h}h ${m}m`;
+  return seconds < 0 ? `${label} overdue` : `${label} remaining`;
+}
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -57,6 +69,7 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
 export default function InternalDisputeDetail() {
   const { disputeId = '' } = useParams();
   const [detail, setDetail] = useState<any | null>(null);
+  const [alerts, setAlerts] = useState<any | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null); // which operation is in flight
   const [opError, setOpError] = useState<string | null>(null);
@@ -73,8 +86,11 @@ export default function InternalDisputeDetail() {
   const load = useCallback(async () => {
     setLoadError(null);
     setDetail(null);
+    setAlerts(null);
     try {
-      setDetail(await getDisputeDetail(disputeId));
+      const [d, a] = await Promise.all([getDisputeDetail(disputeId), getDisputeAlerts(disputeId)]);
+      setDetail(d);
+      setAlerts(a);
     } catch (e) {
       setLoadError(e instanceof DisputeSupportError ? e.message : 'Could not load this dispute.');
     }
@@ -156,6 +172,40 @@ export default function InternalDisputeDetail() {
           <Field label="Closed" value={when(d.closed_at)} />
           {d.is_unresolved_mapping && (
             <p className="mt-2 rounded bg-purple-50 px-2 py-1 text-xs text-purple-700">Not yet mapped to a payment order.</p>
+          )}
+        </Section>
+
+        <Section title="Evidence deadline & alerts">
+          <Field label="Urgency (server)" value={alerts ? (URGENCY_LABEL[alerts.urgency] ?? alerts.urgency) : '—'} />
+          <Field label="Deadline" value={when(d.evidence_due_at)} />
+          <Field label="Countdown" value={alerts ? countdown(alerts.seconds_remaining) : '—'} />
+          {alerts?.escalated && (
+            <p className="mt-2 rounded bg-red-50 px-2 py-1 text-xs font-medium text-red-700">
+              Escalated for immediate review{alerts.escalated_at ? ` · ${when(alerts.escalated_at)}` : ''}.
+            </p>
+          )}
+          <p className="mt-2 text-xs text-stone-500">
+            Urgency is computed server-side from the Stripe deadline. Evidence must be prepared and submitted <strong>manually</strong> in Stripe — this tool never submits it.
+          </p>
+          <div className="mt-3 flex items-center gap-2">
+            <button
+              disabled={busy !== null}
+              onClick={() => void run('recheck', async () => { await recheckDisputeAlerts(disputeId); }, 'Alerts rechecked.')}
+              className="rounded-lg bg-stone-100 px-3 py-1.5 text-sm font-medium text-stone-700 disabled:opacity-50"
+            >
+              {busy === 'recheck' ? 'Rechecking…' : 'Recheck alerts now'}
+            </button>
+          </div>
+          {alerts?.alerts?.length > 0 ? (
+            <ul className="mt-3 space-y-1 text-xs text-stone-500">
+              {alerts.alerts.map((a: any) => (
+                <li key={a.id}>
+                  {when(a.created_at)} · <span className="font-medium text-stone-700">{a.threshold}</span> · {a.urgency_snapshot} · {a.channel} · {a.delivery_state}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-3 text-xs text-stone-400">No alerts yet.</p>
           )}
         </Section>
 

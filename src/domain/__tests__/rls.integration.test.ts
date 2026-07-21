@@ -4865,3 +4865,176 @@ describe.skipIf(!enabled)('2G6D disputes (requires live Supabase)', () => {
     expect((await dc.rpc('reconcile_dispute_closure', { p_stripe_dispute_id: id, p_provider_status: 'won', p_outcome: 'won' })).error).not.toBeNull();
   });
 });
+
+/* ============================================================
+ * 2G6E-B — dispute evidence-deadline alerts & escalation (live, fixture-scoped).
+ * Disputes are created unmapped (synthetic provider ids) with controlled
+ * evidence deadlines; alerts are driven via the support-gated recheck RPC. No
+ * order/earning fixtures, no global workers, no unrelated hosted rows touched.
+ * ============================================================ */
+describe.skipIf(!enabled)('2G6E-B dispute deadline alerts (requires live Supabase)', () => {
+  let bAdmin: SupabaseClient; let bsup: SupabaseClient; let bc: SupabaseClient;
+  let bsupId: string;
+  const made: string[] = []; // stripe_dispute_ids created here
+
+  const isoIn = (hours: number) => new Date(Date.now() + hours * 3_600_000).toISOString();
+  async function mkDispute(label: string, hoursFromNow: number, providerStatus = 'needs_response'): Promise<string> {
+    const sid = `dpb_${label}_${suffix}`;
+    const up = await bAdmin.rpc('record_dispute_upsert', {
+      p_stripe_dispute_id: sid, p_payment_intent: `pi_b_${label}_${suffix}`, p_charge: null,
+      p_amount: 500_000, p_currency: 'GBP', p_reason: 'fraudulent', p_provider_status: providerStatus,
+      p_evidence_due: isoIn(hoursFromNow),
+    });
+    if (up.error) throw new Error(`mkDispute ${label}: ${up.error.message}`);
+    made.push(sid);
+    const row = await bAdmin.from('payment_disputes').select('id').eq('stripe_dispute_id', sid).single();
+    return requireUuid(row.data?.id, `dpb_${label}`);
+  }
+  const alertsOf = async (uuid: string) =>
+    (await bAdmin.from('dispute_deadline_alerts').select('id, threshold, channel, recipient_account_id').eq('dispute_id', uuid)).data ?? [];
+  const recheck = (sid: string) => bsup.rpc('support_recheck_dispute_alerts', { p_dispute: sid });
+
+  beforeAll(async () => {
+    bAdmin = adminClient();
+    bsup = await signedInClient(`rls-bsup-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    bc = await signedInClient(`rls-bc-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    bsupId = (await bsup.auth.getUser()).data.user!.id;
+    if ((await bsup.rpc('ensure_current_account')).error) throw new Error('ensure bsup');
+    if ((await bc.rpc('ensure_current_account')).error) throw new Error('ensure bc');
+    if ((await bAdmin.from('support_admins').upsert({ account_id: bsupId }, { onConflict: 'account_id', ignoreDuplicates: true })).error) throw new Error('support admin');
+  }, 120_000);
+
+  afterAll(async () => {
+    const dids = ((await bAdmin.from('payment_disputes').select('id').like('stripe_dispute_id', `dpb_%${suffix}`)).data ?? []).map((d) => d.id as string);
+    if (dids.length) {
+      await bAdmin.from('dispute_deadline_alerts').delete().in('dispute_id', dids);
+      await bAdmin.from('notifications').delete().in('dispute_id', dids);
+      await bAdmin.from('dispute_support_audit').delete().in('dispute_id', dids);
+      await bAdmin.from('dispute_support_cases').delete().in('dispute_id', dids);
+    }
+    await bAdmin.from('payment_disputes').delete().like('stripe_dispute_id', `dpb_%${suffix}`);
+    await bAdmin.from('support_admins').delete().eq('account_id', bsupId);
+  });
+
+  it('more than 7 days out produces no threshold alert', async () => {
+    const du = await mkDispute('far', 24 * 10); // ~10 days → normal
+    const res = await recheck(`dpb_far_${suffix}`);
+    expect(res.error).toBeNull();
+    expect(res.data.urgency).toBe('normal');
+    expect(await alertsOf(du)).toHaveLength(0);
+  });
+
+  it('crossing 7 days creates exactly one warning; re-running is deduped', async () => {
+    const du = await mkDispute('d7', 24 * 5); // ~5 days → due_soon → warn_7d
+    expect((await recheck(`dpb_d7_${suffix}`)).error).toBeNull();
+    let a = await alertsOf(du);
+    const warn7 = a.filter((x) => x.threshold === 'warn_7d');
+    expect(warn7.length).toBeGreaterThanOrEqual(1);
+    const before = a.length;
+    // Re-run: no duplicates.
+    expect((await recheck(`dpb_d7_${suffix}`)).error).toBeNull();
+    a = await alertsOf(du);
+    expect(a.length).toBe(before);
+    // A support notification was delivered for this dispute.
+    expect(((await bAdmin.from('notifications').select('id').eq('dispute_id', du)).data ?? []).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('crossing 3 days creates the warn_3d alert only', async () => {
+    const du = await mkDispute('d3', 48); // 48h → urgent → warn_3d
+    expect((await recheck(`dpb_d3_${suffix}`)).error).toBeNull();
+    const a = await alertsOf(du);
+    expect(a.some((x) => x.threshold === 'warn_3d')).toBe(true);
+    expect(a.some((x) => x.threshold === 'warn_7d')).toBe(false);
+  });
+
+  it('crossing 24h creates the critical alert and escalates an unassigned dispute exactly once', async () => {
+    const du = await mkDispute('crit', 12); // 12h → critical
+    expect((await recheck(`dpb_crit_${suffix}`)).error).toBeNull();
+    const a = await alertsOf(du);
+    expect(a.some((x) => x.threshold === 'warn_24h')).toBe(true);
+    expect(a.some((x) => x.threshold === 'escalation' && x.channel === 'escalation')).toBe(true);
+    // Case escalated + exactly one 'escalated' audit event.
+    expect((await bAdmin.from('dispute_support_cases').select('escalated').eq('dispute_id', du).single()).data!.escalated).toBe(true);
+    const auditOnce = async () => (await bAdmin.from('dispute_support_audit').select('id').eq('dispute_id', du).eq('action_type', 'escalated')).data ?? [];
+    expect(await auditOnce()).toHaveLength(1);
+    // Re-run: no duplicate escalation / audit (ledger-gated).
+    expect((await recheck(`dpb_crit_${suffix}`)).error).toBeNull();
+    expect((await alertsOf(du)).filter((x) => x.threshold === 'escalation')).toHaveLength(1);
+    expect(await auditOnce()).toHaveLength(1);
+  });
+
+  it('a passed deadline creates one overdue escalation', async () => {
+    const du = await mkDispute('over', -3); // 3h ago → overdue
+    expect((await recheck(`dpb_over_${suffix}`)).error).toBeNull();
+    const a = await alertsOf(du);
+    expect(a.some((x) => x.threshold === 'overdue')).toBe(true);
+    expect(a.filter((x) => x.threshold === 'escalation')).toHaveLength(1);
+  });
+
+  it('terminal disputes produce no alerts', async () => {
+    const du = await mkDispute('term', 12); // critical...
+    expect((await bAdmin.rpc('record_dispute_closed', { p_stripe_dispute_id: `dpb_term_${suffix}`, p_provider_status: 'won', p_outcome: 'won' })).error).toBeNull();
+    const res = await recheck(`dpb_term_${suffix}`);
+    expect(res.data.urgency).toBe('closed');
+    expect(await alertsOf(du)).toHaveLength(0);
+  });
+
+  it('a manual submission suppresses alerts unless the provider still needs a response', async () => {
+    // Provider no longer needs a response + evidence recorded → suppressed.
+    const du = await mkDispute('supp', 48, 'under_review');
+    expect((await bsup.rpc('support_record_manual_evidence', {
+      p_dispute: du, p_provider_reference: null, p_categories: [], p_packet_version: 1,
+      p_summary: 'submitted', p_internal_note: null, p_provider_status: 'under_review', p_idempotency: `b-ev-${suffix}` })).error).toBeNull();
+    const res = await recheck(`dpb_supp_${suffix}`);
+    expect(res.data.suppressed).toBe('evidence_recorded');
+    expect(await alertsOf(du)).toHaveLength(0);
+    // But a needs_response dispute with evidence still alerts.
+    const du2 = await mkDispute('suppnr', 48, 'needs_response');
+    expect((await bsup.rpc('support_record_manual_evidence', {
+      p_dispute: du2, p_provider_reference: null, p_categories: [], p_packet_version: 1,
+      p_summary: 'submitted', p_internal_note: null, p_provider_status: 'needs_response', p_idempotency: `b-ev2-${suffix}` })).error).toBeNull();
+    expect((await recheck(`dpb_suppnr_${suffix}`)).error).toBeNull();
+    expect((await alertsOf(du2)).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('a materially changed deadline snapshot creates a fresh alert', async () => {
+    const du = await mkDispute('chg', 48); // urgent → warn_3d
+    expect((await recheck(`dpb_chg_${suffix}`)).error).toBeNull();
+    const first = (await alertsOf(du)).filter((x) => x.threshold === 'warn_3d').length;
+    // Move the deadline (still urgent) — new snapshot → new dedupe → new alert.
+    await bAdmin.from('payment_disputes').update({ evidence_due_at: isoIn(50) }).eq('id', du);
+    expect((await recheck(`dpb_chg_${suffix}`)).error).toBeNull();
+    expect((await alertsOf(du)).filter((x) => x.threshold === 'warn_3d').length).toBeGreaterThan(first);
+  });
+
+  it('an assigned dispute alerts its owner and does NOT escalate', async () => {
+    const du = await mkDispute('own', 12); // critical
+    expect((await bsup.rpc('support_claim_dispute', { p_dispute: du })).error).toBeNull();
+    expect((await recheck(`dpb_own_${suffix}`)).error).toBeNull();
+    const a = await alertsOf(du);
+    expect(a.some((x) => x.threshold === 'warn_24h' && x.recipient_account_id === bsupId)).toBe(true);
+    expect(a.some((x) => x.threshold === 'escalation')).toBe(false); // owner present → no escalation
+  });
+
+  it('concurrent recheck calls create at most one alert per threshold', async () => {
+    const du = await mkDispute('conc', 12); // critical
+    const [r1, r2] = await Promise.all([recheck(`dpb_conc_${suffix}`), recheck(`dpb_conc_${suffix}`)]);
+    expect(r1.error).toBeNull();
+    expect(r2.error).toBeNull();
+    const a = await alertsOf(du);
+    expect(a.filter((x) => x.threshold === 'warn_24h')).toHaveLength(a.filter((x) => x.threshold === 'warn_24h' && x.recipient_account_id === bsupId).length); // no dup per recipient
+    expect(a.filter((x) => x.threshold === 'escalation')).toHaveLength(1);
+  });
+
+  it('normal users and anonymous callers cannot read alerts, recheck, or write the ledger; the processor is not exposed', async () => {
+    const du = await mkDispute('sec', 12);
+    expect((await bc.rpc('support_dispute_alerts', { p_dispute: du })).error).not.toBeNull();
+    expect((await bc.rpc('support_recheck_dispute_alerts', { p_dispute: du })).error).not.toBeNull();
+    expect((await client().rpc('support_dispute_alerts', { p_dispute: du })).error).not.toBeNull();
+    // The low-level processor is app_private → not PostgREST-exposed to any client.
+    expect((await bc.rpc('process_dispute_deadline_alerts', { p_limit: 10 })).error).not.toBeNull();
+    // Direct table reads/writes are denied (RLS, no policy).
+    expect((await bc.from('dispute_deadline_alerts').select('id')).data ?? []).toHaveLength(0);
+    expect((await bc.from('dispute_deadline_alerts').insert({ dispute_id: du, threshold: 'warn_7d', urgency_snapshot: 'due_soon', dedupe_key: `forge-${suffix}` })).error).not.toBeNull();
+  });
+});
