@@ -2744,6 +2744,13 @@ describe.skipIf(!enabled)('2G4E internal issue queue (requires live Supabase)', 
     expect((await admin.from('support_admins').insert({ account_id: supId })).error).toBeNull();
   }, 120_000);
 
+  // ALWAYS revoke the temporary support-admin membership (runs even if a test
+  // fails midway), so the fixture support account is never left in the hosted
+  // public.support_admins pool between runs.
+  afterAll(async () => {
+    if (supId) await admin.from('support_admins').delete().eq('account_id', supId);
+  });
+
   /* ---------------- reader access (1–11) ---------------- */
   it('1+2+3+4. am_i_support is true only for support; coordinator/companion/anon get false', async () => {
     expect((await sup.rpc('am_i_support')).data).toBe(true);
@@ -4553,10 +4560,15 @@ describe.skipIf(!enabled)('2G6D disputes (requires live Supabase)', () => {
     const sup2Id = (await dsup2.auth.getUser()).data.user!.id;
     if ((await dsup2.rpc('ensure_current_account')).error) throw new Error('ensure2');
     if ((await dAdmin.from('support_admins').upsert({ account_id: sup2Id }, { onConflict: 'account_id', ignoreDuplicates: true })).error) throw new Error('support2');
-    expect((await dsup.rpc('support_claim_dispute', { p_dispute: du })).error).toBeNull();
-    expect((await dsup2.rpc('support_claim_dispute', { p_dispute: du })).error).not.toBeNull(); // already_claimed
-    expect((await dsup2.rpc('support_release_dispute', { p_dispute: du })).error).not.toBeNull(); // not_owner
-    await dAdmin.from('support_admins').delete().eq('account_id', sup2Id);
+    try {
+      expect((await dsup.rpc('support_claim_dispute', { p_dispute: du })).error).toBeNull();
+      expect((await dsup2.rpc('support_claim_dispute', { p_dispute: du })).error).not.toBeNull(); // already_claimed
+      expect((await dsup2.rpc('support_release_dispute', { p_dispute: du })).error).not.toBeNull(); // not_owner
+    } finally {
+      // Always revoke the second temporary support-admin membership, even if an
+      // assertion above fails midway.
+      await dAdmin.from('support_admins').delete().eq('account_id', sup2Id);
+    }
   });
 
   it('2G6E-A: notes are append-only, support-only and private; forging is denied', async () => {
