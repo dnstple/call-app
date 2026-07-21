@@ -5029,14 +5029,48 @@ describe.skipIf(!enabled)('2G6E-B dispute deadline alerts (requires live Supabas
     expect(a.some((x) => x.threshold === 'escalation')).toBe(false); // owner present → no escalation
   });
 
-  it('concurrent recheck calls create at most one alert per threshold', async () => {
-    const d = await mkDispute('conc', 12); // critical
+  it('concurrent rechecks create one critical alert per intended recipient and one escalation', async () => {
+    // Unassigned critical → the whole support pool receives warn_24h (fan-out),
+    // plus exactly one escalation. Two concurrent rechecks must NOT duplicate any
+    // per-recipient row. The count equals the current pool size (not hardcoded).
+    const d = await mkDispute('conc', 12); // critical, unassigned
     const [r1, r2] = await Promise.all([recheck(d.id), recheck(d.id)]);
     expect(r1.error).toBeNull();
     expect(r2.error).toBeNull();
-    const a = await alertsOf(d.id);
-    expect(a.filter((x) => x.threshold === 'warn_24h')).toHaveLength(a.filter((x) => x.threshold === 'warn_24h' && x.recipient_account_id === bsupId).length); // no dup per recipient
-    expect(a.filter((x) => x.threshold === 'escalation')).toHaveLength(1);
+
+    const rowsOf = async () =>
+      (await bAdmin.from('dispute_deadline_alerts').select('threshold, recipient_account_id, dedupe_key').eq('dispute_id', d.id)).data ?? [];
+    const rows = await rowsOf();
+    const warnings = rows.filter((x) => x.threshold === 'warn_24h');
+    expect(warnings.length).toBeGreaterThan(0);
+    // Every warn_24h row targets a support recipient; one row per recipient; unique keys.
+    const recipients = warnings.map((x) => x.recipient_account_id);
+    expect(recipients.every((rid) => rid !== null)).toBe(true);
+    expect(new Set(recipients).size).toBe(warnings.length);
+    expect(new Set(warnings.map((x) => x.dedupe_key)).size).toBe(warnings.length);
+    // Recipients are exactly the active support-admin pool — no ordinary account.
+    const pool = new Set(((await bAdmin.from('support_admins').select('account_id')).data ?? []).map((x) => x.account_id as string));
+    expect(recipients.every((rid) => pool.has(rid as string))).toBe(true);
+    expect(recipients).toContain(bsupId);
+    // Exactly one escalation row + exactly one escalation audit event.
+    expect(rows.filter((x) => x.threshold === 'escalation')).toHaveLength(1);
+    expect(((await bAdmin.from('dispute_support_audit').select('id').eq('dispute_id', d.id).eq('action_type', 'escalated')).data ?? [])).toHaveLength(1);
+    // Each intended recipient has exactly one warn_24h notification (no duplicate).
+    const notifs = ((await bAdmin.from('notifications').select('user_id, dedupe_key').eq('dispute_id', d.id)).data ?? []);
+    for (const recipient of new Set(recipients)) {
+      expect(warnings.filter((x) => x.recipient_account_id === recipient)).toHaveLength(1);
+      expect(notifs.filter((n) => n.user_id === recipient).length).toBeGreaterThanOrEqual(1);
+    }
+
+    // Re-running again does not increase any per-recipient count.
+    expect((await recheck(d.id)).error).toBeNull();
+    const rows2 = await rowsOf();
+    const warnings2 = rows2.filter((x) => x.threshold === 'warn_24h');
+    expect(warnings2).toHaveLength(warnings.length);
+    for (const recipient of new Set(recipients)) {
+      expect(warnings2.filter((x) => x.recipient_account_id === recipient)).toHaveLength(1);
+    }
+    expect(rows2.filter((x) => x.threshold === 'escalation')).toHaveLength(1);
   });
 
   it('normal users and anonymous callers cannot read alerts, recheck, or write the ledger; the processor is not exposed', async () => {
