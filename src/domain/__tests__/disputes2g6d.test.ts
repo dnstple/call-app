@@ -13,7 +13,13 @@ const ROOT = join(__dirname, '..', '..', '..');
 const M = readFileSync(join(ROOT, 'supabase', 'migrations', '0056_payment_disputes.sql'), 'utf-8');
 const M57 = readFileSync(join(ROOT, 'supabase', 'migrations', '0057_payment_disputes_hosted_fixes.sql'), 'utf-8');
 const M58 = readFileSync(join(ROOT, 'supabase', 'migrations', '0058_payment_dispute_reconciliation_fix.sql'), 'utf-8');
+const M59 = readFileSync(join(ROOT, 'supabase', 'migrations', '0059_dispute_fund_event_ordering.sql'), 'utf-8');
 const HOOK = readFileSync(join(ROOT, 'supabase', 'functions', 'stripe-webhook', 'index.ts'), 'utf-8');
+function fn59(name: string): string {
+  const s = M59.indexOf(`create or replace function ${name}`);
+  if (s < 0) throw new Error(`0059 fn not found: ${name}`);
+  return M59.slice(s, M59.indexOf('\n$$;', s));
+}
 function fn(name: string): string {
   const s = M.indexOf(`create or replace function ${name}`);
   return M.slice(s, M.indexOf('\n$$;', s));
@@ -274,5 +280,73 @@ describe('0058 reconciliation fix (additive; supersedes reconcile only)', () => 
   it('stays service-role only', () => {
     expect(M58).toContain('revoke all on function public.reconcile_unresolved_dispute(text, text, text) from public, anon, authenticated');
     expect(M58).toContain('grant execute on function public.reconcile_unresolved_dispute(text, text, text) to service_role');
+  });
+});
+
+describe('0059 out-of-order dispute fund events (final 2G6D correction)', () => {
+  it('is additive: redefine-only, no table/index/row mutation', () => {
+    expect(M59).not.toMatch(/create\s+table/i);
+    expect(M59).not.toMatch(/alter\s+table/i);
+    expect(M59).not.toMatch(/create\s+(unique\s+)?index/i);
+    expect(M59).not.toMatch(/\bdelete\s+from\b/i);
+    expect(M59).not.toMatch(/\btruncate\b/i);
+    expect(M59).toContain("select pg_notify('pgrst', 'reload schema')");
+  });
+
+  it('DB backstop: fund RPCs raise a RETRYABLE error instead of silently succeeding when the dispute is absent', () => {
+    const fw = fn59('public.record_dispute_funds_withdrawn');
+    const fr = fn59('public.record_dispute_funds_reinstated');
+    // The 0056/0057 silent `if v_d.id is null then return;` is gone.
+    expect(fw).not.toMatch(/if v_d\.id is null then return;/);
+    expect(fr).not.toMatch(/if v_d\.id is null then return;/);
+    expect(fw).toContain("raise exception 'dispute_absent_retryable: funds_withdrawn %'");
+    expect(fr).toContain("raise exception 'dispute_absent_retryable: funds_reinstated %'");
+    // Withdrawal idempotency + exposure guards preserved.
+    expect(fw).toContain('on conflict (dispute_id, companion_earning_id) where dispute_id is not null do nothing');
+    expect(fw).toContain('if not v_transferred then continue; end if;');
+    // Reinstatement still resolves (never deletes) and releases holds.
+    expect(fr).toContain("set state = 'resolved'");
+    expect(fr).not.toContain('delete from public.settlement_adjustments');
+    expect(fr).toContain("set hold_state = 'released'");
+  });
+
+  it('both fund RPCs stay service-role only', () => {
+    for (const n of ['record_dispute_funds_withdrawn(text)', 'record_dispute_funds_reinstated(text)']) {
+      expect(M59).toContain(`revoke all on function public.${n} from public, anon, authenticated`);
+      expect(M59).toContain(`grant execute on function public.${n} to service_role`);
+    }
+  });
+
+  it('recovery RPC repairs a lost fund event using provider identifiers only, service-role gated', () => {
+    const rc = fn59('public.reconcile_dispute_fund_event');
+    expect(M59).toContain('reconcile_dispute_fund_event(\n  p_stripe_dispute_id text,\n  p_kind text,\n  p_payment_intent text default null,\n  p_charge text default null\n)');
+    // No client-supplied order / earning / monetary allocation.
+    expect(rc).not.toMatch(/p_order|p_earning|p_allocated|p_amount|p_remedy/);
+    // Kind is constrained to the two fund movements.
+    expect(rc).toContain("if p_kind not in ('funds_withdrawn', 'funds_reinstated')");
+    // Maps (if needed) via the trusted provider-identifier reconcile, then applies
+    // the movement through the normal trusted RPC.
+    expect(rc).toContain('perform public.reconcile_unresolved_dispute(p_stripe_dispute_id, p_payment_intent, p_charge)');
+    expect(rc).toContain('perform public.record_dispute_funds_withdrawn(p_stripe_dispute_id)');
+    expect(rc).toContain('perform public.record_dispute_funds_reinstated(p_stripe_dispute_id)');
+    // Service-role only.
+    expect(M59).toContain('revoke all on function public.reconcile_dispute_fund_event(text, text, text, text) from public, anon, authenticated');
+    expect(M59).toContain('grant execute on function public.reconcile_dispute_fund_event(text, text, text, text) to service_role');
+  });
+
+  it('webhook ensures the dispute exists (full event object) BEFORE recording any fund movement', () => {
+    // A reusable upsert payload built from the full dispute event object.
+    expect(HOOK).toContain('function disputeUpsertArgs(d: Stripe.Dispute)');
+    // funds_withdrawn / funds_reinstated upsert first, then call the fund RPC.
+    const fw = HOOK.slice(HOOK.indexOf("case 'charge.dispute.funds_withdrawn'"), HOOK.indexOf("case 'charge.dispute.funds_reinstated'"));
+    expect(fw).toContain("admin.rpc('record_dispute_upsert', disputeUpsertArgs(d))");
+    expect(fw).toContain("admin.rpc('record_dispute_funds_withdrawn'");
+    expect(fw.indexOf('record_dispute_upsert')).toBeLessThan(fw.indexOf('record_dispute_funds_withdrawn'));
+    const fr = HOOK.slice(HOOK.indexOf("case 'charge.dispute.funds_reinstated'"), HOOK.indexOf('default:'));
+    expect(fr).toContain("admin.rpc('record_dispute_upsert', disputeUpsertArgs(d))");
+    expect(fr.indexOf('record_dispute_upsert')).toBeLessThan(fr.indexOf('record_dispute_funds_reinstated'));
+    // Event is only marked processed AFTER the switch; RPC errors still 500.
+    expect(HOOK).toContain("status: 'processed', processed_at: new Date().toISOString(), result,");
+    expect(HOOK).toContain('status: ok ? 200 : 500');
   });
 });

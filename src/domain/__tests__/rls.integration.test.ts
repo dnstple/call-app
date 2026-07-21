@@ -4264,7 +4264,16 @@ describe.skipIf(!enabled)('2G6D disputes (requires live Supabase)', () => {
   }, 120_000);
 
   afterAll(async () => {
-    // Dependency order: adjustments → refunds → dispute-earnings → disputes → orders.
+    // The 0059 ordering tests create several disputes (dp_*) whose adjustments are
+    // referenced by dispute-earnings; null the links, then delete adjustments by
+    // dispute so the disputes themselves become deletable. Dependency order:
+    // dispute-earnings.exposure link → adjustments → refunds → dispute-earnings →
+    // disputes → orders.
+    const dids = ((await dAdmin.from('payment_disputes').select('id').like('stripe_dispute_id', `dp_%${suffix}`)).data ?? []).map((d) => d.id as string);
+    if (dids.length) {
+      await dAdmin.from('payment_dispute_earnings').update({ exposure_adjustment_id: null }).in('dispute_id', dids);
+      await dAdmin.from('settlement_adjustments').delete().in('dispute_id', dids);
+    }
     await dAdmin.from('settlement_adjustments').delete().eq('companion_earning_id', e1);
     for (const o of made) {
       await dAdmin.from('payment_refunds').delete().eq('payment_order_id', o);
@@ -4444,5 +4453,97 @@ describe.skipIf(!enabled)('2G6D disputes (requires live Supabase)', () => {
     expect((await dc.from('payment_disputes').insert({ stripe_dispute_id: `forge-${suffix}` })).error).not.toBeNull();
     expect((await dsup.rpc('support_dispute_overview')).error).toBeNull();
     expect((await dc.rpc('support_dispute_overview')).error).not.toBeNull();
+  });
+
+  // ---- 0059 out-of-order dispute fund events (final 2G6D correction) ----
+
+  const orderPi = async () =>
+    (await dAdmin.from('payment_orders').select('stripe_payment_intent_id').eq('id', orderId).single()).data!.stripe_payment_intent_id as string;
+
+  it('0059: a funds_withdrawn arriving BEFORE created is not lost (backstop + upsert-first)', async () => {
+    const id = `dp_ooo_fw_${suffix}`;
+    const pi = await orderPi();
+    // DB backstop: the fund RPC before the dispute exists RAISES (retryable) — it
+    // must NEVER silently succeed and it creates nothing.
+    expect((await dAdmin.rpc('record_dispute_funds_withdrawn', { p_stripe_dispute_id: id })).error).not.toBeNull();
+    expect((await disputes(id)).data ?? []).toHaveLength(0);
+    // Webhook order: upsert from the full event object FIRST, then the fund RPC.
+    expect((await upsert(id, pi, 'needs_response')).error).toBeNull();
+    expect((await dAdmin.rpc('record_dispute_funds_withdrawn', { p_stripe_dispute_id: id })).error).toBeNull();
+    const d = (await disputes(id)).data![0];
+    expect(d.funds_withdrawn).toBe(true);
+    expect(d.payment_order_id).toBe(orderId);
+    const adj = await dAdmin.from('settlement_adjustments').select('companion_earning_id').eq('dispute_id', d.id).eq('adjustment_type', 'dispute_after_transfer');
+    expect(adj.data).toHaveLength(1); // one adjustment for the transferred earning
+    expect(adj.data![0].companion_earning_id).toBe(e1);
+    // Duplicate fund event remains idempotent (still exactly one adjustment).
+    expect((await dAdmin.rpc('record_dispute_funds_withdrawn', { p_stripe_dispute_id: id })).error).toBeNull();
+    expect((await dAdmin.from('settlement_adjustments').select('id').eq('dispute_id', d.id)).data!).toHaveLength(1);
+  });
+
+  it('0059: concurrent created + funds_withdrawn (funds first) yields the correct final state', async () => {
+    const id = `dp_conc_${suffix}`;
+    const pi = await orderPi();
+    // Two deliveries race: the created path and the funds_withdrawn path (which
+    // itself upserts then withdraws). Fire concurrently on separate connections.
+    const createdPath = upsert(id, pi, 'needs_response');
+    const fundsPath = (async () => {
+      await upsert(id, pi, 'needs_response');
+      return dAdmin.rpc('record_dispute_funds_withdrawn', { p_stripe_dispute_id: id });
+    })();
+    const [c, f] = await Promise.all([createdPath, fundsPath]);
+    expect(c.error).toBeNull();
+    expect(f.error).toBeNull();
+    const rows = (await disputes(id)).data!;
+    expect(rows).toHaveLength(1); // exactly one dispute row
+    const d = rows[0];
+    expect(d.payment_order_id).toBe(orderId); // mapped
+    expect(d.funds_withdrawn).toBe(true);
+    expect((await dAdmin.from('payment_dispute_earnings').select('id').eq('dispute_id', d.id)).data!).toHaveLength(2); // deterministic allocations once
+    expect((await dAdmin.from('settlement_adjustments').select('id').eq('dispute_id', d.id)).data!).toHaveLength(1); // at most one adjustment per dispute/earning
+  });
+
+  it('0059: an already-processed lost fund event can be safely reconciled (service-role only)', async () => {
+    const id = `dp_recover_${suffix}`;
+    const pi = await orderPi();
+    // Dispute created + mapped, but funds_withdrawn stayed false (the genuine
+    // du_1Tvh3... symptom: the fund event was marked processed with no effect).
+    expect((await upsert(id, pi, 'needs_response')).error).toBeNull();
+    const before = (await disputes(id)).data![0];
+    expect(before.funds_withdrawn).toBe(false);
+    expect(before.payment_order_id).toBe(orderId);
+    // Recovery via provider identifiers ONLY repairs the flag + exposure.
+    const rec = await dAdmin.rpc('reconcile_dispute_fund_event', { p_stripe_dispute_id: id, p_kind: 'funds_withdrawn', p_payment_intent: pi, p_charge: null });
+    expect(rec.error).toBeNull();
+    expect(rec.data.funds_withdrawn).toBe(true);
+    expect(rec.data.payment_order_id).toBe(orderId);
+    expect((await dAdmin.from('settlement_adjustments').select('id').eq('dispute_id', before.id)).data!).toHaveLength(1);
+    // Idempotent: a second recovery does not duplicate the adjustment.
+    const rec2 = await dAdmin.rpc('reconcile_dispute_fund_event', { p_stripe_dispute_id: id, p_kind: 'funds_withdrawn', p_payment_intent: pi, p_charge: null });
+    expect(rec2.error).toBeNull();
+    expect((await dAdmin.from('settlement_adjustments').select('id').eq('dispute_id', before.id)).data!).toHaveLength(1);
+    // Clients cannot invoke recovery.
+    expect((await dc.rpc('reconcile_dispute_fund_event', { p_stripe_dispute_id: id, p_kind: 'funds_withdrawn', p_payment_intent: pi, p_charge: null })).error).not.toBeNull();
+  });
+
+  it('0059: funds_reinstated is independently order-safe (before closed) and backstopped', async () => {
+    const id = `dp_ooo_ri_${suffix}`;
+    const pi = await orderPi();
+    // Backstop: reinstated before ANY dispute exists RAISES (retryable), no silent success.
+    expect((await dAdmin.rpc('record_dispute_funds_reinstated', { p_stripe_dispute_id: `dp_ri_ghost_${suffix}` })).error).not.toBeNull();
+    // created + withdrawn so there is exposure to reinstate.
+    expect((await upsert(id, pi, 'needs_response')).error).toBeNull();
+    expect((await dAdmin.rpc('record_dispute_funds_withdrawn', { p_stripe_dispute_id: id })).error).toBeNull();
+    // reinstated arrives BEFORE closed: webhook path upserts then reinstates.
+    expect((await upsert(id, pi, 'needs_response')).error).toBeNull();
+    expect((await dAdmin.rpc('record_dispute_funds_reinstated', { p_stripe_dispute_id: id })).error).toBeNull();
+    const d = (await disputes(id)).data![0];
+    expect(d.funds_reinstated).toBe(true);
+    // Exposure RESOLVED (never deleted); holds released.
+    expect((await dAdmin.from('settlement_adjustments').select('state').eq('dispute_id', d.id)).data!.every((a) => a.state === 'resolved')).toBe(true);
+    expect((await dAdmin.from('payment_dispute_earnings').select('hold_state').eq('dispute_id', d.id)).data!.every((h) => h.hold_state === 'released')).toBe(true);
+    // A later close still applies and does not move a terminal outcome backwards.
+    expect((await dAdmin.rpc('record_dispute_closed', { p_stripe_dispute_id: id, p_provider_status: 'won', p_outcome: 'won' })).error).toBeNull();
+    expect((await disputes(id)).data![0].internal_state).toBe('won');
   });
 });

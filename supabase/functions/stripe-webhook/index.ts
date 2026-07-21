@@ -16,6 +16,24 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import Stripe from 'npm:stripe@17';
 
+// Every dispute event object carries the full identifiers + provider fields, so
+// the SAME upsert payload can be built for created/updated/closed/funds_* events.
+// This is what lets a fund-movement event ensure the dispute exists (and is
+// mapped) before it records the fund flag, independent of event ordering.
+function disputeUpsertArgs(d: Stripe.Dispute) {
+  const due = d.evidence_details?.due_by;
+  return {
+    p_stripe_dispute_id: d.id,
+    p_payment_intent: typeof d.payment_intent === 'string' ? d.payment_intent : null,
+    p_charge: typeof d.charge === 'string' ? d.charge : null,
+    p_amount: d.amount ?? 0,
+    p_currency: (d.currency ?? 'gbp').toUpperCase(),
+    p_reason: d.reason ?? null,
+    p_provider_status: d.status ?? null,
+    p_evidence_due: due ? new Date(due * 1000).toISOString() : null,
+  };
+}
+
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return new Response('method_not_allowed', { status: 405 });
 
@@ -262,26 +280,27 @@ Deno.serve(async (req) => {
       // 2G6D — dispute reconciliation. Provider dispute status and actual fund
       // movement are RECORDED separately; no evidence is submitted, no transfer
       // reversed. RPC errors throw → the event is left retriable (500).
+      //
+      // EVERY dispute event object (created, updated, funds_withdrawn,
+      // funds_reinstated) carries the full identifiers + provider fields, so the
+      // fund-movement handlers FIRST upsert the dispute (idempotently creating and
+      // mapping it if the created event has not landed yet) and only THEN record
+      // the fund flag. This makes each fund event independently processable and
+      // removes the out-of-order defect where a funds event that arrived before
+      // created was silently marked processed with no effect.
       case 'charge.dispute.created':
       case 'charge.dispute.updated': {
         const d = event.data.object as Stripe.Dispute;
-        const due = d.evidence_details?.due_by;
-        const r = await admin.rpc('record_dispute_upsert', {
-          p_stripe_dispute_id: d.id,
-          p_payment_intent: typeof d.payment_intent === 'string' ? d.payment_intent : null,
-          p_charge: typeof d.charge === 'string' ? d.charge : null,
-          p_amount: d.amount ?? 0,
-          p_currency: (d.currency ?? 'gbp').toUpperCase(),
-          p_reason: d.reason ?? null,
-          p_provider_status: d.status ?? null,
-          p_evidence_due: due ? new Date(due * 1000).toISOString() : null,
-        });
-        if (r.error) throw new Error(`dispute_upsert:${r.error.message}`);
+        const up = await admin.rpc('record_dispute_upsert', disputeUpsertArgs(d));
+        if (up.error) throw new Error(`dispute_upsert:${up.error.message}`);
         result = 'dispute_recorded';
         break;
       }
       case 'charge.dispute.closed': {
         const d = event.data.object as Stripe.Dispute;
+        // Ensure the dispute exists/maps even if closed raced ahead of created.
+        const up = await admin.rpc('record_dispute_upsert', disputeUpsertArgs(d));
+        if (up.error) throw new Error(`dispute_upsert:${up.error.message}`);
         const r = await admin.rpc('record_dispute_closed', {
           p_stripe_dispute_id: d.id, p_provider_status: d.status ?? null, p_outcome: d.status ?? null,
         });
@@ -291,6 +310,10 @@ Deno.serve(async (req) => {
       }
       case 'charge.dispute.funds_withdrawn': {
         const d = event.data.object as Stripe.Dispute;
+        // 1) ensure the dispute row exists + is mapped from the full event object;
+        const up = await admin.rpc('record_dispute_upsert', disputeUpsertArgs(d));
+        if (up.error) throw new Error(`dispute_upsert:${up.error.message}`);
+        // 2) then record the fund movement (backstopped: raises if row absent).
         const r = await admin.rpc('record_dispute_funds_withdrawn', { p_stripe_dispute_id: d.id });
         if (r.error) throw new Error(`dispute_funds_withdrawn:${r.error.message}`);
         result = 'dispute_funds_withdrawn';
@@ -298,6 +321,8 @@ Deno.serve(async (req) => {
       }
       case 'charge.dispute.funds_reinstated': {
         const d = event.data.object as Stripe.Dispute;
+        const up = await admin.rpc('record_dispute_upsert', disputeUpsertArgs(d));
+        if (up.error) throw new Error(`dispute_upsert:${up.error.message}`);
         const r = await admin.rpc('record_dispute_funds_reinstated', { p_stripe_dispute_id: d.id });
         if (r.error) throw new Error(`dispute_funds_reinstated:${r.error.message}`);
         result = 'dispute_funds_reinstated';
