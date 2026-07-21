@@ -21,8 +21,9 @@ import {
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+// 'unassigned' is reached only by releasing a case (which clears the owner), so
+// it is not an option in the status dropdown; the server rejects it too.
 const HANDLING: { value: HandlingStatus; label: string }[] = [
-  { value: 'unassigned', label: 'Unassigned' },
   { value: 'in_review', label: 'In review' },
   { value: 'evidence_prepared', label: 'Evidence prepared' },
   { value: 'evidence_submitted', label: 'Evidence submitted' },

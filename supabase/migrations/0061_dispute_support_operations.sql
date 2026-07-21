@@ -79,8 +79,12 @@ create table if not exists public.dispute_manual_evidence (
   summary text check (summary is null or char_length(summary) <= 2000),
   internal_note text check (internal_note is null or char_length(internal_note) <= 2000),
   provider_status_observed text,                 -- raw Stripe status seen at submission
-  idempotency_key text not null unique,
-  created_at timestamptz not null default now()
+  idempotency_key text not null,
+  created_at timestamptz not null default now(),
+  -- Idempotency is scoped PER DISPUTE: the same key under two different disputes
+  -- must never collide (a global unique key would let dispute B's call return
+  -- dispute A's row and create no record for B).
+  unique (dispute_id, idempotency_key)
 );
 create index if not exists dispute_manual_evidence_dispute_idx on public.dispute_manual_evidence (dispute_id, submitted_at);
 alter table public.dispute_manual_evidence enable row level security;
@@ -236,11 +240,32 @@ returns jsonb language plpgsql security definer set search_path = '' as $$
 declare v_case uuid; v_from text;
 begin
   if not app_private.is_support_admin() then raise exception 'not_found: status'; end if;
-  if p_status not in ('unassigned', 'in_review', 'evidence_prepared', 'evidence_submitted', 'waiting_provider', 'resolved') then
+  -- 'unassigned' is reached ONLY via release (which also clears the owner); a
+  -- manual set to 'unassigned' would leave an owner attached, so it is rejected.
+  if p_status not in ('in_review', 'evidence_prepared', 'evidence_submitted', 'waiting_provider', 'resolved') then
     raise exception 'invalid_status';
   end if;
   v_case := app_private.get_or_create_dispute_case(p_dispute);
   select handling_status into v_from from public.dispute_support_cases where id = v_case for update;
+
+  -- Defined transition model (a no-op same-status set is allowed and idempotent):
+  --   unassigned        -> in_review
+  --   in_review         -> evidence_prepared | waiting_provider | resolved
+  --   evidence_prepared -> evidence_submitted | waiting_provider | in_review | resolved
+  --   evidence_submitted-> waiting_provider | in_review | resolved
+  --   waiting_provider  -> evidence_submitted | in_review | resolved
+  --   resolved          -> in_review   (explicit reopen ONLY; never silent)
+  if v_from <> p_status and not (
+       (v_from = 'unassigned'         and p_status = 'in_review')
+    or (v_from = 'in_review'          and p_status in ('evidence_prepared', 'waiting_provider', 'resolved'))
+    or (v_from = 'evidence_prepared'  and p_status in ('evidence_submitted', 'waiting_provider', 'in_review', 'resolved'))
+    or (v_from = 'evidence_submitted' and p_status in ('waiting_provider', 'in_review', 'resolved'))
+    or (v_from = 'waiting_provider'   and p_status in ('evidence_submitted', 'in_review', 'resolved'))
+    or (v_from = 'resolved'           and p_status = 'in_review')
+  ) then
+    raise exception 'invalid_transition';
+  end if;
+
   update public.dispute_support_cases
      set handling_status = p_status,
          resolved_at = case when p_status = 'resolved' then coalesce(resolved_at, now()) else resolved_at end,
@@ -386,10 +411,11 @@ begin
           coalesce(p_categories, '{}'), nullif(trim(coalesce(p_summary, '')), ''),
           nullif(trim(coalesce(p_internal_note, '')), ''), nullif(trim(coalesce(p_provider_status, '')), ''),
           p_idempotency)
-  on conflict (idempotency_key) do nothing
+  on conflict (dispute_id, idempotency_key) do nothing
   returning id into v_id;
   if v_id is null then
-    select id into v_id from public.dispute_manual_evidence where idempotency_key = p_idempotency;
+    select id into v_id from public.dispute_manual_evidence
+      where dispute_id = p_dispute and idempotency_key = p_idempotency;
     v_created := false;
   else
     v_case := app_private.get_or_create_dispute_case(p_dispute);

@@ -4491,9 +4491,16 @@ describe.skipIf(!enabled)('2G6D disputes (requires live Supabase)', () => {
     expect(det1.data.case.handling_status).toBe('in_review');
     // Repeating the claim by the current owner is an idempotent no-op.
     expect((await dsup.rpc('support_claim_dispute', { p_dispute: dp1Uuid })).error).toBeNull();
-    // Status transition through the allowed vocabulary; invalid rejected.
+    // Status transition through the allowed vocabulary; invalid value + invalid
+    // transition + release-only 'unassigned' target are all rejected.
     expect((await dsup.rpc('support_set_case_status', { p_dispute: dp1Uuid, p_status: 'evidence_prepared' })).error).toBeNull();
     expect((await dsup.rpc('support_set_case_status', { p_dispute: dp1Uuid, p_status: 'bogus' })).error).not.toBeNull();
+    expect((await dsup.rpc('support_set_case_status', { p_dispute: dp1Uuid, p_status: 'unassigned' })).error).not.toBeNull();
+    // Defined transition model: resolve, then a resolved case can only reopen to
+    // in_review — it can never silently jump back to another active state.
+    expect((await dsup.rpc('support_set_case_status', { p_dispute: dp1Uuid, p_status: 'resolved' })).error).toBeNull();
+    expect((await dsup.rpc('support_set_case_status', { p_dispute: dp1Uuid, p_status: 'waiting_provider' })).error).not.toBeNull();
+    expect((await dsup.rpc('support_set_case_status', { p_dispute: dp1Uuid, p_status: 'in_review' })).error).toBeNull(); // explicit reopen
     // Release restores unassigned; a claimed audit + status_changed audit exist.
     expect((await dsup.rpc('support_release_dispute', { p_dispute: dp1Uuid })).error).toBeNull();
     const det2 = await dsup.rpc('support_dispute_detail', { p_dispute: dp1Uuid });
@@ -4553,6 +4560,18 @@ describe.skipIf(!enabled)('2G6D disputes (requires live Supabase)', () => {
     expect(r2.data.id).toBe(r1.data.id);
     const det = await dsup.rpc('support_dispute_detail', { p_dispute: dp1Uuid });
     expect(det.data.manual_evidence.length).toBe(1);
+    // Idempotency is PER DISPUTE: the SAME key on a different dispute must create
+    // its own record (never return the first dispute's row).
+    const o = await synthOrder(700);
+    const pi2 = (await dAdmin.from('payment_orders').select('stripe_payment_intent_id').eq('id', o).single()).data!.stripe_payment_intent_id;
+    const otherId = `dp_evb_${suffix}`;
+    expect((await upsert(otherId, pi2, 'needs_response')).error).toBeNull();
+    const otherDu = (await disputes(otherId)).data![0].id as string;
+    const rOther = await dsup.rpc('support_record_manual_evidence', {
+      p_dispute: otherDu, p_provider_reference: null, p_categories: [], p_packet_version: 1,
+      p_summary: 'other dispute', p_internal_note: null, p_provider_status: null, p_idempotency: idem });
+    expect(rOther.data.created).toBe(true); // not deduped against the first dispute
+    expect(rOther.data.id).not.toBe(r1.data.id);
     // The provider dispute state is unchanged by recording a manual submission.
     const before = (await disputes(`dp_main_${suffix}`)).data![0];
     expect(before.internal_state).toBe(det.data.dispute.internal_state);

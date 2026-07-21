@@ -67,9 +67,14 @@ describe('0061 append-only tables with RLS and no client policies', () => {
       expect(M).not.toMatch(new RegExp(`delete\\s+from\\s+public\\.${t}`, 'i'));
     }
   });
-  it('manual evidence dedupes on an idempotency key', () => {
-    expect(M).toContain('idempotency_key text not null unique');
-    expect(fn('public.support_record_manual_evidence')).toContain('on conflict (idempotency_key) do nothing');
+  it('manual evidence dedupes on a PER-DISPUTE idempotency key (no cross-dispute collision)', () => {
+    // Scoped uniqueness: the same key under two disputes must not collide.
+    expect(M).toContain('idempotency_key text not null,');
+    expect(M).toContain('unique (dispute_id, idempotency_key)');
+    expect(M).not.toContain('idempotency_key text not null unique'); // not global
+    const rec = fn('public.support_record_manual_evidence');
+    expect(rec).toContain('on conflict (dispute_id, idempotency_key) do nothing');
+    expect(rec).toContain('where dispute_id = p_dispute and idempotency_key = p_idempotency');
   });
   it('the audit table constrains action types and records a server-derived actor', () => {
     expect(M).toContain('check (action_type in');
@@ -108,9 +113,14 @@ describe('0061 handling model — claim/release/status are single-winner and aud
     expect(rl).toContain("raise exception 'not_owner'");
     expect(rl).toContain("write_dispute_audit(p_dispute, v_case, 'case_released'");
   });
-  it('status change validates the vocabulary and audits transitions', () => {
+  it('status change validates the vocabulary, enforces a transition model, and audits transitions', () => {
     const st = fn('public.support_set_case_status');
     expect(st).toContain("raise exception 'invalid_status'");
+    expect(st).toContain("raise exception 'invalid_transition'"); // defined transition model enforced
+    // 'unassigned' is release-only — never a manual set target.
+    expect(st).toContain("if p_status not in ('in_review', 'evidence_prepared', 'evidence_submitted', 'waiting_provider', 'resolved')");
+    // resolved may only reopen to in_review (no silent resolved -> active).
+    expect(st).toContain("(v_from = 'resolved'           and p_status = 'in_review')");
     expect(st).toContain("write_dispute_audit(p_dispute, v_case, 'status_changed'");
   });
 });

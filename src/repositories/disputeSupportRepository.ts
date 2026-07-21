@@ -30,6 +30,7 @@ function mapError(e: unknown): DisputeSupportError {
   if (msg.includes('already_claimed')) return new DisputeSupportError('Another agent has already claimed this case.', 'validation');
   if (msg.includes('not_owner')) return new DisputeSupportError('You can only release a case you own.', 'validation');
   if (msg.includes('invalid_status')) return new DisputeSupportError('That handling status is not allowed.', 'validation');
+  if (msg.includes('invalid_transition')) return new DisputeSupportError('That is not a valid status change from the current state.', 'validation');
   if (msg.includes('empty_note')) return new DisputeSupportError('Write a note before saving.', 'validation');
   if (msg.includes('note_too_long')) return new DisputeSupportError('That note is too long.', 'validation');
   if (msg.includes('reason_required')) return new DisputeSupportError('A resolution reason is required.', 'validation');
