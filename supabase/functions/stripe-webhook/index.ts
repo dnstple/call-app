@@ -126,9 +126,13 @@ Deno.serve(async (req) => {
         const pi = event.data.object as Stripe.PaymentIntent;
         const orderId = pi.metadata?.payment_order_id;
         if (orderId) {
-          // Releases the credit reservation and frees the slot hold.
+          // Releases the credit reservation and frees the slot hold. For
+          // plan_period orders this routes through the single-authority state
+          // sync; a cancellation carries the distinct safe 'payment_cancelled'
+          // code so order + period always end in a consistent terminal state.
+          const outcome = event.type === 'payment_intent.canceled' ? 'payment_cancelled' : 'failed';
           await admin.rpc('finalize_paid_order', {
-            p_order: orderId, p_outcome: 'failed', p_intent: pi.id,
+            p_order: orderId, p_outcome: outcome, p_intent: pi.id,
           });
           result = 'order_failed';
         }
@@ -179,6 +183,72 @@ Deno.serve(async (req) => {
           });
         }
         result = 'account_synced';
+        break;
+      }
+      // 2G6B — Connect transfer reconciliation. Resolve the internal attempt via
+      // trusted metadata (transfer_attempt_id) or, as a fallback, the transfer
+      // id. Finalisation RPCs are idempotent, so duplicate/out-of-order events
+      // and the Edge Function's own finalisation never conflict.
+      case 'transfer.created':
+      case 'transfer.updated':
+      case 'transfer.reversed': {
+        const tr = event.data.object as Stripe.Transfer;
+        let attemptId = typeof tr.metadata?.transfer_attempt_id === 'string'
+          ? tr.metadata.transfer_attempt_id : null;
+        if (!attemptId) {
+          const found = await admin.rpc('attempt_id_for_transfer', { p_transfer_id: tr.id });
+          attemptId = (found.data as string | null) ?? null;
+        }
+        if (attemptId) {
+          const reversed = event.type === 'transfer.reversed' || (tr.amount_reversed ?? 0) > 0;
+          if (reversed) {
+            await admin.rpc('finalize_transfer_reversed', { p_attempt: attemptId, p_code: 'transfer_reversed' });
+            result = 'transfer_reversed';
+          } else {
+            // transfer.created/updated confirm the transfer exists → mark settled.
+            await admin.rpc('finalize_transfer_succeeded', {
+              p_attempt: attemptId, p_transfer_id: tr.id, p_created: tr.created ?? null,
+            });
+            result = 'transfer_reconciled';
+          }
+        } else {
+          result = 'transfer_unmatched';
+        }
+        break;
+      }
+      // 2G6C — refund reconciliation. Resolve the internal refund via trusted
+      // metadata (payment_refund_id) or the Stripe refund id; finalisers are
+      // idempotent, so duplicate/out-of-order events and the worker's own
+      // finalisation never conflict. Webhook amounts are NEVER used as money
+      // authority — only the internally-approved amount stands.
+      case 'refund.created':
+      case 'refund.updated': {
+        const rf = event.data.object as Stripe.Refund;
+        let refundId = typeof rf.metadata?.payment_refund_id === 'string'
+          ? rf.metadata.payment_refund_id : null;
+        if (!refundId) {
+          const found = await admin.rpc('refund_id_for_stripe', { p_stripe_refund_id: rf.id });
+          refundId = (found.data as string | null) ?? null;
+        }
+        if (refundId) {
+          if (rf.status === 'succeeded') {
+            await admin.rpc('finalize_refund_succeeded', {
+              p_refund: refundId, p_stripe_refund_id: rf.id,
+              p_charge_id: typeof rf.charge === 'string' ? rf.charge : null,
+            });
+            result = 'refund_reconciled';
+          } else if (rf.status === 'failed' || rf.status === 'canceled') {
+            await admin.rpc('finalize_refund_failed_permanent', {
+              p_refund: refundId, p_code: rf.failure_reason ?? 'refund_failed',
+              p_message: 'Refund rejected by the payment provider.',
+            });
+            result = 'refund_failed';
+          } else {
+            result = 'refund_pending';
+          }
+        } else {
+          result = 'refund_unmatched';
+        }
         break;
       }
       default:

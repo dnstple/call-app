@@ -9,6 +9,7 @@ import { SupabaseBookingRow } from './Conversations';
 import { isSupabaseConfigured } from '../supabase/client';
 import { CompanionPlanRequests, ConversationPlans } from '../components/PlanCards';
 import { useAppState } from '../state/store';
+import { useAccountRole } from '../state/managedMember';
 import {
   activeMember,
   currentUser,
@@ -62,6 +63,8 @@ function CompanionAvailabilitySnapshot() {
 export default function Home() {
   const state = useAppState();
   const me = currentUser(state);
+  // Authoritative role in Supabase mode (the mock `me` is not the real account).
+  const accountRole = useAccountRole();
   const navigate = useNavigate();
   const bookings = visibleBookings(state);
 
@@ -223,7 +226,7 @@ export default function Home() {
         )}
 
         {/* Companion: plan requests keep their dedicated decision cards. */}
-        {isSupabaseConfigured() && me.role === 'companion' && <CompanionPlanRequests />}
+        {isSupabaseConfigured() && accountRole === 'companion' && <CompanionPlanRequests />}
 
         {/* Next conversation hero */}
         {hero ? (

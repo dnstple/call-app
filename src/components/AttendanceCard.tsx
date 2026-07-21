@@ -41,7 +41,7 @@ export function earningStateLabel(state: string, outcome: string | null): string
   return 'Pending completion';
 }
 
-export function AttendanceCard({ bookingId, memberName }: { bookingId: string; memberName: string }) {
+export function AttendanceCard({ bookingId, memberName, onConfirmed }: { bookingId: string; memberName: string; onConfirmed?: () => void }) {
   const [state, setState] = useState<CompletionState | null>(null);
   const [choice, setChoice] = useState<Outcome | null>(null);
   const [explanation, setExplanation] = useState('');
@@ -104,6 +104,8 @@ export function AttendanceCard({ bookingId, memberName }: { bookingId: string; m
     });
     if (e) {
       setError(String(e.message ?? 'We couldn’t record that. Please try again.'));
+    } else {
+      onConfirmed?.(); // tell the page to refetch the booking → banner + list stay in sync
     }
     load(); // authoritative state, never optimistic
     setBusy(false);

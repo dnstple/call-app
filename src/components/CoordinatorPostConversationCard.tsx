@@ -18,13 +18,20 @@
  * separate in AttendanceCard.
  */
 import { ReviewCard } from './ReviewCard';
+import { ReportProblemCard } from './ReportProblemCard';
 
-export function CoordinatorPostConversationCard({ bookingId, memberName, companionName }: {
+export function CoordinatorPostConversationCard({ bookingId, memberName, companionName, onConfirmed }: {
   bookingId: string;
   memberName: string;
   companionName: string;
+  onConfirmed?: () => void;
 }) {
   return (
-    <ReviewCard bookingId={bookingId} memberName={memberName} companionName={companionName} />
+    <div className="col" style={{ gap: 12 }}>
+      <ReviewCard bookingId={bookingId} memberName={memberName} companionName={companionName} onConfirmed={onConfirmed} />
+      {/* Report a problem — self-gates on get_review_state (funded member side,
+          ended, no open issue) and reloads outcome/issue state on success. */}
+      <ReportProblemCard bookingId={bookingId} onReported={onConfirmed} />
+    </div>
   );
 }

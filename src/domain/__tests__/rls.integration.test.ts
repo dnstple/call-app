@@ -1377,6 +1377,10 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
     expect(created.data.weekly_price_minor).toBe(3000);
     expect(created.data.status).toBe('requested');
     expect(created.data.allowance_purchase_id).not.toBeNull();
+    // This block validates the LEGACY simulated engine (self-funds on accept).
+    // New plans are 'recurring' and never self-grant, so mark this one legacy.
+    expect((await adminClient().from('conversation_plans')
+      .update({ funding_mode: 'simulated' }).eq('id', planId)).error).toBeNull();
 
     // A second live plan for the same pair is refused.
     const duplicate = await e.rpc('create_conversation_plan', {
@@ -1506,6 +1510,9 @@ describe.skipIf(!enabled)('2D bookings RLS + concurrency (requires live Supabase
     });
     expect(created.error).toBeNull();
     const planId = created.data.id;
+    // Legacy simulated engine: this plan self-funds on accept + extend.
+    expect((await adminClient().from('conversation_plans')
+      .update({ funding_mode: 'simulated' }).eq('id', planId)).error).toBeNull();
     const accepted = await f.rpc('accept_plan', { p_plan: planId });
     expect(accepted.error).toBeNull();
 
@@ -2595,4 +2602,1588 @@ describe.skipIf(!enabled)('2G3 connect gate (requires live Supabase)', () => {
     // 16. acceptance now succeeds.
     expect((await y.rpc('accept_booking', { p_booking: booking.data!.id })).error).toBeNull();
   }, 120_000);
+});
+
+/* ============================================================
+ * 2G4E — internal issue-review queue + authoritative resolution (live).
+ *
+ * Genuine hosted acceptance evidence for /internal/issues and the four
+ * resolution outcomes. Fixtures are FUNDED through the real flow (credit-
+ * covered create_paid_request → succeeded order → booking), then a real
+ * open issue is reported; the earning is authoritative. Stripe itself is
+ * never called and NO transfer is ever created. Only rows this run authored
+ * are touched; run-scoped user cleanup cascades everything.
+ * ============================================================ */
+describe.skipIf(!enabled)('2G4E internal issue queue (requires live Supabase)', () => {
+  let sup: SupabaseClient;   // support/admin tester
+  let co: SupabaseClient;    // coordinator + managed member (payer/reporter)
+  let cmp: SupabaseClient;   // companion owner (earner)
+  let supId: string;
+  let coId: string;
+  let memberId: string;
+  let companionId: string;
+  let singleOfferId: string;
+  let slots: string[] = [];
+  let admin: SupabaseClient;
+  // Monotonic fixture counter → every fixture gets a UNIQUE historical window
+  // one day apart, far in the past, so windows can never overlap (exclusion
+  // constraint) regardless of test order or timing.
+  let fixtureSeq = 0;
+
+  /**
+   * Fund a booking through the NORMAL future flow (credit-covered
+   * create_paid_request → succeeded order → booking), then — service-role
+   * only, as a test fixture — move it to a unique historical window whose end
+   * is before now() so the genuine report_conversation_issue flow applies.
+   * report_conversation_issue requires only that the booking has ended and has
+   * a succeeded stripe_test order; no particular lifecycle status is needed
+   * (the paid-acceptance gate fires only on requested→confirmed), so the
+   * funded 'requested' booking is left as-is. Every admin step is error-checked
+   * so a partial failure throws immediately instead of leaving a future
+   * booking that could collide with the next fixture.
+   */
+  async function seedFundedIssue(description: string): Promise<{
+    bookingId: string; issueId: string; earningId: string;
+    netMinor: number; totalMinor: number;
+  }> {
+    const seq = fixtureSeq++;
+    const slot = slots[seq];
+    const created = await co.rpc('create_paid_request', {
+      p_member: memberId, p_companion: companionId, p_offer: singleOfferId,
+      p_starts_at: slot, p_idempotency: `2g4e-order-${suffix}-${seq}`,
+    });
+    if (created.error) throw new Error(`fund[${seq}]: ${created.error.message}`);
+    if (created.data.status !== 'succeeded') {
+      const fin = await admin.rpc('finalize_paid_order', {
+        p_order: created.data.order_id, p_outcome: 'succeeded', p_intent: null,
+      });
+      if (fin.error) throw new Error(`finalize[${seq}]: ${fin.error.message}`);
+    }
+    const booking = await admin.from('bookings').select('id, duration_minutes')
+      .eq('companion_profile_id', companionId).eq('starts_at', slot).maybeSingle();
+    if (booking.error || !booking.data) throw new Error(`find-booking[${seq}]: ${booking.error?.message ?? 'not found'}`);
+    const bookingId = booking.data.id as string;
+    const durationMs = (booking.data.duration_minutes as number) * 60_000;
+
+    // Unique, non-overlapping HISTORICAL window (one day apart, ~40+ days
+    // back). ends_at MUST equal starts_at + duration (booking CHECK), and end
+    // is comfortably before now() so the too_early guard is satisfied honestly.
+    const startMs = Date.now() - (40 + seq) * 86400_000;
+    const start = new Date(startMs).toISOString();
+    const end = new Date(startMs + durationMs).toISOString();
+    const moved = await admin.from('bookings')
+      .update({ starts_at: start, ends_at: end }).eq('id', bookingId).select('id');
+    if (moved.error || (moved.data ?? []).length !== 1) {
+      // Immediate cleanup so a half-built fixture cannot collide with the next.
+      try { await admin.from('bookings').delete().eq('id', bookingId); } catch { /* best-effort */ }
+      throw new Error(`time-travel[${seq}]: ${moved.error?.message ?? 'no row updated'}`);
+    }
+
+    // Coordinator reports a real issue → earning held + open issue.
+    const rep = await co.rpc('report_conversation_issue', {
+      p_booking: bookingId, p_category: 'other', p_description: description,
+    });
+    if (rep.error) throw new Error(`report[${seq}]: ${rep.error.message}`);
+    const issue = await admin.from('conversation_issues')
+      .select('id, earning_id').eq('booking_id', bookingId).eq('state', 'open').single();
+    const earning = await admin.from('companion_earnings')
+      .select('id, net_minor').eq('booking_id', bookingId).single();
+    const order = await admin.from('payment_orders')
+      .select('total_minor').eq('booking_id', bookingId).single();
+    return {
+      bookingId, issueId: issue.data!.id, earningId: issue.data!.earning_id,
+      netMinor: earning.data!.net_minor, totalMinor: order.data!.total_minor,
+    };
+  }
+
+  beforeAll(async () => {
+    admin = adminClient();
+    sup = await signedInClient(`rls-sup-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    co = await signedInClient(`rls-ico-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    cmp = await signedInClient(`rls-icmp-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    await sup.rpc('ensure_current_account');
+    supId = (await sup.auth.getUser()).data.user!.id;
+    coId = (await co.auth.getUser()).data.user!.id;
+
+    const c = await co.rpc('complete_coordinator_signup', {
+      p_first_name: 'IssueCoord', p_consent_confirmed: true, p_member_first_name: 'IssueMum',
+    });
+    expect(c.error).toBeNull();
+    memberId = (c.data as { member_profile_id: string }).member_profile_id;
+
+    const comp = await cmp.rpc('complete_companion_signup', {
+      p_first_name: 'IssueCompanion', p_date_of_birth: '1984-04-04',
+    });
+    expect(comp.error).toBeNull();
+    companionId = comp.data.id;
+    expect((await cmp.rpc('replace_companion_availability', {
+      p_profile: companionId, p_timezone: 'Europe/London',
+      p_rules: [1, 2, 3, 4, 5, 6, 7].map((day) => ({ day, start: '09:00', end: '18:00' })),
+    })).error).toBeNull();
+    const single = await cmp.from('conversation_offers').insert({
+      companion_profile_id: companionId, offer_type: 'single',
+      duration_minutes: 30, price_minor: 1400, supported_methods: ['in_app'],
+    }).select('id').single();
+    singleOfferId = single.data!.id;
+
+    // Plenty of credit so every fixture order is fully covered (no card).
+    expect((await admin.rpc('issue_account_credit', {
+      p_account: coId, p_amount: 100000, p_source_type: 'support_adjustment',
+      p_source: null, p_reason: '2g4e fixtures', p_idempotency: `2g4e-credit-${suffix}`,
+    })).error).toBeNull();
+
+    const s = await co.rpc('get_available_slots', {
+      p_companion: companionId, p_offer: singleOfferId,
+      p_from: new Date().toISOString(),
+      p_to: new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString(),
+    });
+    slots = ((s.data ?? []) as { slot_start: string }[]).map((r) => r.slot_start);
+    expect(slots.length).toBeGreaterThan(10);
+
+    // Grant support to the tester ONLY via the service role (never the browser).
+    expect((await admin.from('support_admins').insert({ account_id: supId })).error).toBeNull();
+  }, 120_000);
+
+  /* ---------------- reader access (1–11) ---------------- */
+  it('1+2+3+4. am_i_support is true only for support; coordinator/companion/anon get false', async () => {
+    expect((await sup.rpc('am_i_support')).data).toBe(true);
+    expect((await co.rpc('am_i_support')).data).toBe(false);
+    expect((await cmp.rpc('am_i_support')).data).toBe(false);
+    const anon = await client().rpc('am_i_support');
+    expect(anon.error !== null || anon.data === false).toBe(true);
+  });
+
+  it('5+6+7. queue readable by support only; non-support + anon denied', async () => {
+    const ok = await sup.rpc('get_internal_issue_queue', {});
+    expect(ok.error).toBeNull();
+    expect(Array.isArray(ok.data)).toBe(true);
+    expect((await co.rpc('get_internal_issue_queue', {})).error).not.toBeNull();
+    expect((await cmp.rpc('get_internal_issue_queue', {})).error).not.toBeNull();
+    expect((await client().rpc('get_internal_issue_queue', {})).error).not.toBeNull();
+  });
+
+  it('8+9+10+11+18. detail readable by support only; non-support, anon and id-substitution denied', async () => {
+    const seeded = await seedFundedIssue('Support-only complaint ALPHA');
+    const ok = await sup.rpc('get_internal_issue_detail', { p_issue: seeded.issueId });
+    expect(ok.error).toBeNull();
+    expect(ok.data.issue_id).toBe(seeded.issueId);
+    // Non-support cannot read internal detail — even for a real issue id.
+    expect((await co.rpc('get_internal_issue_detail', { p_issue: seeded.issueId })).error).not.toBeNull();
+    expect((await cmp.rpc('get_internal_issue_detail', { p_issue: seeded.issueId })).error).not.toBeNull();
+    expect((await client().rpc('get_internal_issue_detail', { p_issue: seeded.issueId })).error).not.toBeNull();
+  });
+
+  /* ---------------- privacy (12–17) ---------------- */
+  it('12+13+14+15+16+17. privacy: complaint text + notes are support-only; no secrets; queue omits description', async () => {
+    const seeded = await seedFundedIssue('PRIVATE-COMPLAINT-BRAVO');
+    const detail = (await sup.rpc('get_internal_issue_detail', { p_issue: seeded.issueId })).data;
+    // 12: support sees the private complaint statement.
+    expect(detail.description).toBe('PRIVATE-COMPLAINT-BRAVO');
+    // 17: no secrets / raw payloads / tokens anywhere in the payload.
+    const blob = JSON.stringify(detail);
+    expect(blob).not.toMatch(/sk_test|sk_live|whsec_|service_role|BEGIN [A-Z ]*PRIVATE KEY|participant_identity|private_feedback/i);
+    // 16: the queue list view never carries the complaint description.
+    const queue = (await sup.rpc('get_internal_issue_queue', {})).data as Record<string, unknown>[];
+    const row = queue.find((r) => r.issue_id === seeded.issueId)!;
+    expect(row).toBeTruthy();
+    expect(Object.values(row)).not.toContain('PRIVATE-COMPLAINT-BRAVO');
+    // 13+14: the companion cannot read the coordinator's complaint row.
+    expect((await cmp.from('conversation_issues').select('description').eq('id', seeded.issueId)).data ?? []).toHaveLength(0);
+    // 15: internal resolution audit is unreadable by both normal roles.
+    expect((await co.from('issue_resolutions').select('note')).data ?? []).toHaveLength(0);
+    expect((await cmp.from('issue_resolutions').select('note')).data ?? []).toHaveLength(0);
+  });
+
+  /* ---------------- mutation security (19–27) ---------------- */
+  it('19+20+21+22. resolve is support-only (coordinator/companion/anon refused)', async () => {
+    const seeded = await seedFundedIssue('Mutation guard CHARLIE');
+    expect((await co.rpc('resolve_conversation_issue', {
+      p_issue: seeded.issueId, p_outcome: 'companion_payable_full', p_note: 'x',
+      p_companion_minor: null, p_credit_minor: null, p_idempotency: `hack-co-${suffix}`,
+    })).error).not.toBeNull();
+    expect((await cmp.rpc('resolve_conversation_issue', {
+      p_issue: seeded.issueId, p_outcome: 'companion_payable_full', p_note: 'x',
+      p_companion_minor: null, p_credit_minor: null, p_idempotency: `hack-cmp-${suffix}`,
+    })).error).not.toBeNull();
+    expect((await client().rpc('resolve_conversation_issue', {
+      p_issue: seeded.issueId, p_outcome: 'companion_payable_full', p_note: 'x',
+      p_companion_minor: null, p_credit_minor: null, p_idempotency: `hack-anon-${suffix}`,
+    })).error).not.toBeNull();
+    // The issue is still open (nobody resolved it).
+    const still = await admin.from('conversation_issues').select('state').eq('id', seeded.issueId).single();
+    expect(still.data!.state).toBe('open');
+  });
+
+  it('23+24+25+26+27. normal users cannot forge issue/earning/resolution/credit/support rows', async () => {
+    const seeded = await seedFundedIssue('Direct-write guard DELTA');
+    // 23: cannot update the issue directly (no write policy).
+    expect((await co.from('conversation_issues').update({ state: 'resolved' }).eq('id', seeded.issueId).select()).data ?? []).toHaveLength(0);
+    // 24: cannot flip the earning to payable.
+    expect((await cmp.from('companion_earnings').update({ state: 'payable' }).eq('id', seeded.earningId).select()).data ?? []).toHaveLength(0);
+    // 25: cannot insert a resolution row.
+    expect((await co.from('issue_resolutions').insert({
+      issue_id: seeded.issueId, earning_id: seeded.earningId, resolver_account_id: coId,
+      outcome: 'companion_payable_full', note: 'forged', idempotency_key: `forge-res-${suffix}`,
+    })).error).not.toBeNull();
+    // 26: cannot insert an account-credit ledger entry.
+    expect((await co.from('credit_ledger').insert({
+      coordinator_account_id: coId, entry_type: 'credit', source_type: 'refund_resolution',
+      amount_minor: 1400, remaining_minor: 1400, reason: 'forged', idempotency_key: `forge-cred-${suffix}`,
+      expires_at: new Date().toISOString(),
+    })).error).not.toBeNull();
+    // 27: cannot self-grant support.
+    expect((await co.from('support_admins').insert({ account_id: coId })).error).not.toBeNull();
+    expect((await co.rpc('am_i_support')).data).toBe(false);
+  });
+
+  /* ---------------- resolution integrity (28–42) ---------------- */
+  it('28+29+30+31. full Companion payment: one resolution, payable once, no credit, no transfer', async () => {
+    const s = await seedFundedIssue('Full pay ECHO');
+    expect((await sup.rpc('resolve_conversation_issue', {
+      p_issue: s.issueId, p_outcome: 'companion_payable_full', p_note: 'Approved after review',
+      p_companion_minor: null, p_credit_minor: null, p_idempotency: `resolve-${s.issueId}`,
+    })).error).toBeNull();
+    const earning = await admin.from('companion_earnings').select('state, payable_at, net_minor, transfer_state').eq('id', s.earningId).single();
+    expect(earning.data!.state).toBe('payable');
+    expect(earning.data!.payable_at).not.toBeNull();
+    expect(earning.data!.net_minor).toBe(s.netMinor);
+    expect(earning.data!.transfer_state).not.toBe('transferred'); // 31: no transfer
+    const res = await admin.from('issue_resolutions').select('id, credit_amount_minor').eq('issue_id', s.issueId);
+    expect(res.data).toHaveLength(1);                              // 28: exactly one
+    expect(res.data![0].credit_amount_minor).toBe(0);             // 30: no credit
+    const credit = await admin.from('credit_ledger').select('id').eq('idempotency_key', `resolution-credit-${s.issueId}`);
+    expect(credit.data ?? []).toHaveLength(0);
+  });
+
+  it('32+33+34+40. full customer credit: one ledger entry, earning not payable, payable_at stays null, idempotent', async () => {
+    const s = await seedFundedIssue('Full credit FOXTROT');
+    const key = `resolve-${s.issueId}`;
+    expect((await sup.rpc('resolve_conversation_issue', {
+      p_issue: s.issueId, p_outcome: 'customer_credit_full', p_note: 'Full credit',
+      p_companion_minor: null, p_credit_minor: null, p_idempotency: key,
+    })).error).toBeNull();
+    // Duplicate submission → no second effect.
+    await sup.rpc('resolve_conversation_issue', {
+      p_issue: s.issueId, p_outcome: 'customer_credit_full', p_note: 'Full credit',
+      p_companion_minor: null, p_credit_minor: null, p_idempotency: key,
+    });
+    const credit = await admin.from('credit_ledger').select('amount_minor, expires_at, issued_at')
+      .eq('idempotency_key', `resolution-credit-${s.issueId}`);
+    expect(credit.data).toHaveLength(1);                            // 32+34: exactly one
+    expect(credit.data![0].amount_minor).toBe(s.totalMinor);       // 33: full customer total incl. fee
+    const months = (new Date(credit.data![0].expires_at).getTime() - new Date(credit.data![0].issued_at).getTime()) / (30 * 86400_000);
+    expect(months).toBeGreaterThan(11);                            // ~12-month expiry
+    const earning = await admin.from('companion_earnings').select('state, payable_at').eq('id', s.earningId).single();
+    expect(earning.data!.state).toBe('reversed');                  // not payable
+    expect(earning.data!.payable_at).toBeNull();                   // 40: never written
+    const res = await admin.from('issue_resolutions').select('id').eq('issue_id', s.issueId);
+    expect(res.data).toHaveLength(1);
+  });
+
+  it('35+36+37. partial resolution records the exact split; negative + over-allocation rejected', async () => {
+    const s = await seedFundedIssue('Partial GOLF');
+    // 36: negative rejected.
+    expect((await sup.rpc('resolve_conversation_issue', {
+      p_issue: s.issueId, p_outcome: 'partial_resolution', p_note: 'x',
+      p_companion_minor: -1, p_credit_minor: 100, p_idempotency: `neg-${s.issueId}`,
+    })).error).not.toBeNull();
+    // 37: over-allocation (> customer total) rejected.
+    expect((await sup.rpc('resolve_conversation_issue', {
+      p_issue: s.issueId, p_outcome: 'partial_resolution', p_note: 'x',
+      p_companion_minor: s.netMinor, p_credit_minor: s.totalMinor, p_idempotency: `over-${s.issueId}`,
+    })).error).not.toBeNull();
+    // Valid split within caps.
+    const compPart = 500;
+    const creditPart = 400;
+    expect((await sup.rpc('resolve_conversation_issue', {
+      p_issue: s.issueId, p_outcome: 'partial_resolution', p_note: 'Partial applied',
+      p_companion_minor: compPart, p_credit_minor: creditPart, p_idempotency: `resolve-${s.issueId}`,
+    })).error).toBeNull();
+    const res = await admin.from('issue_resolutions')
+      .select('companion_amount_minor, credit_amount_minor').eq('issue_id', s.issueId);
+    expect(res.data).toHaveLength(1);
+    expect(res.data![0].companion_amount_minor).toBe(compPart);   // 35: exact amounts
+    expect(res.data![0].credit_amount_minor).toBe(creditPart);
+    const earning = await admin.from('companion_earnings').select('state, net_minor').eq('id', s.earningId).single();
+    expect(earning.data!.state).toBe('payable');
+    expect(earning.data!.net_minor).toBe(compPart);
+    const credit = await admin.from('credit_ledger').select('amount_minor').eq('idempotency_key', `resolution-credit-${s.issueId}`);
+    expect(credit.data).toHaveLength(1);
+    expect(credit.data![0].amount_minor).toBe(creditPart);
+  });
+
+  it('38+39. dismiss-and-release: full earning payable, no credit, one resolution, idempotent', async () => {
+    const s = await seedFundedIssue('Dismiss HOTEL');
+    const key = `resolve-${s.issueId}`;
+    expect((await sup.rpc('resolve_conversation_issue', {
+      p_issue: s.issueId, p_outcome: 'issue_dismissed_release', p_note: 'Complaint dismissed after review',
+      p_companion_minor: null, p_credit_minor: null, p_idempotency: key,
+    })).error).toBeNull();
+    // Duplicate attempt cannot create a second resolution.
+    await sup.rpc('resolve_conversation_issue', {
+      p_issue: s.issueId, p_outcome: 'issue_dismissed_release', p_note: 'again',
+      p_companion_minor: null, p_credit_minor: null, p_idempotency: key,
+    });
+    const earning = await admin.from('companion_earnings').select('state, net_minor').eq('id', s.earningId).single();
+    expect(earning.data!.state).toBe('payable');
+    expect(earning.data!.net_minor).toBe(s.netMinor);             // full entitlement
+    const res = await admin.from('issue_resolutions').select('id, outcome').eq('issue_id', s.issueId);
+    expect(res.data).toHaveLength(1);                              // 39: exactly one
+    expect(res.data![0].outcome).toBe('issue_dismissed_release');
+    const credit = await admin.from('credit_ledger').select('id').eq('idempotency_key', `resolution-credit-${s.issueId}`);
+    expect(credit.data ?? []).toHaveLength(0);
+    // Issue is resolved.
+    expect((await admin.from('conversation_issues').select('state').eq('id', s.issueId).single()).data!.state).toBe('resolved');
+  });
+
+  it('41+42. resolution notifications are deduplicated and never leak the internal note', async () => {
+    const s = await seedFundedIssue('Notify INDIA — SECRET NOTE MARKER');
+    expect((await sup.rpc('resolve_conversation_issue', {
+      p_issue: s.issueId, p_outcome: 'companion_payable_full', p_note: 'SECRET NOTE MARKER internal only',
+      p_companion_minor: null, p_credit_minor: null, p_idempotency: `resolve-${s.issueId}`,
+    })).error).toBeNull();
+    // One companion + one coordinator notification, deduped by issue id.
+    const compNotes = await admin.from('notifications').select('id, body').eq('dedupe_key', `issue-resolved-companion:${s.issueId}`);
+    const coordNotes = await admin.from('notifications').select('id, body').eq('dedupe_key', `issue-resolved-coordinator:${s.issueId}`);
+    expect(compNotes.data).toHaveLength(1);
+    expect(coordNotes.data).toHaveLength(1);
+    // The internal note never travels into a user notification.
+    expect(JSON.stringify([...compNotes.data!, ...coordNotes.data!])).not.toContain('SECRET NOTE MARKER');
+  });
+
+  /* ---------------- concurrency (43–47) ---------------- */
+  it('43+44+45+46+47. two simultaneous resolutions → one winner, one credit, one transition', async () => {
+    const s = await seedFundedIssue('Concurrency JULIET');
+    const key = `resolve-${s.issueId}`;
+    const [r1, r2] = await Promise.all([
+      sup.rpc('resolve_conversation_issue', {
+        p_issue: s.issueId, p_outcome: 'customer_credit_full', p_note: 'session A',
+        p_companion_minor: null, p_credit_minor: null, p_idempotency: key,
+      }),
+      sup.rpc('resolve_conversation_issue', {
+        p_issue: s.issueId, p_outcome: 'companion_payable_full', p_note: 'session B',
+        p_companion_minor: null, p_credit_minor: null, p_idempotency: key,
+      }),
+    ]);
+    // Neither errors; at most one performs real work, the other is a safe repeat.
+    expect(r1.error).toBeNull();
+    expect(r2.error).toBeNull();
+    const res = await admin.from('issue_resolutions').select('id').eq('issue_id', s.issueId);
+    expect(res.data).toHaveLength(1);                               // 47: one immutable resolution
+    const credit = await admin.from('credit_ledger').select('id').eq('idempotency_key', `resolution-credit-${s.issueId}`);
+    expect((credit.data ?? []).length).toBeLessThanOrEqual(1);      // 45: at most one credit
+    expect((await admin.from('conversation_issues').select('state').eq('id', s.issueId).single()).data!.state).toBe('resolved');
+  });
+
+  it('automation cannot release or overwrite a resolved issue-held earning', async () => {
+    // A resolved issue's earning is never re-touched by the release batch.
+    const s = await seedFundedIssue('Automation KILO');
+    await sup.rpc('resolve_conversation_issue', {
+      p_issue: s.issueId, p_outcome: 'customer_credit_full', p_note: 'credited',
+      p_companion_minor: null, p_credit_minor: null, p_idempotency: `resolve-${s.issueId}`,
+    });
+    const before = await admin.from('companion_earnings').select('state, payable_at').eq('id', s.earningId).single();
+    await admin.rpc('release_eligible_earnings');
+    await admin.rpc('resolve_unconfirmed_attendance');
+    const after = await admin.from('companion_earnings').select('state, payable_at').eq('id', s.earningId).single();
+    expect(after.data!.state).toBe(before.data!.state);            // reversed stays reversed
+    expect(after.data!.payable_at).toBe(before.data!.payable_at);
+    expect(after.data!.state).not.toBe('payable');
+    // Exactly one resolution still.
+    expect((await admin.from('issue_resolutions').select('id').eq('issue_id', s.issueId)).data).toHaveLength(1);
+  });
+});
+
+/* ============================================================
+ * 2G5A — recurring billing FOUNDATION (live). Read-only period preview:
+ * coordinator-scoped, server-priced, credit-first, and side-effect-free
+ * (no plan_billing_periods row is ever created by a preview).
+ * ============================================================ */
+describe.skipIf(!enabled)('2G5A billing preview (requires live Supabase)', () => {
+  let pc: SupabaseClient;    // coordinator + member (plan payer)
+  let pcmp: SupabaseClient;  // companion
+  let pother: SupabaseClient; // unrelated coordinator
+  let planId: string;
+  let bAdmin: SupabaseClient;
+
+  beforeAll(async () => {
+    bAdmin = adminClient();
+    pc = await signedInClient(`rls-pbc-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    pcmp = await signedInClient(`rls-pbcmp-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    pother = await signedInClient(`rls-pboth-${suffix}@${TEST_EMAIL_DOMAIN}`);
+
+    const c = await pc.rpc('complete_coordinator_signup', {
+      p_first_name: 'BillCoord', p_consent_confirmed: true, p_member_first_name: 'BillMum',
+    });
+    if (c.error) throw new Error(`coord: ${c.error.message}`);
+    const memberId = (c.data as { member_profile_id: string }).member_profile_id;
+    const oc = await pother.rpc('complete_coordinator_signup', {
+      p_first_name: 'OtherBill', p_consent_confirmed: true, p_member_first_name: 'OtherMum',
+    });
+    if (oc.error) throw new Error(`other coord: ${oc.error.message}`);
+
+    const comp = await pcmp.rpc('complete_companion_signup', {
+      p_first_name: 'BillCompanion', p_date_of_birth: '1986-06-06',
+    });
+    if (comp.error) throw new Error(`companion: ${comp.error.message}`);
+    const companionId = comp.data.id as string;
+    if ((await pcmp.rpc('replace_companion_availability', {
+      p_profile: companionId, p_timezone: 'Europe/London',
+      p_rules: [1, 2, 3, 4, 5, 6, 7].map((day) => ({ day, start: '09:00', end: '18:00' })),
+    })).error) throw new Error('availability');
+    if ((await pcmp.from('conversation_offers').insert({
+      companion_profile_id: companionId, offer_type: 'single',
+      duration_minutes: 30, price_minor: 1000, supported_methods: ['in_app'],
+    })).error) throw new Error('offer');
+
+    const plan = await pc.rpc('create_conversation_plan', {
+      p_member: memberId, p_companion: companionId, p_frequency: 2,
+      p_duration: 30, p_method: 'in_app',
+      p_slots: [{ day: 2, time: '10:00' }, { day: 4, time: '14:00' }],
+    });
+    if (plan.error) throw new Error(`plan: ${plan.error.message}`);
+    planId = plan.data.id as string;
+  }, 120_000);
+
+  function monthStart(): string {
+    const d = new Date();
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`;
+  }
+
+  it('coordinator previews own plan: server-priced, 10% discount, credit-first', async () => {
+    const r = await pc.rpc('preview_plan_billing_period', { p_plan: planId, p_period_start: monthStart() });
+    expect(r.error).toBeNull();
+    const d = r.data as Record<string, number>;
+    expect(d.per_conversation_minor).toBe(1000);              // server-derived, not client
+    expect(d.occurrences).toBeGreaterThanOrEqual(1);
+    expect(d.gross_minor).toBe(d.occurrences * 1000);
+    expect(d.discount_minor).toBe(Math.floor(d.gross_minor * 10 / 100)); // 10% monthly
+    expect(d.net_minor).toBe(d.gross_minor - d.discount_minor);
+    expect(d.credit_applied_minor + d.card_amount_minor).toBe(d.net_minor); // credit-first split
+  });
+
+  it('preview is coordinator-scoped: other coordinator, companion and anon are refused', async () => {
+    expect((await pother.rpc('preview_plan_billing_period', { p_plan: planId, p_period_start: monthStart() })).error).not.toBeNull();
+    expect((await pcmp.rpc('preview_plan_billing_period', { p_plan: planId, p_period_start: monthStart() })).error).not.toBeNull();
+    expect((await client().rpc('preview_plan_billing_period', { p_plan: planId, p_period_start: monthStart() })).error).not.toBeNull();
+  });
+
+  it('preview writes NOTHING: no billing-period row is ever created by a preview', async () => {
+    await pc.rpc('preview_plan_billing_period', { p_plan: planId, p_period_start: monthStart() });
+    const rows = await bAdmin.from('plan_billing_periods').select('id').eq('plan_id', planId);
+    expect(rows.data ?? []).toHaveLength(0);
+  });
+
+  it('billing periods are coordinator-read-only; direct client writes are denied', async () => {
+    // No rows yet, but each side reads only its own (empty) set…
+    expect((await pc.from('plan_billing_periods').select('id').eq('plan_id', planId)).data ?? []).toHaveLength(0);
+    expect((await pcmp.from('plan_billing_periods').select('id')).data ?? []).toHaveLength(0);
+    expect((await client().from('plan_billing_periods').select('id')).data ?? []).toHaveLength(0);
+    // …and no client can forge a period row.
+    const forged = await pc.from('plan_billing_periods').insert({
+      plan_id: planId, coordinator_account_id: (await pc.auth.getUser()).data.user!.id,
+      period_start: monthStart(), period_end: monthStart(),
+    });
+    expect(forged.error).not.toBeNull();
+  });
+});
+
+/* ============================================================
+ * 2G5B — recurring-billing engine (live). Credit-covered renewal path:
+ * billing tops up the plan allowance, generation is gated on funding,
+ * renewal is idempotent + service-role only. No Stripe call is made (credit
+ * fully covers the period); the card path is verified against Stripe manually.
+ * ============================================================ */
+describe.skipIf(!enabled)('2G5B recurring billing engine (requires live Supabase)', () => {
+  let bc: SupabaseClient;    // coordinator + member (payer)
+  let bcmp: SupabaseClient;  // companion
+  let planId: string;
+  let allowanceId: string;
+  let coordId: string;
+  let eAdmin: SupabaseClient;
+
+  function monthStart(): string {
+    const d = new Date();
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`;
+  }
+
+  beforeAll(async () => {
+    eAdmin = adminClient();
+    bc = await signedInClient(`rls-rbc-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    bcmp = await signedInClient(`rls-rbcmp-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    coordId = (await bc.auth.getUser()).data.user!.id;
+
+    const c = await bc.rpc('complete_coordinator_signup', {
+      p_first_name: 'RenewCoord', p_consent_confirmed: true, p_member_first_name: 'RenewMum',
+    });
+    if (c.error) throw new Error(`coord: ${c.error.message}`);
+    const memberId = (c.data as { member_profile_id: string }).member_profile_id;
+
+    const comp = await bcmp.rpc('complete_companion_signup', {
+      p_first_name: 'RenewCompanion', p_date_of_birth: '1987-07-07',
+    });
+    if (comp.error) throw new Error(`companion: ${comp.error.message}`);
+    const companionId = comp.data.id as string;
+    if ((await bcmp.rpc('replace_companion_availability', {
+      p_profile: companionId, p_timezone: 'Europe/London',
+      p_rules: [1, 2, 3, 4, 5, 6, 7].map((day) => ({ day, start: '09:00', end: '18:00' })),
+    })).error) throw new Error('availability');
+    if ((await bcmp.from('conversation_offers').insert({
+      companion_profile_id: companionId, offer_type: 'single',
+      duration_minutes: 30, price_minor: 1000, supported_methods: ['in_app'],
+    })).error) throw new Error('offer');
+
+    const plan = await bc.rpc('create_conversation_plan', {
+      p_member: memberId, p_companion: companionId, p_frequency: 2,
+      p_duration: 30, p_method: 'in_app',
+      p_slots: [{ day: 2, time: '10:00' }, { day: 4, time: '14:00' }],
+    });
+    if (plan.error) throw new Error(`plan: ${plan.error.message}`);
+    planId = plan.data.id as string;
+    allowanceId = plan.data.allowance_purchase_id as string;
+
+    // Mark it stripe-billed (service-role), then the companion accepts.
+    if ((await eAdmin.from('conversation_plans').update({ billing_enabled: true }).eq('id', planId)).error) {
+      throw new Error('enable billing');
+    }
+  }, 120_000);
+
+  it('a billed plan generates NOTHING until its allowance is funded', async () => {
+    const accepted = await bcmp.rpc('accept_plan', { p_plan: planId });
+    expect(accepted.error).toBeNull();
+    expect(accepted.data.generated).toBe(0);   // a recurring plan never generates on acceptance
+    // Acceptance has NO side effects: no booking, generation log, credit or period.
+    expect((await eAdmin.from('bookings').select('id').eq('plan_id', planId)).data ?? []).toHaveLength(0);
+    expect((await eAdmin.from('plan_generation_log').select('id').eq('plan_id', planId)).data ?? []).toHaveLength(0);
+    expect((await eAdmin.from('package_credit_ledger').select('id').eq('package_purchase_id', allowanceId)).data ?? []).toHaveLength(0);
+    expect((await eAdmin.from('plan_billing_periods').select('id').eq('plan_id', planId)).data ?? []).toHaveLength(0);
+    // Idempotent re-accept: still a no-op.
+    expect((await bcmp.rpc('accept_plan', { p_plan: planId })).data.repeat).toBe(true);
+
+    // A coordinator generation attempt BEFORE funding logs ONLY skipped_unfunded
+    // (the funding gate precedes the availability check) — no booking is made,
+    // and nothing is self-granted onto the allowance.
+    const ext = await bc.rpc('extend_plan_bookings', { p_plan: planId });
+    expect(ext.error).toBeNull();
+    expect(ext.data.generated).toBe(0);
+    expect((await eAdmin.from('bookings').select('id').eq('plan_id', planId)).data ?? []).toHaveLength(0);
+    const log = await eAdmin.from('plan_generation_log').select('outcome').eq('plan_id', planId);
+    expect((log.data ?? []).length).toBeGreaterThan(0);
+    expect((log.data ?? []).every((r) => r.outcome === 'skipped_unfunded')).toBe(true);
+    const grants = await eAdmin.from('package_credit_ledger').select('id')
+      .eq('package_purchase_id', allowanceId).eq('entry_type', 'grant');
+    expect(grants.data ?? []).toHaveLength(0);
+  });
+
+  it('renewal (credit-covered) tops up the allowance by EXACTLY the occurrence count', async () => {
+    // Give the coordinator ample credit so the period is fully covered (no card).
+    expect((await eAdmin.rpc('issue_account_credit', {
+      p_account: coordId, p_amount: 100000, p_source_type: 'support_adjustment',
+      p_source: null, p_reason: '2g5b credit', p_idempotency: `2g5b-credit-${suffix}`,
+    })).error).toBeNull();
+
+    const r = await eAdmin.rpc('renew_plan_billing_period', { p_plan: planId, p_period_start: monthStart() });
+    expect(r.error).toBeNull();
+    expect(r.data.status).toBe('paid');       // credit fully covered → finalised, no Stripe
+    expect(r.data.card_amount_minor).toBe(0);
+    const occ = r.data.occurrences as number;
+    expect(occ).toBeGreaterThanOrEqual(1);
+
+    const bp = await eAdmin.from('plan_billing_periods').select('*').eq('plan_id', planId).single();
+    expect(bp.data!.status).toBe('paid');
+    expect(bp.data!.allowance_credits_granted).toBe(occ);
+    // Exactly ONE grant row, quantity = occurrences, keyed by the order.
+    const grant = await eAdmin.from('package_credit_ledger').select('quantity, reason')
+      .eq('package_purchase_id', allowanceId).eq('entry_type', 'grant');
+    expect(grant.data).toHaveLength(1);
+    expect(grant.data![0].quantity).toBe(occ);
+    expect(String(grant.data![0].reason)).toContain('plan-billing:');
+  });
+
+  it('idempotent: a second renewal creates no second order, grant or charge', async () => {
+    const again = await eAdmin.rpc('renew_plan_billing_period', { p_plan: planId, p_period_start: monthStart() });
+    expect(again.error).toBeNull();
+    expect(again.data.repeat).toBe(true);
+    const orders = await eAdmin.from('payment_orders').select('id').eq('plan_id', planId).eq('order_type', 'plan_period');
+    expect(orders.data).toHaveLength(1);
+    const grant = await eAdmin.from('package_credit_ledger').select('id')
+      .eq('package_purchase_id', allowanceId).eq('entry_type', 'grant');
+    expect(grant.data).toHaveLength(1);
+  });
+
+  it('renewal is service-role only; coordinator and anon are refused', async () => {
+    expect((await bc.rpc('renew_plan_billing_period', { p_plan: planId, p_period_start: monthStart() })).error).not.toBeNull();
+    expect((await client().rpc('renew_plan_billing_period', { p_plan: planId, p_period_start: monthStart() })).error).not.toBeNull();
+    expect((await bc.rpc('process_plan_renewals')).error).not.toBeNull();
+  });
+
+  it('a funded plan now generates occurrences, drawing down the allowance (no double-spend)', async () => {
+    const before = await eAdmin.from('package_credit_ledger').select('quantity, entry_type')
+      .eq('package_purchase_id', allowanceId);
+    const ext = await bc.rpc('extend_plan_bookings', { p_plan: planId });
+    expect(ext.error).toBeNull();
+    expect(ext.data.generated).toBeGreaterThanOrEqual(1);
+    const bookings = await eAdmin.from('bookings').select('id').eq('plan_id', planId);
+    expect((bookings.data ?? []).length).toBe(ext.data.generated);
+    // Reserves appear (draw-down); the single billing grant is unchanged.
+    const reserves = await eAdmin.from('package_credit_ledger').select('id')
+      .eq('package_purchase_id', allowanceId).eq('entry_type', 'reserve');
+    expect((reserves.data ?? []).length).toBe(ext.data.generated);
+    const grantsAfter = await eAdmin.from('package_credit_ledger').select('quantity')
+      .eq('package_purchase_id', allowanceId).eq('entry_type', 'grant');
+    expect(grantsAfter.data).toHaveLength(1);       // billing granted once; generation never self-grants
+    void before;
+  });
+
+  it('the payer sees their billing period; unrelated + anon do not', async () => {
+    expect((await bc.from('plan_billing_periods').select('id').eq('plan_id', planId)).data!.length).toBe(1);
+    expect((await bcmp.from('plan_billing_periods').select('id')).data ?? []).toHaveLength(0);
+    expect((await client().from('plan_billing_periods').select('id')).data ?? []).toHaveLength(0);
+  });
+});
+
+/* ============================================================
+ * 2G5B lifecycle — plan acceptance + billing activation (live).
+ * Companion-only accept/decline (idempotent, coordinator-notified), and
+ * coordinator-consented activation gated on an accepted plan + usable payment
+ * method. Only then does process_plan_renewals create exactly one period.
+ * ============================================================ */
+describe.skipIf(!enabled)('2G5B plan lifecycle (requires live Supabase)', () => {
+  let lc: SupabaseClient;     // coordinator + member (payer)
+  let lcmp: SupabaseClient;   // companion
+  let lother: SupabaseClient; // unrelated coordinator
+  let memberId: string;
+  let companionId: string;
+  let coordId: string;
+  let plan2: string;
+  let lAdmin: SupabaseClient;
+
+  function monthStart(): string {
+    const d = new Date();
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`;
+  }
+
+  beforeAll(async () => {
+    lAdmin = adminClient();
+    lc = await signedInClient(`rls-lcp-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    lcmp = await signedInClient(`rls-lcmp-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    lother = await signedInClient(`rls-loth-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    coordId = (await lc.auth.getUser()).data.user!.id;
+
+    const c = await lc.rpc('complete_coordinator_signup', {
+      p_first_name: 'LifeCoord', p_consent_confirmed: true, p_member_first_name: 'LifeMum',
+    });
+    if (c.error) throw new Error(`coord: ${c.error.message}`);
+    memberId = (c.data as { member_profile_id: string }).member_profile_id;
+    if ((await lother.rpc('complete_coordinator_signup', {
+      p_first_name: 'OtherLife', p_consent_confirmed: true, p_member_first_name: 'OtherLifeMum',
+    })).error) throw new Error('other coord');
+
+    const comp = await lcmp.rpc('complete_companion_signup', {
+      p_first_name: 'LifeCompanion', p_date_of_birth: '1988-08-08',
+    });
+    if (comp.error) throw new Error(`companion: ${comp.error.message}`);
+    companionId = comp.data.id as string;
+    if ((await lcmp.rpc('replace_companion_availability', {
+      p_profile: companionId, p_timezone: 'Europe/London',
+      p_rules: [1, 2, 3, 4, 5, 6, 7].map((day) => ({ day, start: '09:00', end: '18:00' })),
+    })).error) throw new Error('availability');
+    if ((await lcmp.from('conversation_offers').insert({
+      companion_profile_id: companionId, offer_type: 'single',
+      duration_minutes: 30, price_minor: 1000, supported_methods: ['in_app'],
+    })).error) throw new Error('offer');
+  }, 120_000);
+
+  async function newPlan(): Promise<string> {
+    const plan = await lc.rpc('create_conversation_plan', {
+      p_member: memberId, p_companion: companionId, p_frequency: 2,
+      p_duration: 30, p_method: 'in_app',
+      p_slots: [{ day: 2, time: '10:00' }, { day: 4, time: '14:00' }],
+    });
+    if (plan.error) throw new Error(`plan: ${plan.error.message}`);
+    return plan.data.id as string;
+  }
+
+  it('only the companion may respond; member/other/anon are refused', async () => {
+    const plan1 = await newPlan();
+    expect((await lc.rpc('accept_plan', { p_plan: plan1, p_message: null })).error).not.toBeNull();
+    expect((await lother.rpc('accept_plan', { p_plan: plan1, p_message: null })).error).not.toBeNull();
+    expect((await client().rpc('accept_plan', { p_plan: plan1, p_message: null })).error).not.toBeNull();
+    expect((await lc.rpc('decline_plan', { p_plan: plan1, p_reason: null })).error).not.toBeNull();
+
+    // The companion declines; the coordinator is notified; re-decline is a no-op.
+    expect((await lcmp.rpc('decline_plan', { p_plan: plan1, p_reason: 'Not available' })).error).toBeNull();
+    const note = await lAdmin.from('notifications').select('id').eq('user_id', coordId)
+      .eq('dedupe_key', `plan-declined:${plan1}`);
+    expect(note.data).toHaveLength(1);
+    expect((await lcmp.rpc('decline_plan', { p_plan: plan1, p_reason: 'again' })).error).toBeNull();
+    expect((await lAdmin.from('conversation_plans').select('status').eq('id', plan1).single()).data!.status).toBe('declined');
+  });
+
+  it('companion acceptance is idempotent, notifies the coordinator, and does NOT enable billing', async () => {
+    plan2 = await newPlan();
+    const acc = await lcmp.rpc('accept_plan', { p_plan: plan2, p_message: 'Happy to.' });
+    expect(acc.error).toBeNull();
+    const plan = await lAdmin.from('conversation_plans').select('status, billing_enabled').eq('id', plan2).single();
+    expect(plan.data!.status).toBe('active');
+    expect(plan.data!.billing_enabled).toBe(false);           // acceptance never charges
+    const note = await lAdmin.from('notifications').select('id').eq('user_id', coordId)
+      .eq('dedupe_key', `plan-accepted:${plan2}`);
+    expect(note.data).toHaveLength(1);
+    // Idempotent re-accept.
+    const again = await lcmp.rpc('accept_plan', { p_plan: plan2, p_message: null });
+    expect(again.error).toBeNull();
+    expect(again.data.repeat).toBe(true);
+  });
+
+  it('billing activation is coordinator-only and requires a usable payment method', async () => {
+    // Companion + unrelated coordinator refused (neutral not-found).
+    expect((await lcmp.rpc('activate_plan_billing', { p_plan: plan2 })).error).not.toBeNull();
+    expect((await lother.rpc('activate_plan_billing', { p_plan: plan2 })).error).not.toBeNull();
+    // Coordinator with NO payment method → refused.
+    const noPm = await lc.rpc('activate_plan_billing', { p_plan: plan2 });
+    expect(String(noPm.error!.message)).toContain('payment_method_required');
+    expect((await lAdmin.from('conversation_plans').select('billing_enabled').eq('id', plan2).single()).data!.billing_enabled).toBe(false);
+
+    // Service role marks a usable saved card (as the SetupIntent webhook would).
+    expect((await lAdmin.from('stripe_customers').upsert({
+      account_id: coordId, stripe_customer_id: `cus_test_${suffix}`,
+      default_payment_method_id: `pm_test_${suffix}`, payment_method_ready: true,
+    }, { onConflict: 'account_id' })).error).toBeNull();
+
+    const ok = await lc.rpc('activate_plan_billing', { p_plan: plan2 });
+    expect(ok.error).toBeNull();
+    expect(ok.data.billing_enabled).toBe(true);
+    expect((await lAdmin.from('conversation_plans').select('billing_enabled').eq('id', plan2).single()).data!.billing_enabled).toBe(true);
+    // Activation alone generates nothing: no booking, no allowance, no period.
+    const plan2Allowance = (await lAdmin.from('conversation_plans').select('allowance_purchase_id').eq('id', plan2).single()).data!.allowance_purchase_id;
+    expect((await lAdmin.from('bookings').select('id').eq('plan_id', plan2)).data ?? []).toHaveLength(0);
+    expect((await lAdmin.from('package_credit_ledger').select('id').eq('package_purchase_id', plan2Allowance)).data ?? []).toHaveLength(0);
+    expect((await lAdmin.from('plan_billing_periods').select('id').eq('plan_id', plan2)).data ?? []).toHaveLength(0);
+    // Idempotent re-activation.
+    expect((await lc.rpc('activate_plan_billing', { p_plan: plan2 })).data.repeat).toBe(true);
+  });
+
+  it('only now does process_plan_renewals bill it — exactly one period, no duplicate', async () => {
+    expect((await lAdmin.rpc('process_plan_renewals')).error).toBeNull();
+    const first = await lAdmin.from('plan_billing_periods').select('id, period_start').eq('plan_id', plan2);
+    expect(first.data).toHaveLength(1);
+    expect(first.data![0].period_start).toBe(monthStart());
+    // Re-running creates no duplicate.
+    expect((await lAdmin.rpc('process_plan_renewals')).error).toBeNull();
+    const second = await lAdmin.from('plan_billing_periods').select('id').eq('plan_id', plan2);
+    expect(second.data).toHaveLength(1);
+  });
+});
+
+/* ============================================================
+ * 2G5B state sync — payment_orders ↔ plan_billing_periods (live).
+ * settle_plan_billing (service-role) is the single authority: every outcome
+ * moves the order AND its period together, releases credit at most once, grants
+ * allowance at most once, and deduplicates notifications. A reconciliation
+ * invariant proves zero drift.
+ * ============================================================ */
+describe.skipIf(!enabled)('2G5B billing state sync (requires live Supabase)', () => {
+  let sc: SupabaseClient;    // coordinator + member (payer)
+  let scmp: SupabaseClient;  // companion
+  let planId: string;
+  let allowanceId: string;
+  let coordId: string;
+  let sAdmin: SupabaseClient;
+
+  function monthISO(back: number): string {
+    const d = new Date();
+    d.setUTCDate(1);
+    d.setUTCMonth(d.getUTCMonth() - back);
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`;
+  }
+  async function renewMonth(back: number) {
+    const r = await sAdmin.rpc('renew_plan_billing_period', { p_plan: planId, p_period_start: monthISO(back) });
+    if (r.error) throw new Error(`renew ${back}: ${r.error.message}`);
+    return r.data as { order_id: string; period_id: string; occurrences: number;
+      net_minor: number; card_amount_minor: number; credit_applied_minor: number; status: string };
+  }
+  const grantsFor = async (order: string) => (await sAdmin.from('package_credit_ledger')
+    .select('id, quantity').eq('package_purchase_id', allowanceId).eq('entry_type', 'grant')
+    .eq('reason', `plan-billing:${order}`)).data ?? [];
+
+  beforeAll(async () => {
+    sAdmin = adminClient();
+    sc = await signedInClient(`rls-ssc-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    scmp = await signedInClient(`rls-sscmp-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    coordId = (await sc.auth.getUser()).data.user!.id;
+
+    const c = await sc.rpc('complete_coordinator_signup', {
+      p_first_name: 'SyncCoord', p_consent_confirmed: true, p_member_first_name: 'SyncMum',
+    });
+    if (c.error) throw new Error(`coord: ${c.error.message}`);
+    const memberId = (c.data as { member_profile_id: string }).member_profile_id;
+
+    const comp = await scmp.rpc('complete_companion_signup', {
+      p_first_name: 'SyncCompanion', p_date_of_birth: '1989-09-09',
+    });
+    if (comp.error) throw new Error(`companion: ${comp.error.message}`);
+    const companionId = comp.data.id as string;
+    if ((await scmp.rpc('replace_companion_availability', {
+      p_profile: companionId, p_timezone: 'Europe/London',
+      p_rules: [1, 2, 3, 4, 5, 6, 7].map((day) => ({ day, start: '09:00', end: '18:00' })),
+    })).error) throw new Error('availability');
+    if ((await scmp.from('conversation_offers').insert({
+      companion_profile_id: companionId, offer_type: 'single',
+      duration_minutes: 30, price_minor: 1000, supported_methods: ['in_app'],
+    })).error) throw new Error('offer');
+
+    const plan = await sc.rpc('create_conversation_plan', {
+      p_member: memberId, p_companion: companionId, p_frequency: 2,
+      p_duration: 30, p_method: 'in_app',
+      p_slots: [{ day: 2, time: '10:00' }, { day: 4, time: '14:00' }],
+    });
+    if (plan.error) throw new Error(`plan: ${plan.error.message}`);
+    planId = plan.data.id as string;
+    allowanceId = plan.data.allowance_purchase_id as string;
+    if ((await sAdmin.from('conversation_plans').update({ billing_enabled: true }).eq('id', planId)).error) {
+      throw new Error('enable billing');
+    }
+  }, 120_000);
+
+  it('settle_plan_billing is service-role only', async () => {
+    expect((await sc.rpc('settle_plan_billing', { p_order: coordId, p_outcome: 'processing', p_intent: null, p_reason: null })).error).not.toBeNull();
+    expect((await client().rpc('settle_plan_billing', { p_order: coordId, p_outcome: 'processing', p_intent: null, p_reason: null })).error).not.toBeNull();
+  });
+
+  it('permanent failure moves order AND period together and grants nothing', async () => {
+    const p = await renewMonth(0);
+    expect(p.card_amount_minor).toBeGreaterThan(0);
+    expect((await sAdmin.rpc('settle_plan_billing', { p_order: p.order_id, p_outcome: 'card_declined', p_intent: null, p_reason: null })).error).toBeNull();
+    expect((await sAdmin.from('payment_orders').select('status, failure_reason').eq('id', p.order_id).single()).data).toMatchObject({ status: 'failed', failure_reason: 'card_declined' });
+    expect((await sAdmin.from('plan_billing_periods').select('status, failure_reason').eq('id', p.period_id).single()).data).toMatchObject({ status: 'payment_failed', failure_reason: 'card_declined' });
+    expect(await grantsFor(p.order_id)).toHaveLength(0);
+    const note = await sAdmin.from('notifications').select('id').eq('user_id', coordId).eq('dedupe_key', `plan-billing-failed:${p.order_id}`);
+    expect(note.data).toHaveLength(1);
+  });
+
+  it('repeated failure does not release reserved credit twice', async () => {
+    // Small credit so the renewal reserves some, leaving a card remainder.
+    expect((await sAdmin.rpc('issue_account_credit', {
+      p_account: coordId, p_amount: 500, p_source_type: 'support_adjustment',
+      p_source: null, p_reason: 'sync credit', p_idempotency: `sync-credit-${suffix}`,
+    })).error).toBeNull();
+    const p = await renewMonth(1);
+    expect(p.credit_applied_minor).toBe(500);
+    expect(p.card_amount_minor).toBeGreaterThan(0);
+    expect((await sAdmin.rpc('settle_plan_billing', { p_order: p.order_id, p_outcome: 'card_declined', p_intent: null, p_reason: null })).error).toBeNull();
+    expect((await sAdmin.rpc('settle_plan_billing', { p_order: p.order_id, p_outcome: 'card_declined', p_intent: null, p_reason: null })).error).toBeNull();
+    const releases = await sAdmin.from('credit_ledger').select('id')
+      .eq('coordinator_account_id', coordId).eq('source_type', 'platform_failure').eq('source_id', p.order_id);
+    expect(releases.data).toHaveLength(1); // released exactly once
+  });
+
+  it('authentication_required is recoverable: action_required, credit retained, notify once', async () => {
+    const p = await renewMonth(2);
+    expect((await sAdmin.rpc('settle_plan_billing', { p_order: p.order_id, p_outcome: 'authentication_required', p_intent: null, p_reason: null })).error).toBeNull();
+    expect((await sAdmin.rpc('settle_plan_billing', { p_order: p.order_id, p_outcome: 'authentication_required', p_intent: null, p_reason: null })).error).toBeNull();
+    expect((await sAdmin.from('payment_orders').select('status').eq('id', p.order_id).single()).data!.status).toBe('requires_action');
+    expect((await sAdmin.from('plan_billing_periods').select('status, failure_reason').eq('id', p.period_id).single()).data).toMatchObject({ status: 'action_required', failure_reason: 'authentication_required' });
+    // No credit released while still recoverable.
+    expect((await sAdmin.from('credit_ledger').select('id').eq('source_type', 'platform_failure').eq('source_id', p.order_id)).data ?? []).toHaveLength(0);
+    // Notification deduplicated.
+    expect((await sAdmin.from('notifications').select('id').eq('user_id', coordId).eq('dedupe_key', `plan-billing-action:${p.order_id}`)).data).toHaveLength(1);
+    expect(await grantsFor(p.order_id)).toHaveLength(0);
+  });
+
+  it('success moves both to paid and grants EXACTLY occurrences once (idempotent)', async () => {
+    const p = await renewMonth(3);
+    // payment_orders.stripe_payment_intent_id is UNIQUE, so the intent id must be
+    // globally unique — a shared constant collides across hosted runs and rolls
+    // back the whole settlement (leaving the order 'pending'). Real Stripe intent
+    // ids are unique; mirror that with the run suffix.
+    const intent = `pi-sync-${suffix}`;
+    const firstS = await sAdmin.rpc('settle_plan_billing', { p_order: p.order_id, p_outcome: 'succeeded', p_intent: intent, p_reason: null });
+    expect(firstS.error).toBeNull();
+    const secondS = await sAdmin.rpc('settle_plan_billing', { p_order: p.order_id, p_outcome: 'succeeded', p_intent: intent, p_reason: null }); // idempotent repeat
+    expect(secondS.error).toBeNull();
+    const order = await sAdmin.from('payment_orders').select('status, stripe_payment_intent_id').eq('id', p.order_id).single();
+    expect(order.data!.status).toBe('succeeded');
+    expect(order.data!.stripe_payment_intent_id).toBe(intent); // regression: unique intent persisted, no collision
+    const bp = await sAdmin.from('plan_billing_periods').select('status, allowance_credits_granted').eq('id', p.period_id).single();
+    expect(bp.data).toMatchObject({ status: 'paid', allowance_credits_granted: p.occurrences });
+    const grants = await grantsFor(p.order_id);
+    expect(grants).toHaveLength(1);
+    expect(grants[0].quantity).toBe(p.occurrences);
+  });
+
+  it('reconciliation invariant: zero order/period drift across the database', async () => {
+    // The public wrapper is service-role only: normal + anonymous callers refused.
+    expect((await sc.rpc('plan_billing_state_drift')).error).not.toBeNull();
+    expect((await client().rpc('plan_billing_state_drift')).error).not.toBeNull();
+    const drift = await sAdmin.rpc('plan_billing_state_drift');
+    expect(drift.error).toBeNull();
+    expect(drift.data).toBe(0);
+  });
+});
+
+/* ============================================================
+ * 2G6A — recurring-plan companion earnings (live). A completed plan occurrence
+ * earns exactly once, from the booking snapshot, ONLY when its month's billing
+ * period is paid; simulated/unpaid occurrences never earn; issues hold the
+ * earning and resolve occurrence-scoped; retries never duplicate.
+ * ============================================================ */
+describe.skipIf(!enabled)('2G6A recurring-plan earnings (requires live Supabase)', () => {
+  let ec: SupabaseClient;    // coordinator + member (payer)
+  let ecmp: SupabaseClient;  // companion
+  let esup: SupabaseClient;  // support admin (resolver)
+  let planId: string;
+  let coordId: string;
+  let companionId: string;
+  let supId: string;
+  let eAdmin: SupabaseClient;
+  const OCC_PRICE = 1000;
+
+  const monthOf = (d: Date) => `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`;
+  const monthStartUtc = (monthsAgo: number): Date => {
+    const d = new Date(); d.setUTCHours(0, 0, 0, 0); d.setUTCDate(1);
+    d.setUTCMonth(d.getUTCMonth() - monthsAgo);
+    return d;
+  };
+  // A deterministic, widely-separated historical window: the 10th of a past
+  // calendar month at 09:00 UTC, one whole month apart per sequence, ≥60 days
+  // ago, with the end derived from the booking's own duration. Distinct months
+  // guarantee no two of this block's occurrences overlap for the same companion
+  // (bookings_companion_no_overlap) and never reuse the 2G4E/2G5 windows.
+  const PAYABLE_MONTHS_AGO = 3, ISSUE_MONTHS_AGO = 4, UNPAID_MONTHS_AGO = 6;
+  const PAID_MONTHS = [PAYABLE_MONTHS_AGO, ISSUE_MONTHS_AGO];
+  function historicalWindow(monthsAgo: number, durationMinutes: number): { start: Date; end: Date } {
+    const start = monthStartUtc(monthsAgo);
+    start.setUTCDate(10); start.setUTCHours(9, 0, 0, 0);
+    return { start, end: new Date(start.getTime() + durationMinutes * 60_000) };
+  }
+
+  async function redate(seq: number, bookingId: string, start: Date, end: Date) {
+    const r = await eAdmin.from('bookings')
+      .update({ starts_at: start.toISOString(), ends_at: end.toISOString() }).eq('id', bookingId);
+    // The UPDATE is atomic: on failure the booking keeps its original (future)
+    // slot, so nothing partial persists into the next test.
+    if (r.error) {
+      throw new Error(`redate seq=${seq} booking=${bookingId} `
+        + `[${start.toISOString()}..${end.toISOString()}]: ${r.error.code ?? ''} ${r.error.message}`);
+    }
+  }
+
+  beforeAll(async () => {
+    eAdmin = adminClient();
+    ec = await signedInClient(`rls-eec-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    ecmp = await signedInClient(`rls-eecmp-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    esup = await signedInClient(`rls-eesup-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    coordId = (await ec.auth.getUser()).data.user!.id;
+    supId = (await esup.auth.getUser()).data.user!.id;
+
+    const c = await ec.rpc('complete_coordinator_signup', {
+      p_first_name: 'EarnCoord', p_consent_confirmed: true, p_member_first_name: 'EarnMum',
+    });
+    if (c.error) throw new Error(`coord: ${c.error.message}`);
+    const memberId = (c.data as { member_profile_id: string }).member_profile_id;
+
+    const comp = await ecmp.rpc('complete_companion_signup', { p_first_name: 'EarnCompanion', p_date_of_birth: '1990-01-01' });
+    if (comp.error) throw new Error(`companion: ${comp.error.message}`);
+    companionId = comp.data.id as string;
+    if ((await ecmp.rpc('replace_companion_availability', {
+      p_profile: companionId, p_timezone: 'Europe/London',
+      p_rules: [1, 2, 3, 4, 5, 6, 7].map((day) => ({ day, start: '00:00', end: '23:59' })),
+    })).error) throw new Error('availability');
+    if ((await ecmp.from('conversation_offers').insert({
+      companion_profile_id: companionId, offer_type: 'single', duration_minutes: 30,
+      price_minor: OCC_PRICE, supported_methods: ['in_app'],
+    })).error) throw new Error('offer');
+
+    const plan = await ec.rpc('create_conversation_plan', {
+      p_member: memberId, p_companion: companionId, p_frequency: 2, p_duration: 30, p_method: 'in_app',
+      p_slots: [{ day: 2, time: '10:00' }, { day: 4, time: '14:00' }],
+    });
+    if (plan.error) throw new Error(`plan: ${plan.error.message}`);
+    planId = plan.data.id as string;
+
+    if ((await ecmp.rpc('accept_plan', { p_plan: planId, p_message: null })).error) throw new Error('accept');
+    if ((await eAdmin.from('conversation_plans').update({ billing_enabled: true }).eq('id', planId)).error) throw new Error('enable');
+    // Ample credit so the month's period is fully credit-covered → 'paid', no Stripe.
+    if ((await eAdmin.rpc('issue_account_credit', {
+      p_account: coordId, p_amount: 1_000_000, p_source_type: 'support_adjustment',
+      p_source: null, p_reason: '2g6a credit', p_idempotency: `2g6a-credit-${suffix}`,
+    })).error) throw new Error('credit');
+    // Fund a paid billing period for EACH month a completed occurrence will land
+    // in (credit-covered → 'paid', no Stripe). This also funds the allowance
+    // pool so extend can generate the occurrences below.
+    for (const m of PAID_MONTHS) {
+      const renew = await eAdmin.rpc('renew_plan_billing_period', { p_plan: planId, p_period_start: monthOf(monthStartUtc(m)) });
+      if (renew.error || renew.data.status !== 'paid') throw new Error(`renew m-${m}: ${renew.error?.message ?? renew.data.status}`);
+    }
+    // Generate occurrences (future), then re-date individual ones into distinct
+    // past months so no two overlap for the same companion.
+    const ext = await ec.rpc('extend_plan_bookings', { p_plan: planId });
+    if (ext.error) throw new Error(`extend: ${ext.error.message}`);
+    // The resolver only signed in — materialise its public.accounts row before
+    // the support_admins FK insert (esup never completes a role signup).
+    if ((await esup.rpc('ensure_current_account')).error) throw new Error('ensure account');
+    // Idempotent service-role grant (never via the browser); safe on re-run.
+    const supGrant = await eAdmin.from('support_admins')
+      .upsert({ account_id: supId }, { onConflict: 'account_id', ignoreDuplicates: true });
+    if (supGrant.error) {
+      throw new Error(`support_admin insert failed: ${supGrant.error.code} ${supGrant.error.message} ${supGrant.error.details ?? ''}`);
+    }
+  }, 120_000);
+
+  afterAll(async () => {
+    // Remove the support relationship before the account is ever cleaned up.
+    await eAdmin.from('support_admins').delete().eq('account_id', supId);
+  });
+
+  async function nextBooking(): Promise<{ id: string; companion_amount_minor: number; duration_minutes: number }> {
+    const r = await eAdmin.from('bookings').select('id, companion_amount_minor, duration_minutes, starts_at')
+      .eq('plan_id', planId).eq('status', 'confirmed').order('starts_at', { ascending: true });
+    const used = (globalThis as unknown as { __ez?: Set<string> }).__ez ??= new Set<string>();
+    const row = (r.data ?? []).find((b) => !used.has(b.id as string));
+    if (!row) throw new Error('no spare generated booking');
+    used.add(row.id as string);
+    return {
+      id: row.id as string,
+      companion_amount_minor: row.companion_amount_minor as number,
+      duration_minutes: row.duration_minutes as number,
+    };
+  }
+
+  it('a completed, funded plan occurrence creates exactly one payable earning from the booking snapshot', async () => {
+    const b = await nextBooking();
+    const w = historicalWindow(PAYABLE_MONTHS_AGO, b.duration_minutes);
+    await redate(0, b.id, w.start, w.end);
+    expect((await ecmp.rpc('submit_companion_attendance', { p_booking: b.id, p_outcome: 'took_place', p_explanation: null })).error).toBeNull();
+    const es = await eAdmin.from('companion_earnings')
+      .select('net_minor, state, plan_id, plan_billing_period_id, payer_charge_minor, companion_profile_id').eq('booking_id', b.id);
+    expect(es.data).toHaveLength(1);
+    const e = es.data![0];
+    expect(e.net_minor).toBe(b.companion_amount_minor);      // amount from the booking snapshot
+    expect(e.net_minor).toBe(OCC_PRICE);
+    expect(e.plan_id).toBe(planId);
+    expect(e.plan_billing_period_id).not.toBeNull();
+    expect(e.payer_charge_minor).toBe(Math.round(OCC_PRICE * 0.9)); // per-occurrence discounted customer cost
+    expect(e.state).toBe('payable');
+    // Idempotent: a duplicate completion never creates a second earning.
+    expect((await ecmp.rpc('submit_companion_attendance', { p_booking: b.id, p_outcome: 'took_place', p_explanation: null })).data.repeat).toBe(true);
+    expect((await eAdmin.from('companion_earnings').select('id').eq('booking_id', b.id)).data).toHaveLength(1);
+  });
+
+  it('an occurrence with no paid period for its month creates NO earning', async () => {
+    const b = await nextBooking();
+    const w = historicalWindow(UNPAID_MONTHS_AGO, b.duration_minutes); // a month with NO billing period
+    await redate(1, b.id, w.start, w.end);
+    const att = await ecmp.rpc('submit_companion_attendance', { p_booking: b.id, p_outcome: 'took_place', p_explanation: null });
+    expect(String(att.error?.message)).toContain('not_eligible');
+    expect((await eAdmin.from('companion_earnings').select('id').eq('booking_id', b.id)).data ?? []).toHaveLength(0);
+  });
+
+  it('an open issue holds the earning; resolution credits the OCCURRENCE amount and reverses it', async () => {
+    const b = await nextBooking();
+    const w = historicalWindow(ISSUE_MONTHS_AGO, b.duration_minutes);
+    await redate(2, b.id, w.start, w.end);
+    expect((await ec.rpc('report_conversation_issue', { p_booking: b.id, p_category: 'audio_video_problem', p_description: 'Audio dropped for the whole call.' })).error).toBeNull();
+    const held = await eAdmin.from('companion_earnings').select('id, state, payer_charge_minor').eq('booking_id', b.id).single();
+    expect(held.data!.state).toBe('held_for_issue');            // not payable while an issue is open
+    const issue = await eAdmin.from('conversation_issues').select('id').eq('booking_id', b.id).eq('state', 'open').single();
+
+    const res = await esup.rpc('resolve_conversation_issue', {
+      p_issue: issue.data!.id, p_outcome: 'customer_credit_full', p_note: 'Refunded this conversation to the coordinator.',
+      p_companion_minor: 0, p_credit_minor: 0, p_idempotency: `2g6a-res-${suffix}`,
+    });
+    expect(res.error).toBeNull();
+    expect((await eAdmin.from('companion_earnings').select('state').eq('id', held.data!.id).single()).data!.state).toBe('reversed');
+    // Customer credit is the PER-OCCURRENCE charge (£9), never the whole month.
+    const credit = await eAdmin.from('credit_ledger').select('amount_minor')
+      .eq('coordinator_account_id', coordId).eq('source_type', 'refund_resolution').eq('source_id', issue.data!.id).single();
+    expect(credit.data!.amount_minor).toBe(Math.round(OCC_PRICE * 0.9));
+  });
+
+  it('earnings and their snapshot are private: normal + anon callers cannot read another party’s rows', async () => {
+    // The companion reads their own earnings; an unrelated/anon client sees none.
+    expect((await ecmp.from('companion_earnings').select('id').eq('companion_profile_id', companionId)).data!.length).toBeGreaterThanOrEqual(1);
+    expect((await client().from('companion_earnings').select('id')).data ?? []).toHaveLength(0);
+    // No client can forge an earning row.
+    expect((await ec.from('companion_earnings').insert({
+      booking_id: planId, payment_order_id: planId, companion_account_id: coordId, companion_profile_id: companionId,
+      member_profile_id: companionId, payer_account_id: coordId, basis_minor: 1, commission_rate_pct: 0, commission_minor: 0, net_minor: 1,
+    })).error).not.toBeNull();
+  });
+});
+
+/* ============================================================
+ * 2G6B — Connect settlement worker (live). A payable, funded, Connect-ready
+ * earning is claimed once (SKIP LOCKED), transferred once via a stable
+ * per-earning idempotency key, and finalised idempotently; non-payable, held,
+ * reversed, zero-value and un-ready earnings are never claimed; worker RPCs are
+ * service-role only and the ledger is unforgeable.
+ * ============================================================ */
+describe.skipIf(!enabled)('2G6B companion transfers (requires live Supabase)', () => {
+  let tc: SupabaseClient;    // coordinator + member
+  let tcmp: SupabaseClient;  // companion
+  let tsup: SupabaseClient;  // support admin
+  let tAdmin: SupabaseClient;
+  let planId: string;
+  let companionId: string;
+  let companionAcct: string;
+  let supId: string;
+  const OCC = 1000;
+  let seq = 0;
+
+  const monthOf = (d: Date) => `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`;
+  const monthStartUtc = (k: number): Date => {
+    const d = new Date(); d.setUTCHours(0, 0, 0, 0); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() - k); return d;
+  };
+  function win(k: number, dur: number): { start: Date; end: Date } {
+    const start = monthStartUtc(k); start.setUTCDate(12); start.setUTCHours(9, 0, 0, 0);
+    return { start, end: new Date(start.getTime() + dur * 60_000) };
+  }
+  const PAID = [3, 4, 5, 6, 7];
+
+  async function spareBooking(): Promise<{ id: string; duration_minutes: number }> {
+    const r = await tAdmin.from('bookings').select('id, duration_minutes, starts_at')
+      .eq('plan_id', planId).eq('status', 'confirmed').order('starts_at', { ascending: true });
+    const used = (globalThis as unknown as { __tz?: Set<string> }).__tz ??= new Set<string>();
+    const row = (r.data ?? []).find((b) => !used.has(b.id as string));
+    if (!row) throw new Error('no spare booking');
+    used.add(row.id as string);
+    return { id: row.id as string, duration_minutes: row.duration_minutes as number };
+  }
+  async function payableEarning(k: number): Promise<{ earningId: string; bookingId: string }> {
+    const b = await spareBooking();
+    const w = win(k, b.duration_minutes);
+    const up = await tAdmin.from('bookings').update({ starts_at: w.start.toISOString(), ends_at: w.end.toISOString() }).eq('id', b.id);
+    if (up.error) throw new Error(`redate seq=${seq++} ${b.id}: ${up.error.message}`);
+    const att = await tcmp.rpc('submit_companion_attendance', { p_booking: b.id, p_outcome: 'took_place', p_explanation: null });
+    if (att.error) throw new Error(`attend ${b.id}: ${att.error.message}`);
+    const e = await tAdmin.from('companion_earnings').select('id, state').eq('booking_id', b.id).single();
+    if (e.error || e.data!.state !== 'payable') throw new Error(`earning ${b.id}: ${e.error?.message ?? e.data?.state}`);
+    return { earningId: e.data!.id as string, bookingId: b.id };
+  }
+  async function claimRows(): Promise<Array<{ attempt_id: string; earning_id: string }>> {
+    const r = await tAdmin.rpc('claim_plan_transfers', { p_limit: 50 });
+    if (r.error) throw new Error(`claim: ${r.error.message}`);
+    return (r.data ?? []) as Array<{ attempt_id: string; earning_id: string }>;
+  }
+
+  beforeAll(async () => {
+    tAdmin = adminClient();
+    tc = await signedInClient(`rls-ttc-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    tcmp = await signedInClient(`rls-ttcmp-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    tsup = await signedInClient(`rls-ttsup-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    const coordId = (await tc.auth.getUser()).data.user!.id;
+    companionAcct = (await tcmp.auth.getUser()).data.user!.id;
+    supId = (await tsup.auth.getUser()).data.user!.id;
+
+    const c = await tc.rpc('complete_coordinator_signup', { p_first_name: 'PayCoord', p_consent_confirmed: true, p_member_first_name: 'PayMum' });
+    if (c.error) throw new Error(`coord: ${c.error.message}`);
+    const memberId = (c.data as { member_profile_id: string }).member_profile_id;
+    const comp = await tcmp.rpc('complete_companion_signup', { p_first_name: 'PayCompanion', p_date_of_birth: '1988-02-02' });
+    if (comp.error) throw new Error(`companion: ${comp.error.message}`);
+    companionId = comp.data.id as string;
+    const avail = await tcmp.rpc('replace_companion_availability', {
+      p_profile: companionId, p_timezone: 'Europe/London',
+      p_rules: [1, 2, 3, 4, 5, 6, 7].map((day) => ({ day, start: '00:00', end: '23:59' })),
+    });
+    if (avail.error) throw new Error(`availability: ${avail.error.message}`);
+    const offer = await tcmp.from('conversation_offers').insert({
+      companion_profile_id: companionId, offer_type: 'single', duration_minutes: 30, price_minor: OCC, supported_methods: ['in_app'],
+    });
+    if (offer.error) throw new Error(`offer: ${offer.error.message}`);
+    const plan = await tc.rpc('create_conversation_plan', {
+      p_member: memberId, p_companion: companionId, p_frequency: 2, p_duration: 30, p_method: 'in_app',
+      p_slots: [{ day: 2, time: '10:00' }, { day: 4, time: '14:00' }],
+    });
+    if (plan.error) throw new Error(`plan: ${plan.error.message}`);
+    planId = plan.data.id as string;
+    const acc = await tcmp.rpc('accept_plan', { p_plan: planId, p_message: null });
+    if (acc.error) throw new Error(`accept: ${acc.error.message}`);
+    const enable = await tAdmin.from('conversation_plans').update({ billing_enabled: true }).eq('id', planId);
+    if (enable.error) throw new Error(`enable: ${enable.error.message}`);
+    if ((await tAdmin.rpc('issue_account_credit', {
+      p_account: coordId, p_amount: 5_000_000, p_source_type: 'support_adjustment', p_source: null,
+      p_reason: '2g6b credit', p_idempotency: `2g6b-credit-${suffix}`,
+    })).error) throw new Error('credit failed');
+    for (const k of PAID) {
+      const rn = await tAdmin.rpc('renew_plan_billing_period', { p_plan: planId, p_period_start: monthOf(monthStartUtc(k)) });
+      if (rn.error || rn.data.status !== 'paid') throw new Error(`renew ${k}: ${rn.error?.message ?? rn.data.status}`);
+    }
+    const ext = await tc.rpc('extend_plan_bookings', { p_plan: planId });
+    if (ext.error) throw new Error(`extend: ${ext.error.message}`);
+    // A READY Express connected account for the companion. account_id is the PK,
+    // so it is a valid conflict target; the Stripe test id is unique per run AND
+    // distinct from the 2G3 fixture's acct_test_<run> (stripe_account_id is
+    // UNIQUE — reusing the same literal across blocks in one run collides).
+    const connectResult = await tAdmin.from('connected_accounts').upsert({
+      account_id: companionAcct, companion_profile_id: companionId,
+      stripe_account_id: `acct_test_2g6b_${suffix}`,
+      details_submitted: true, charges_enabled: true, payouts_enabled: true,
+      transfers_capability: 'active', default_currency: 'gbp',
+    }, { onConflict: 'account_id' });
+    if (connectResult.error) {
+      throw new Error(`connected_accounts setup failed: ${connectResult.error.code} `
+        + `${connectResult.error.message} ${connectResult.error.details ?? ''} ${connectResult.error.hint ?? ''}`);
+    }
+    if ((await tsup.rpc('ensure_current_account')).error) throw new Error('ensure account');
+    const supGrant = await tAdmin.from('support_admins').upsert({ account_id: supId }, { onConflict: 'account_id', ignoreDuplicates: true });
+    if (supGrant.error) throw new Error(`support_admin insert failed: ${supGrant.error.code} ${supGrant.error.message}`);
+  }, 120_000);
+
+  afterAll(async () => {
+    // Remove the Connect row before its account/profile dependencies.
+    await tAdmin.from('connected_accounts').delete().eq('account_id', companionAcct);
+    await tAdmin.from('support_admins').delete().eq('account_id', supId);
+  });
+
+  it('Connect readiness is required, and a payable earning is claimed + transferred exactly once (idempotent)', async () => {
+    const { earningId } = await payableEarning(3);
+    // Not ready → never claimed.
+    await tAdmin.from('connected_accounts').update({ transfers_capability: 'inactive' }).eq('account_id', companionAcct);
+    expect((await claimRows()).some((r) => r.earning_id === earningId)).toBe(false);
+    await tAdmin.from('connected_accounts').update({ transfers_capability: 'active' }).eq('account_id', companionAcct);
+    // Ready → claimed once; a second claim does not re-claim it.
+    const first = await claimRows();
+    const mine = first.find((r) => r.earning_id === earningId);
+    expect(mine).toBeDefined();
+    expect((await tAdmin.from('companion_earnings').select('transfer_state').eq('id', earningId).single()).data!.transfer_state).toBe('processing');
+    expect((await claimRows()).some((r) => r.earning_id === earningId)).toBe(false);
+    // Finalise success once; repeat is idempotent.
+    const trId = `tr_${suffix}_a`;
+    expect((await tAdmin.rpc('finalize_transfer_succeeded', { p_attempt: mine!.attempt_id, p_transfer_id: trId, p_created: Math.floor(Date.now() / 1000) })).error).toBeNull();
+    expect((await tAdmin.rpc('finalize_transfer_succeeded', { p_attempt: mine!.attempt_id, p_transfer_id: 'tr_other', p_created: null })).error).toBeNull();
+    const att = await tAdmin.from('companion_transfer_attempts').select('state, stripe_transfer_id').eq('id', mine!.attempt_id).single();
+    expect(att.data).toMatchObject({ state: 'succeeded', stripe_transfer_id: trId }); // first id kept
+    expect((await tAdmin.from('companion_earnings').select('transfer_state').eq('id', earningId).single()).data!.transfer_state).toBe('transferred');
+    expect((await claimRows()).some((r) => r.earning_id === earningId)).toBe(false); // never re-transferred
+  });
+
+  it('non-payable, held, reversed and zero-value earnings are never claimed', async () => {
+    const { earningId } = await payableEarning(4);
+    for (const s of ['pending_completion', 'held_for_issue', 'reversed']) {
+      await tAdmin.from('companion_earnings').update({ state: s }).eq('id', earningId);
+      expect((await claimRows()).some((r) => r.earning_id === earningId)).toBe(false);
+    }
+    await tAdmin.from('companion_earnings').update({ state: 'payable', net_minor: 0 }).eq('id', earningId); // zero-value
+    expect((await claimRows()).some((r) => r.earning_id === earningId)).toBe(false);
+    await tAdmin.from('companion_earnings').update({ state: 'reversed' }).eq('id', earningId); // park excluded
+  });
+
+  it('retryable failure keeps the earning un-transferred + re-claimable; permanent failure is terminal', async () => {
+    const { earningId } = await payableEarning(5);
+    const a1 = (await claimRows()).find((r) => r.earning_id === earningId)!.attempt_id;
+    expect((await tAdmin.rpc('finalize_transfer_failed_retryable', { p_attempt: a1, p_code: 'balance_insufficient', p_message: 'x' })).error).toBeNull();
+    expect((await tAdmin.from('companion_earnings').select('transfer_state').eq('id', earningId).single()).data!.transfer_state).toBe('failed');
+    expect((await tAdmin.from('companion_transfer_attempts').select('state').eq('id', a1).single()).data!.state).toBe('failed_retryable');
+    // Re-claimable.
+    const a2 = (await claimRows()).find((r) => r.earning_id === earningId)!.attempt_id;
+    expect(a2).toBe(a1); // one attempt row per earning, reused
+    expect((await tAdmin.rpc('finalize_transfer_failed_permanent', { p_attempt: a2, p_code: 'account_invalid', p_message: 'x' })).error).toBeNull();
+    expect((await tAdmin.from('companion_earnings').select('transfer_state').eq('id', earningId).single()).data!.transfer_state).toBe('failed');
+    expect((await claimRows()).some((r) => r.earning_id === earningId)).toBe(false); // permanent → excluded
+  });
+
+  it('worker RPCs are service-role only; a duplicate Stripe transfer id cannot be attached elsewhere', async () => {
+    // Denied to coordinator, companion and anon.
+    for (const cl of [tc, tcmp, client()]) {
+      expect((await cl.rpc('claim_plan_transfers', { p_limit: 5 })).error).not.toBeNull();
+      expect((await cl.rpc('finalize_transfer_succeeded', { p_attempt: planId, p_transfer_id: 'x', p_created: null })).error).not.toBeNull();
+    }
+    // Ledger is unforgeable by clients (RLS: no policies).
+    expect((await tc.from('companion_transfer_attempts').insert({
+      earning_id: planId, companion_account_id: companionAcct, companion_profile_id: companionId,
+      connected_account_id: 'acct_x', amount_minor: 1, idempotency_key: `forge-${suffix}`,
+    })).error).not.toBeNull();
+    // Duplicate stripe_transfer_id rejected.
+    const d1 = await payableEarning(6); const d2 = await payableEarning(7);
+    const rows = await claimRows();
+    const a1 = rows.find((r) => r.earning_id === d1.earningId)!.attempt_id;
+    const a2 = rows.find((r) => r.earning_id === d2.earningId)!.attempt_id;
+    const dupId = `tr_dup_${suffix}`;
+    expect((await tAdmin.rpc('finalize_transfer_succeeded', { p_attempt: a1, p_transfer_id: dupId, p_created: null })).error).toBeNull();
+    expect((await tAdmin.from('companion_transfer_attempts').update({ stripe_transfer_id: dupId }).eq('id', a2)).error).not.toBeNull();
+    await tAdmin.rpc('finalize_transfer_failed_permanent', { p_attempt: a2, p_code: 'cleanup', p_message: 'x' });
+  });
+
+  it('settlement overview is support-only; normal users cannot read the ledger', async () => {
+    const ov = await tsup.rpc('support_settlement_overview');
+    expect(ov.error).toBeNull();
+    expect((ov.data as { transferred: number }).transferred).toBeGreaterThanOrEqual(1);
+    expect((await tc.rpc('support_settlement_overview')).error).not.toBeNull();
+    expect((await tcmp.from('companion_transfer_attempts').select('id')).data ?? []).toHaveLength(0);
+    expect((await client().from('companion_transfer_attempts').select('id')).data ?? []).toHaveLength(0);
+  });
+});
+
+/* ============================================================
+ * 2G6C — refunds & credit restoration (live). FIXTURE-SCOPED: synthetic orders
+ * with synthetic PaymentIntent ids, and the refund worker is only ever claimed
+ * by EXPLICIT refund ids (claim_payment_refunds p_ids) — never a global claim —
+ * so unrelated hosted rows are never touched. No Stripe call is made; the worker
+ * finalisation RPC is exercised directly with synthetic refund ids.
+ * ============================================================ */
+describe.skipIf(!enabled)('2G6C payment refunds (requires live Supabase)', () => {
+  let rc: SupabaseClient;    // payer (coordinator)
+  let rsup: SupabaseClient;  // support admin
+  let rAdmin: SupabaseClient;
+  let payerId: string;
+  let supId: string;
+  const made: string[] = []; // order ids for cleanup
+
+  async function synthOrder(credit: number, card: number, withPi: boolean): Promise<string> {
+    const total = credit + card;
+    const ins = await rAdmin.from('payment_orders').insert({
+      provider: 'stripe_test', coordinator_account_id: payerId, order_type: 'one_off',
+      status: 'succeeded', subtotal_minor: total, discount_minor: 0, service_fee_minor: 0,
+      credit_applied_minor: credit, card_amount_minor: card, total_minor: total,
+      commission_rate_pct: 0, commission_minor: 0,
+      stripe_payment_intent_id: withPi ? `pi_test_2g6c_${suffix}_${made.length}` : null,
+      idempotency_key: `2g6c-order-${suffix}-${made.length}`,
+    }).select('id').single();
+    if (ins.error) throw new Error(`order: ${ins.error.message}`);
+    made.push(ins.data!.id as string);
+    return ins.data!.id as string;
+  }
+  const req = (kind: string, id: string, remedy: number, key: string, reason = 'test reason') =>
+    rsup.rpc('request_payment_refund', { p_source_kind: kind, p_source_id: id, p_remedy_minor: remedy, p_reason: reason, p_idempotency: key });
+
+  beforeAll(async () => {
+    rAdmin = adminClient();
+    rc = await signedInClient(`rls-rfc-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    rsup = await signedInClient(`rls-rfsup-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    payerId = (await rc.auth.getUser()).data.user!.id;
+    supId = (await rsup.auth.getUser()).data.user!.id;
+    if ((await rc.rpc('complete_coordinator_signup', { p_first_name: 'RefCoord', p_consent_confirmed: true, p_member_first_name: 'RefMum' })).error) throw new Error('coord');
+    if ((await rsup.rpc('ensure_current_account')).error) throw new Error('ensure');
+    const g = await rAdmin.from('support_admins').upsert({ account_id: supId }, { onConflict: 'account_id', ignoreDuplicates: true });
+    if (g.error) throw new Error(`support: ${g.error.message}`);
+  }, 120_000);
+
+  afterAll(async () => {
+    for (const o of made) {
+      await rAdmin.from('settlement_adjustments').delete().in('refund_id',
+        (await rAdmin.from('payment_refunds').select('id').eq('payment_order_id', o)).data?.map((r) => r.id) ?? ['00000000-0000-0000-0000-000000000000']);
+      await rAdmin.from('payment_refunds').delete().eq('payment_order_id', o);
+      await rAdmin.from('payment_orders').delete().eq('id', o);
+    }
+    await rAdmin.from('support_admins').delete().eq('account_id', supId);
+  });
+
+  it('an account-credit-only order restores credit and never queues Stripe work', async () => {
+    const o = await synthOrder(1000, 0, false);
+    const r = await req('order', o, 1000, `credit-only-${suffix}`);
+    expect(r.error).toBeNull();
+    expect(r.data).toMatchObject({ credit_restore_minor: 1000, card_refund_minor: 0, state: 'succeeded' });
+    const cl = await rAdmin.from('credit_ledger').select('amount_minor').eq('coordinator_account_id', payerId).eq('source_type', 'payment_restoration').eq('source_id', r.data.refund_id).single();
+    expect(cl.data!.amount_minor).toBe(1000);
+    // No card refund is claimable (fixture-scoped).
+    expect(((await rAdmin.rpc('claim_payment_refunds', { p_limit: 10, p_ids: [r.data.refund_id] })).data ?? []).length).toBe(0);
+  });
+
+  it('a card-only order queues the correct card refund; worker claims + finalises once', async () => {
+    const o = await synthOrder(0, 1000, true);
+    const r = await req('order', o, 700, `card-only-${suffix}`);
+    expect(r.data).toMatchObject({ credit_restore_minor: 0, card_refund_minor: 700, state: 'requested' });
+    const claim = await rAdmin.rpc('claim_payment_refunds', { p_limit: 10, p_ids: [r.data.refund_id] });
+    expect((claim.data ?? []).length).toBe(1);
+    expect(claim.data[0].payment_intent_id).toContain('pi_test_2g6c_');
+    // A second claim (same ids) does not re-claim a processing row.
+    expect(((await rAdmin.rpc('claim_payment_refunds', { p_limit: 10, p_ids: [r.data.refund_id] })).data ?? []).length).toBe(0);
+    expect((await rAdmin.rpc('finalize_refund_succeeded', { p_refund: r.data.refund_id, p_stripe_refund_id: `re_2g6c_a_${suffix}`, p_charge_id: null })).error).toBeNull();
+    // Idempotent finalisation.
+    expect((await rAdmin.rpc('finalize_refund_succeeded', { p_refund: r.data.refund_id, p_stripe_refund_id: `re_other_${suffix}`, p_charge_id: null })).error).toBeNull();
+    const rf = await rAdmin.from('payment_refunds').select('state, stripe_refund_id').eq('id', r.data.refund_id).single();
+    expect(rf.data).toMatchObject({ state: 'succeeded', stripe_refund_id: `re_2g6c_a_${suffix}` });
+    expect((await rAdmin.from('payment_orders').select('status').eq('id', o).single()).data!.status).toBe('partially_refunded');
+  });
+
+  it('a mixed order restores credit first, refunds the remainder to card, and caps/reserves correctly', async () => {
+    const o = await synthOrder(500, 1500, true); // total 2000
+    const r = await req('order', o, 1200, `mixed-${suffix}`);
+    expect(r.data).toMatchObject({ credit_restore_minor: 500, card_refund_minor: 700 });
+    // credit restored once = 500
+    expect((await rAdmin.from('credit_ledger').select('amount_minor').eq('source_id', r.data.refund_id).eq('source_type', 'payment_restoration').single()).data!.amount_minor).toBe(500);
+    // A second remedy is capped by the REMAINING funding (credit 0 left, card 800 left).
+    const over = await req('order', o, 2000, `mixed-over-${suffix}`);
+    expect(String(over.error?.message)).toContain('remedy_exceeds_refundable');
+    const ok2 = await req('order', o, 800, `mixed-2-${suffix}`);
+    expect(ok2.data).toMatchObject({ credit_restore_minor: 0, card_refund_minor: 800 });
+    // Idempotent repeat.
+    expect((await req('order', o, 800, `mixed-2-${suffix}`)).data.repeat).toBe(true);
+  });
+
+  it('remedy cannot exceed the order/occurrence cap', async () => {
+    const o = await synthOrder(0, 1000, true);
+    expect(String((await req('order', o, 1500, `cap-${suffix}`)).error?.message)).toContain('remedy_exceeds_refundable');
+  });
+
+  it('retryable failure stays retryable; permanent is auditable; duplicate Stripe refund id is rejected', async () => {
+    const o1 = await synthOrder(0, 1000, true);
+    const r1 = await req('order', o1, 400, `retry-${suffix}`);
+    await rAdmin.rpc('claim_payment_refunds', { p_limit: 5, p_ids: [r1.data.refund_id] });
+    expect((await rAdmin.rpc('finalize_refund_failed_retryable', { p_refund: r1.data.refund_id, p_code: 'rate_limit', p_message: 'x' })).error).toBeNull();
+    expect((await rAdmin.from('payment_refunds').select('state').eq('id', r1.data.refund_id).single()).data!.state).toBe('failed_retryable');
+    // Re-claimable.
+    expect(((await rAdmin.rpc('claim_payment_refunds', { p_limit: 5, p_ids: [r1.data.refund_id] })).data ?? []).length).toBe(1);
+    await rAdmin.rpc('finalize_refund_succeeded', { p_refund: r1.data.refund_id, p_stripe_refund_id: `re_dup_${suffix}`, p_charge_id: null });
+    // A different refund cannot attach the same Stripe id.
+    const o2 = await synthOrder(0, 1000, true);
+    const r2 = await req('order', o2, 400, `perm-${suffix}`);
+    expect((await rAdmin.from('payment_refunds').update({ stripe_refund_id: `re_dup_${suffix}` }).eq('id', r2.data.refund_id)).error).not.toBeNull();
+    await rAdmin.rpc('finalize_refund_failed_permanent', { p_refund: r2.data.refund_id, p_code: 'card', p_message: 'x' });
+    expect((await rAdmin.from('payment_refunds').select('state').eq('id', r2.data.refund_id).single()).data!.state).toBe('failed_permanent');
+  });
+
+  it('refunds are private + support-gated; normal users cannot create, read or forge', async () => {
+    const o = await synthOrder(0, 1000, true);
+    expect((await rc.rpc('request_payment_refund', { p_source_kind: 'order', p_source_id: o, p_remedy_minor: 100, p_reason: 'x', p_idempotency: `forge-${suffix}` })).error).not.toBeNull();
+    expect((await rc.rpc('claim_payment_refunds', { p_limit: 1, p_ids: null })).error).not.toBeNull();
+    expect((await rc.from('payment_refunds').select('id')).data ?? []).toHaveLength(0);
+    expect((await client().from('payment_refunds').select('id')).data ?? []).toHaveLength(0);
+    expect((await rc.from('payment_refunds').insert({
+      payment_order_id: o, payer_account_id: payerId, remedy_minor: 1, credit_restore_minor: 0,
+      card_refund_minor: 1, idempotency_key: `forge2-${suffix}`,
+    })).error).not.toBeNull();
+    // Support overview works only for support.
+    expect((await rsup.rpc('support_refund_overview')).error).toBeNull();
+    expect((await rc.rpc('support_refund_overview')).error).not.toBeNull();
+  });
+
+  it('the approved reason is required, persisted, support-only, and never overwritten on repeat', async () => {
+    const o = await synthOrder(0, 1000, true);
+    // Empty reason is rejected.
+    expect(String((await req('order', o, 100, `reason-empty-${suffix}`, '   ')).error?.message)).toContain('reason_required');
+    // A reason is persisted on the row.
+    const r = await req('order', o, 200, `reason-${suffix}`, 'Coordinator reported audio failure');
+    expect(r.error).toBeNull();
+    expect((await rAdmin.from('payment_refunds').select('reason').eq('id', r.data.refund_id).single()).data!.reason).toBe('Coordinator reported audio failure');
+    // Ordinary users cannot read the reason (RLS: no policy).
+    expect((await rc.from('payment_refunds').select('reason').eq('id', r.data.refund_id)).data ?? []).toHaveLength(0);
+    // Support overview surfaces the reason; a normal user cannot.
+    const ov = await rsup.rpc('support_refund_overview');
+    expect((ov.data.recent as Array<{ id: string; reason: string }>).some((x) => x.id === r.data.refund_id && x.reason === 'Coordinator reported audio failure')).toBe(true);
+    // An idempotent repeat with a DIFFERENT reason does not overwrite the original.
+    const again = await req('order', o, 200, `reason-${suffix}`, 'A different reason');
+    expect(again.data.repeat).toBe(true);
+    expect((await rAdmin.from('payment_refunds').select('reason').eq('id', r.data.refund_id).single()).data!.reason).toBe('Coordinator reported audio failure');
+  });
+
+  it('a card portion with no PaymentIntent fails clearly with missing_payment_identifier', async () => {
+    const o = await synthOrder(0, 1000, false); // card-funded but NO stripe_payment_intent_id
+    const r = await req('order', o, 500, `no-pi-${suffix}`, 'card refund without a PaymentIntent');
+    expect(String(r.error?.message)).toContain('missing_payment_identifier');
+    // No refund row was created for it.
+    expect((await rAdmin.from('payment_refunds').select('id').eq('payment_order_id', o)).data ?? []).toHaveLength(0);
+  });
+});
+
+/* ============================================================
+ * 2G6C fix — settlement adjustment on refund SUCCESS (live). Builds ONE real
+ * transferred plan-occurrence earning (proven 2G6A/2G6B flow), then proves the
+ * platform-loss adjustment is recorded only when a refund actually succeeds —
+ * never for requested/permanent/cancelled — and credit-only immediate success
+ * records exactly one. Fixture-scoped; synthetic Stripe ids only.
+ * ============================================================ */
+describe.skipIf(!enabled)('2G6C adjustment-on-success (requires live Supabase)', () => {
+  let ac: SupabaseClient;   // coordinator + member
+  let acmp: SupabaseClient; // companion
+  let asup: SupabaseClient; // support admin
+  let aAdmin: SupabaseClient;
+  let issueId: string;
+  let orderId: string;
+  let earningId: string;
+  let bookingId: string;
+  let supId2: string;
+  let cap: number;
+
+  const monthOf = (d: Date) => `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`;
+  const monthStartUtc = (k: number): Date => { const d = new Date(); d.setUTCHours(0, 0, 0, 0); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() - k); return d; };
+  const adjFor = async (refund: string) => ((await aAdmin.from('settlement_adjustments').select('id').eq('refund_id', refund)).data ?? []).length;
+  const reqA = (remedy: number, key: string) => asup.rpc('request_payment_refund', { p_source_kind: 'issue', p_source_id: issueId, p_remedy_minor: remedy, p_reason: 'adjustment test', p_idempotency: key });
+
+  beforeAll(async () => {
+    aAdmin = adminClient();
+    ac = await signedInClient(`rls-adjc-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    acmp = await signedInClient(`rls-adjcmp-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    asup = await signedInClient(`rls-adjsup-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    const coordId = (await ac.auth.getUser()).data.user!.id;
+    const compAcct = (await acmp.auth.getUser()).data.user!.id;
+    supId2 = (await asup.auth.getUser()).data.user!.id;
+
+    const c = await ac.rpc('complete_coordinator_signup', { p_first_name: 'AdjCoord', p_consent_confirmed: true, p_member_first_name: 'AdjMum' });
+    if (c.error) throw new Error(`coord: ${c.error.message}`);
+    const memberId = (c.data as { member_profile_id: string }).member_profile_id;
+    const comp = await acmp.rpc('complete_companion_signup', { p_first_name: 'AdjCompanion', p_date_of_birth: '1985-05-05' });
+    if (comp.error) throw new Error(`companion: ${comp.error.message}`);
+    const companionId = comp.data.id as string;
+    if ((await acmp.rpc('replace_companion_availability', { p_profile: companionId, p_timezone: 'Europe/London', p_rules: [1,2,3,4,5,6,7].map((day) => ({ day, start: '00:00', end: '23:59' })) })).error) throw new Error('availability');
+    if ((await acmp.from('conversation_offers').insert({ companion_profile_id: companionId, offer_type: 'single', duration_minutes: 30, price_minor: 1000, supported_methods: ['in_app'] })).error) throw new Error('offer');
+    const plan = await ac.rpc('create_conversation_plan', { p_member: memberId, p_companion: companionId, p_frequency: 2, p_duration: 30, p_method: 'in_app', p_slots: [{ day: 2, time: '10:00' }, { day: 4, time: '14:00' }] });
+    if (plan.error) throw new Error(`plan: ${plan.error.message}`);
+    const planId = plan.data.id as string;
+    if ((await acmp.rpc('accept_plan', { p_plan: planId, p_message: null })).error) throw new Error('accept');
+    if ((await aAdmin.from('conversation_plans').update({ billing_enabled: true }).eq('id', planId)).error) throw new Error('enable');
+    if ((await aAdmin.rpc('issue_account_credit', { p_account: coordId, p_amount: 1_000_000, p_source_type: 'support_adjustment', p_source: null, p_reason: 'adj credit', p_idempotency: `adj-credit-${suffix}` })).error) throw new Error('credit');
+    const m = monthOf(monthStartUtc(3));
+    if ((await aAdmin.rpc('renew_plan_billing_period', { p_plan: planId, p_period_start: m })).error) throw new Error('renew');
+    if ((await ac.rpc('extend_plan_bookings', { p_plan: planId })).error) throw new Error('extend');
+    // Re-date one occurrence into the paid month, confirm attendance → payable earning.
+    const bk = await aAdmin.from('bookings').select('id, duration_minutes').eq('plan_id', planId).eq('status', 'confirmed').order('starts_at').limit(1).single();
+    bookingId = bk.data!.id as string;
+    const start = monthStartUtc(3); start.setUTCDate(12); start.setUTCHours(9, 0, 0, 0);
+    const end = new Date(start.getTime() + (bk.data!.duration_minutes as number) * 60_000);
+    if ((await aAdmin.from('bookings').update({ starts_at: start.toISOString(), ends_at: end.toISOString() }).eq('id', bookingId)).error) throw new Error('redate');
+    if ((await acmp.rpc('submit_companion_attendance', { p_booking: bookingId, p_outcome: 'took_place', p_explanation: null })).error) throw new Error('attend');
+    const e = await aAdmin.from('companion_earnings').select('id, payment_order_id, payer_charge_minor').eq('booking_id', bookingId).single();
+    earningId = e.data!.id as string; orderId = e.data!.payment_order_id as string; cap = e.data!.payer_charge_minor as number;
+    // Simulate a completed 2G6B transfer + give the order a card portion & a synthetic PaymentIntent.
+    if ((await aAdmin.from('companion_earnings').update({ transfer_state: 'transferred' }).eq('id', earningId)).error) throw new Error('transfer state');
+    if ((await aAdmin.from('companion_transfer_attempts').insert({ earning_id: earningId, companion_account_id: compAcct, companion_profile_id: companionId, connected_account_id: `acct_adj_${suffix}`, amount_minor: cap, idempotency_key: `adj-tr-${suffix}`, state: 'succeeded', stripe_transfer_id: `tr_adj_${suffix}` })).error) throw new Error('attempt');
+    const total = (await aAdmin.from('payment_orders').select('total_minor').eq('id', orderId).single()).data!.total_minor as number;
+    if ((await aAdmin.from('payment_orders').update({ credit_applied_minor: 0, card_amount_minor: total, stripe_payment_intent_id: `pi_adj_${suffix}` }).eq('id', orderId)).error) throw new Error('order pi');
+    if ((await ac.rpc('report_conversation_issue', { p_booking: bookingId, p_category: 'audio_video_problem', p_description: 'Adjustment fixture issue' })).error) throw new Error('issue');
+    issueId = (await aAdmin.from('conversation_issues').select('id').eq('booking_id', bookingId).eq('state', 'open').single()).data!.id as string;
+    if ((await asup.rpc('ensure_current_account')).error) throw new Error('ensure');
+    if ((await aAdmin.from('support_admins').upsert({ account_id: supId2 }, { onConflict: 'account_id', ignoreDuplicates: true })).error) throw new Error('support');
+  }, 120_000);
+
+  afterAll(async () => {
+    await aAdmin.from('settlement_adjustments').delete().eq('companion_earning_id', earningId);
+    await aAdmin.from('payment_refunds').delete().eq('companion_earning_id', earningId);
+    await aAdmin.from('support_admins').delete().eq('account_id', supId2);
+  });
+
+  it('a requested card refund records NO adjustment yet; success records exactly one (idempotent)', async () => {
+    const r = await reqA(400, `adj-card-${suffix}`);
+    expect(r.error).toBeNull();
+    expect(r.data).toMatchObject({ card_refund_minor: 400, state: 'requested' });
+    expect(await adjFor(r.data.refund_id)).toBe(0); // BUG FIX: not created eagerly
+    expect((await aAdmin.rpc('finalize_refund_succeeded', { p_refund: r.data.refund_id, p_stripe_refund_id: `re_adj_${suffix}`, p_charge_id: null })).error).toBeNull();
+    expect(await adjFor(r.data.refund_id)).toBe(1);
+    // Repeated success finalisation does not duplicate.
+    await aAdmin.rpc('finalize_refund_succeeded', { p_refund: r.data.refund_id, p_stripe_refund_id: `re_adj2_${suffix}`, p_charge_id: null });
+    expect(await adjFor(r.data.refund_id)).toBe(1);
+  });
+
+  it('permanent Stripe failure records NO adjustment', async () => {
+    const r = await reqA(100, `adj-perm-${suffix}`);
+    await aAdmin.rpc('claim_payment_refunds', { p_limit: 5, p_ids: [r.data.refund_id] });
+    await aAdmin.rpc('finalize_refund_failed_permanent', { p_refund: r.data.refund_id, p_code: 'card', p_message: 'x' });
+    expect(await adjFor(r.data.refund_id)).toBe(0);
+  });
+
+  it('a cancelled refund records NO adjustment', async () => {
+    const r = await reqA(100, `adj-cancel-${suffix}`);
+    await aAdmin.rpc('finalize_refund_cancelled', { p_refund: r.data.refund_id, p_reason: 'test' });
+    expect(await adjFor(r.data.refund_id)).toBe(0);
+  });
+
+  it('a credit-only immediate success after transfer records exactly one adjustment', async () => {
+    // Flip the order back to credit-funded so the remedy is credit-only.
+    const total = (await aAdmin.from('payment_orders').select('total_minor').eq('id', orderId).single()).data!.total_minor as number;
+    await aAdmin.from('payment_orders').update({ credit_applied_minor: total, card_amount_minor: 0, stripe_payment_intent_id: null }).eq('id', orderId);
+    const r = await reqA(100, `adj-credit-${suffix}`);
+    expect(r.data).toMatchObject({ credit_restore_minor: 100, card_refund_minor: 0, state: 'succeeded' });
+    expect(await adjFor(r.data.refund_id)).toBe(1); // terminally succeeded → recorded now
+  });
 });

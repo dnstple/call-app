@@ -319,6 +319,7 @@ export default function BookingDetail() {
             bookingId={booking.id}
             memberName={booking.member_first_name}
             companionName={booking.companion_first_name}
+            onConfirmed={() => void load()}
           />
         </section>
       )}
@@ -328,7 +329,7 @@ export default function BookingDetail() {
           it; the card self-hides unless ended & funded). */}
       {isCompanionSide && ended && (
         <section className="section-tight">
-          <AttendanceCard bookingId={booking.id} memberName={booking.member_first_name} />
+          <AttendanceCard bookingId={booking.id} memberName={booking.member_first_name} onConfirmed={() => void load()} />
         </section>
       )}
 

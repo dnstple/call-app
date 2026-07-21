@@ -34,8 +34,8 @@ interface ReviewState {
   earningState: string;
 }
 
-export function ReviewCard({ bookingId, memberName, companionName }: {
-  bookingId: string; memberName: string; companionName: string;
+export function ReviewCard({ bookingId, memberName, companionName, onConfirmed }: {
+  bookingId: string; memberName: string; companionName: string; onConfirmed?: () => void;
 }) {
   const [state, setState] = useState<ReviewState | null>(null);
   const [stars, setStars] = useState<number | null>(null);
@@ -133,6 +133,7 @@ export function ReviewCard({ bookingId, memberName, companionName }: {
       p_message_idempotency: editing || message.trim() === '' ? null : message.trim(),
     });
     if (e) setError(String(e.message ?? 'We couldn’t save your review. Please try again.'));
+    else onConfirmed?.(); // tell the page to refetch the booking → banner + list stay in sync
     setEditing(false);
     setMessage('');
     load(); // authoritative refresh

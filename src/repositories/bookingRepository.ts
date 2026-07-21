@@ -245,8 +245,32 @@ export function splitBookings(rows: MyBookingRow[], now = new Date()) {
  * status: a confirmed booking whose end has passed simply awaits both sides'
  * outcomes (Stage 2E1A).
  */
+/**
+ * Authoritative outcome-confirmation read-model (migration 0051). A booking may
+ * stay `status = 'confirmed'` after the outcome is complete, so completion is
+ * derived from the per-side confirmation flags — NOT from booking status alone.
+ * Undefined flags (mock rows / older fixtures) fall back to "not submitted",
+ * preserving the pre-0051 behaviour.
+ */
+export function bothOutcomesConfirmed(b: Partial<Pick<MyBookingRow, 'member_outcome_submitted' | 'companion_outcome_submitted'>>): boolean {
+  return !!b.member_outcome_submitted && !!b.companion_outcome_submitted;
+}
+export function myOutcomeConfirmed(
+  b: Partial<Pick<MyBookingRow, 'member_outcome_submitted' | 'companion_outcome_submitted' | 'your_side'>>,
+): boolean {
+  if (b.your_side === 'companion') return !!b.companion_outcome_submitted;
+  if (b.your_side === 'member') return !!b.member_outcome_submitted;
+  return false; // read-only viewer / unknown side: nothing for this user to confirm
+}
+
 export function derivedStatusLabel(b: MyBookingRow, now = new Date()): string {
   if (b.status === 'confirmed' && new Date(b.ends_at).getTime() <= now.getTime()) {
+    // Derive from the authoritative per-side confirmations, never status alone.
+    if (bothOutcomesConfirmed(b)) return 'Completed — confirmed by both sides';
+    if (b.your_side && myOutcomeConfirmed(b)) {
+      return 'Conversation ended — waiting for the other person to confirm.';
+    }
+    if (b.your_side) return 'Conversation ended — confirm how it went.';
     return 'Conversation ended — waiting for both sides to confirm how it went.';
   }
   const labels: Record<string, string> = {
@@ -422,10 +446,14 @@ export function reconcileOutcomes(
 
 /** Eligible for a completion outcome: confirmed AND the scheduled end passed. */
 export function canConfirmCompletion(
-  b: Pick<MyBookingRow, 'status' | 'ends_at'>,
+  b: Pick<MyBookingRow, 'status' | 'ends_at'> &
+    Partial<Pick<MyBookingRow, 'member_outcome_submitted' | 'companion_outcome_submitted' | 'your_side'>>,
   now = new Date(),
 ): boolean {
-  return b.status === 'confirmed' && new Date(b.ends_at).getTime() <= now.getTime();
+  // The viewer may confirm ONLY while their own side's outcome is missing.
+  return b.status === 'confirmed'
+    && new Date(b.ends_at).getTime() <= now.getTime()
+    && !myOutcomeConfirmed(b);
 }
 
 function payloadToState(p: CompletionStatePayload): CompletionState {
