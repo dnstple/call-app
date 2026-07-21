@@ -56,19 +56,27 @@ Deno.serve(async (req) => {
 
   // Idempotency: persist the event id BEFORE side effects. A duplicate
   // insert means we've seen it — acknowledge and stop.
-  const inserted = await admin.from('stripe_webhook_events').insert({
+  // Retry-safe idempotency: an event is only marked 'processed' AFTER its DB
+  // side effects succeed. A duplicate that is already 'processed' is a no-op; a
+  // prior 'failed'/'processing' row is re-run, and a failed side effect returns
+  // 500 so Stripe redelivers and we retry.
+  await admin.from('stripe_webhook_events').upsert({
     id: event.id,
     event_type: event.type,
     payload: event.data.object as Record<string, unknown>,
-  });
-  if (inserted.error) {
-    if (/duplicate|unique/i.test(inserted.error.message)) {
-      return new Response(JSON.stringify({ received: true, duplicate: true }), { status: 200 });
-    }
-    return new Response('persist_failed', { status: 500 });
+    status: 'received',
+  }, { onConflict: 'id', ignoreDuplicates: true });
+  // Atomic claim: exactly one concurrent invocation processes the event; an
+  // already-processed event is a safe no-op; a stale 'processing' row is
+  // re-claimable so a crashed/failed attempt is retried on redelivery.
+  const claim = await admin.rpc('claim_webhook_event', { p_id: event.id, p_stale_minutes: 5 });
+  if (claim.error) return new Response('persist_failed', { status: 500 });
+  if (claim.data !== true) {
+    return new Response(JSON.stringify({ received: true, duplicate: true }), { status: 200 });
   }
 
   let result = 'ignored';
+  let ok = true;
   try {
     switch (event.type) {
       case 'setup_intent.succeeded': {
@@ -251,19 +259,65 @@ Deno.serve(async (req) => {
         }
         break;
       }
+      // 2G6D — dispute reconciliation. Provider dispute status and actual fund
+      // movement are RECORDED separately; no evidence is submitted, no transfer
+      // reversed. RPC errors throw → the event is left retriable (500).
+      case 'charge.dispute.created':
+      case 'charge.dispute.updated': {
+        const d = event.data.object as Stripe.Dispute;
+        const due = d.evidence_details?.due_by;
+        const r = await admin.rpc('record_dispute_upsert', {
+          p_stripe_dispute_id: d.id,
+          p_payment_intent: typeof d.payment_intent === 'string' ? d.payment_intent : null,
+          p_charge: typeof d.charge === 'string' ? d.charge : null,
+          p_amount: d.amount ?? 0,
+          p_currency: (d.currency ?? 'gbp').toUpperCase(),
+          p_reason: d.reason ?? null,
+          p_provider_status: d.status ?? null,
+          p_evidence_due: due ? new Date(due * 1000).toISOString() : null,
+        });
+        if (r.error) throw new Error(`dispute_upsert:${r.error.message}`);
+        result = 'dispute_recorded';
+        break;
+      }
+      case 'charge.dispute.closed': {
+        const d = event.data.object as Stripe.Dispute;
+        const r = await admin.rpc('record_dispute_closed', {
+          p_stripe_dispute_id: d.id, p_provider_status: d.status ?? null, p_outcome: d.status ?? null,
+        });
+        if (r.error) throw new Error(`dispute_closed:${r.error.message}`);
+        result = 'dispute_closed';
+        break;
+      }
+      case 'charge.dispute.funds_withdrawn': {
+        const d = event.data.object as Stripe.Dispute;
+        const r = await admin.rpc('record_dispute_funds_withdrawn', { p_stripe_dispute_id: d.id });
+        if (r.error) throw new Error(`dispute_funds_withdrawn:${r.error.message}`);
+        result = 'dispute_funds_withdrawn';
+        break;
+      }
+      case 'charge.dispute.funds_reinstated': {
+        const d = event.data.object as Stripe.Dispute;
+        const r = await admin.rpc('record_dispute_funds_reinstated', { p_stripe_dispute_id: d.id });
+        if (r.error) throw new Error(`dispute_funds_reinstated:${r.error.message}`);
+        result = 'dispute_funds_reinstated';
+        break;
+      }
       default:
         result = 'ignored';
     }
     await admin.from('stripe_webhook_events').update({
-      processed_at: new Date().toISOString(),
-      result,
+      status: 'processed', processed_at: new Date().toISOString(), result,
     }).eq('id', event.id);
   } catch (e) {
+    ok = false;
     await admin.from('stripe_webhook_events').update({
-      processed_at: new Date().toISOString(),
+      status: 'failed', processed_at: null,
       result: `error:${e instanceof Error ? e.message : 'unknown'}`,
     }).eq('id', event.id);
   }
 
-  return new Response(JSON.stringify({ received: true }), { status: 200 });
+  // A failed side effect returns 500 so Stripe redelivers and the operation
+  // retries; a successful/ignored event acknowledges with 200.
+  return new Response(JSON.stringify({ received: true, ok }), { status: ok ? 200 : 500 });
 });

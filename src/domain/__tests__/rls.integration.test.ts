@@ -4187,3 +4187,195 @@ describe.skipIf(!enabled)('2G6C adjustment-on-success (requires live Supabase)',
     expect(await adjFor(r.data.refund_id)).toBe(1); // terminally succeeded → recorded now
   });
 });
+
+/* ============================================================
+ * 2G6D — disputes & chargebacks (live). Fixture-scoped: one real plan_period
+ * order funding TWO occurrence earnings (one transferred, one not) + synthetic
+ * orders and synthetic dispute ids. Proves dispute status and fund movement are
+ * separate, refunds/transfers are held, exposure is created only on withdrawal
+ * after transfer, reinstatement resolves (never deletes), and allocation is
+ * deterministic + capped. No Stripe calls; record RPCs are driven directly.
+ * ============================================================ */
+describe.skipIf(!enabled)('2G6D disputes (requires live Supabase)', () => {
+  let dc: SupabaseClient; let dcmp: SupabaseClient; let dsup: SupabaseClient; let dAdmin: SupabaseClient;
+  let orderId: string; let e1: string; let e2: string; let payerId: string; let supId3: string;
+  let charge1: number; let charge2: number;
+  const made: string[] = [];
+  const monthOf = (d: Date) => `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`;
+  const monthStartUtc = (k: number): Date => { const d = new Date(); d.setUTCHours(0, 0, 0, 0); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() - k); return d; };
+  const disputes = (id: string) => dAdmin.from('payment_disputes').select('*').eq('stripe_dispute_id', id);
+  let dp1Uuid = '';
+
+  async function synthOrder(card: number): Promise<string> {
+    const ins = await dAdmin.from('payment_orders').insert({
+      provider: 'stripe_test', coordinator_account_id: payerId, order_type: 'one_off', status: 'succeeded',
+      subtotal_minor: card, discount_minor: 0, service_fee_minor: 0, credit_applied_minor: 0, card_amount_minor: card,
+      total_minor: card, commission_rate_pct: 0, commission_minor: 0,
+      stripe_payment_intent_id: `pi_d_${suffix}_${made.length}`, idempotency_key: `2g6d-o-${suffix}-${made.length}`,
+    }).select('id').single();
+    if (ins.error) throw new Error(`synthOrder: ${ins.error.message}`);
+    made.push(ins.data!.id as string);
+    return ins.data!.id as string;
+  }
+
+  beforeAll(async () => {
+    dAdmin = adminClient();
+    dc = await signedInClient(`rls-dpc-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    dcmp = await signedInClient(`rls-dpcmp-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    dsup = await signedInClient(`rls-dpsup-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    payerId = (await dc.auth.getUser()).data.user!.id;
+    const compAcct = (await dcmp.auth.getUser()).data.user!.id;
+    supId3 = (await dsup.auth.getUser()).data.user!.id;
+    const c = await dc.rpc('complete_coordinator_signup', { p_first_name: 'DispCoord', p_consent_confirmed: true, p_member_first_name: 'DispMum' });
+    if (c.error) throw new Error(`coord: ${c.error.message}`);
+    const memberId = (c.data as { member_profile_id: string }).member_profile_id;
+    const comp = await dcmp.rpc('complete_companion_signup', { p_first_name: 'DispCompanion', p_date_of_birth: '1984-04-04' });
+    if (comp.error) throw new Error(`companion: ${comp.error.message}`);
+    const companionId = comp.data.id as string;
+    if ((await dcmp.rpc('replace_companion_availability', { p_profile: companionId, p_timezone: 'Europe/London', p_rules: [1,2,3,4,5,6,7].map((day) => ({ day, start: '00:00', end: '23:59' })) })).error) throw new Error('availability');
+    if ((await dcmp.from('conversation_offers').insert({ companion_profile_id: companionId, offer_type: 'single', duration_minutes: 30, price_minor: 1000, supported_methods: ['in_app'] })).error) throw new Error('offer');
+    const plan = await dc.rpc('create_conversation_plan', { p_member: memberId, p_companion: companionId, p_frequency: 2, p_duration: 30, p_method: 'in_app', p_slots: [{ day: 2, time: '10:00' }, { day: 4, time: '14:00' }] });
+    if (plan.error) throw new Error(`plan: ${plan.error.message}`);
+    const planId = plan.data.id as string;
+    if ((await dcmp.rpc('accept_plan', { p_plan: planId, p_message: null })).error) throw new Error('accept');
+    if ((await dAdmin.from('conversation_plans').update({ billing_enabled: true }).eq('id', planId)).error) throw new Error('enable');
+    if ((await dAdmin.rpc('issue_account_credit', { p_account: payerId, p_amount: 5_000_000, p_source_type: 'support_adjustment', p_source: null, p_reason: 'disp credit', p_idempotency: `disp-credit-${suffix}` })).error) throw new Error('credit');
+    if ((await dAdmin.rpc('renew_plan_billing_period', { p_plan: planId, p_period_start: monthOf(monthStartUtc(3)) })).error) throw new Error('renew');
+    if ((await dc.rpc('extend_plan_bookings', { p_plan: planId })).error) throw new Error('extend');
+    // Confirm attendance on TWO occurrences → two earnings on the same order.
+    const bks = await dAdmin.from('bookings').select('id, duration_minutes').eq('plan_id', planId).eq('status', 'confirmed').order('starts_at').limit(2);
+    for (let i = 0; i < 2; i++) {
+      const start = monthStartUtc(3); start.setUTCDate(10 + i * 3); start.setUTCHours(9, 0, 0, 0);
+      const end = new Date(start.getTime() + (bks.data![i].duration_minutes as number) * 60_000);
+      if ((await dAdmin.from('bookings').update({ starts_at: start.toISOString(), ends_at: end.toISOString() }).eq('id', bks.data![i].id)).error) throw new Error('redate');
+      if ((await dcmp.rpc('submit_companion_attendance', { p_booking: bks.data![i].id, p_outcome: 'took_place', p_explanation: null })).error) throw new Error('attend');
+    }
+    const es = await dAdmin.from('companion_earnings').select('id, payment_order_id, payer_charge_minor').in('booking_id', bks.data!.map((b) => b.id)).order('created_at');
+    e1 = es.data![0].id as string; e2 = es.data![1].id as string; orderId = es.data![0].payment_order_id as string;
+    charge1 = es.data![0].payer_charge_minor as number; charge2 = es.data![1].payer_charge_minor as number;
+    const total = (await dAdmin.from('payment_orders').select('total_minor').eq('id', orderId).single()).data!.total_minor as number;
+    if ((await dAdmin.from('payment_orders').update({ credit_applied_minor: 0, card_amount_minor: total, stripe_payment_intent_id: `pi_disp_${suffix}` }).eq('id', orderId)).error) throw new Error('order pi');
+    // Transfer E1 (companion already paid); E2 stays untransferred + ready.
+    if ((await dAdmin.from('companion_earnings').update({ transfer_state: 'transferred' }).eq('id', e1)).error) throw new Error('e1 transfer');
+    if ((await dAdmin.from('companion_transfer_attempts').insert({ earning_id: e1, companion_account_id: compAcct, companion_profile_id: companionId, connected_account_id: `acct_d_${suffix}`, amount_minor: charge1, idempotency_key: `disp-tr-${suffix}`, state: 'succeeded', stripe_transfer_id: `tr_disp_${suffix}` })).error) throw new Error('attempt');
+    if ((await dAdmin.from('connected_accounts').upsert({ account_id: compAcct, companion_profile_id: companionId, stripe_account_id: `acct_disp_${suffix}`, details_submitted: true, charges_enabled: true, payouts_enabled: true, transfers_capability: 'active', default_currency: 'gbp' }, { onConflict: 'account_id' })).error) throw new Error('connect');
+    if ((await dsup.rpc('ensure_current_account')).error) throw new Error('ensure');
+    if ((await dAdmin.from('support_admins').upsert({ account_id: supId3 }, { onConflict: 'account_id', ignoreDuplicates: true })).error) throw new Error('support');
+  }, 120_000);
+
+  afterAll(async () => {
+    // Dependency order: adjustments → refunds → dispute-earnings → disputes → orders.
+    await dAdmin.from('settlement_adjustments').delete().eq('companion_earning_id', e1);
+    for (const o of made) {
+      await dAdmin.from('payment_refunds').delete().eq('payment_order_id', o);
+    }
+    await dAdmin.from('payment_dispute_earnings').delete().in('earning_id', [e1, e2]);
+    await dAdmin.from('payment_disputes').delete().like('stripe_dispute_id', `dp_%${suffix}`);
+    for (const o of made) await dAdmin.from('payment_orders').delete().eq('id', o);
+    await dAdmin.from('support_admins').delete().eq('account_id', supId3);
+  });
+
+  const upsert = (id: string, pi: string | null, status: string, amount = 1_000_000) =>
+    dAdmin.rpc('record_dispute_upsert', { p_stripe_dispute_id: id, p_payment_intent: pi, p_charge: null, p_amount: amount, p_currency: 'GBP', p_reason: 'fraudulent', p_provider_status: status, p_evidence_due: null });
+
+  it('a mapped dispute marks the order disputed, holds both earnings, deterministically caps allocation, and blocks refunds', async () => {
+    const id = `dp_main_${suffix}`;
+    expect((await upsert(id, `pi_disp_${suffix}`, 'needs_response')).error).toBeNull();
+    expect((await upsert(id, `pi_disp_${suffix}`, 'needs_response')).error).toBeNull(); // duplicate delivery
+    const d = await disputes(id);
+    expect(d.data).toHaveLength(1); // exactly one record
+    dp1Uuid = d.data![0].id as string;
+    expect(d.data![0].internal_state).toBe('open');
+    expect(d.data![0].payment_order_id).toBe(orderId);
+    expect((await dAdmin.from('payment_orders').select('status').eq('id', orderId).single()).data!.status).toBe('disputed');
+    const alloc = await dAdmin.from('payment_dispute_earnings').select('earning_id, allocated_minor, hold_state').eq('dispute_id', dp1Uuid);
+    expect(alloc.data).toHaveLength(2);
+    // Deterministic + capped: each ≤ its occurrence charge; sum ≤ the disputed/card cap.
+    for (const a of alloc.data!) expect(a.allocated_minor).toBeLessThanOrEqual(a.earning_id === e1 ? charge1 : charge2);
+    expect(alloc.data!.reduce((s, a) => s + (a.allocated_minor as number), 0)).toBe(charge1 + charge2);
+    // New card refund blocked; E2 not transferable while disputed.
+    expect(String((await dsup.rpc('request_payment_refund', { p_source_kind: 'order', p_source_id: orderId, p_remedy_minor: 100, p_reason: 'x', p_idempotency: `disp-ref-${suffix}` })).error?.message)).toContain('order_disputed');
+    expect(((await dAdmin.rpc('claim_plan_transfers', { p_limit: 50 })).data ?? []).some((r: { earning_id: string }) => r.earning_id === e2)).toBe(false);
+  });
+
+  it('funds withdrawn create exposure ONLY for the already-transferred earning, exactly once', async () => {
+    expect((await dAdmin.rpc('record_dispute_funds_withdrawn', { p_stripe_dispute_id: `dp_main_${suffix}` })).error).toBeNull();
+    expect((await dAdmin.rpc('record_dispute_funds_withdrawn', { p_stripe_dispute_id: `dp_main_${suffix}` })).error).toBeNull(); // repeat
+    expect((await dAdmin.from('payment_disputes').select('funds_withdrawn').eq('id', dp1Uuid).single()).data!.funds_withdrawn).toBe(true);
+    const adj = await dAdmin.from('settlement_adjustments').select('companion_earning_id').eq('dispute_id', dp1Uuid).eq('adjustment_type', 'dispute_after_transfer');
+    expect(adj.data).toHaveLength(1); // E1 transferred → one; E2 untransferred → none; repeat → still one
+    expect(adj.data![0].companion_earning_id).toBe(e1);
+  });
+
+  it('reinstatement RESOLVES the adjustment (never deletes) and releases holds', async () => {
+    expect((await dAdmin.rpc('record_dispute_funds_reinstated', { p_stripe_dispute_id: `dp_main_${suffix}` })).error).toBeNull();
+    const adj = await dAdmin.from('settlement_adjustments').select('state').eq('dispute_id', dp1Uuid);
+    expect(adj.data).toHaveLength(1);
+    expect(adj.data![0].state).toBe('resolved'); // resolved, not deleted
+    expect((await dAdmin.from('payment_dispute_earnings').select('hold_state').eq('dispute_id', dp1Uuid)).data!.every((h) => h.hold_state === 'released')).toBe(true);
+    // The order leaves 'disputed' once cleared (no refunds on it → back to succeeded).
+    expect((await dAdmin.from('payment_orders').select('status').eq('id', orderId).single()).data!.status).toBe('succeeded');
+  });
+
+  it('multiple disputes on one order keep it disputed until ALL clear (no premature release)', async () => {
+    const o4 = await synthOrder(3000);
+    const pi = (await dAdmin.from('payment_orders').select('stripe_payment_intent_id').eq('id', o4).single()).data!.stripe_payment_intent_id;
+    const a = `dp_a_${suffix}`; const b = `dp_b_${suffix}`;
+    expect((await upsert(a, pi, 'needs_response')).error).toBeNull();
+    expect((await upsert(b, pi, 'needs_response')).error).toBeNull();
+    expect((await dAdmin.from('payment_orders').select('status').eq('id', o4).single()).data!.status).toBe('disputed');
+    // Winning ONE dispute must NOT restore the order while the other is active.
+    await dAdmin.rpc('record_dispute_closed', { p_stripe_dispute_id: a, p_provider_status: 'won', p_outcome: 'won' });
+    expect((await dAdmin.from('payment_orders').select('status').eq('id', o4).single()).data!.status).toBe('disputed');
+    await dAdmin.rpc('record_dispute_closed', { p_stripe_dispute_id: b, p_provider_status: 'won', p_outcome: 'won' });
+    expect((await dAdmin.from('payment_orders').select('status').eq('id', o4).single()).data!.status).toBe('succeeded'); // all clear → restored
+  });
+
+  it('requested refunds stay blocked during an active dispute; a processing refund is not silently altered', async () => {
+    const o5 = await synthOrder(2000);
+    const pi = (await dAdmin.from('payment_orders').select('stripe_payment_intent_id').eq('id', o5).single()).data!.stripe_payment_intent_id;
+    // A refund exists BEFORE the dispute (requested).
+    const r = await dsup.rpc('request_payment_refund', { p_source_kind: 'order', p_source_id: o5, p_remedy_minor: 400, p_reason: 'pre-dispute', p_idempotency: `predisp-${suffix}` });
+    expect(r.error).toBeNull();
+    expect((await upsert(`dp_ref_${suffix}`, pi, 'needs_response')).error).toBeNull();
+    // A new refund is refused, and the pre-existing requested one is no longer
+    // claimable and is left exactly as it was.
+    expect(String((await dsup.rpc('request_payment_refund', { p_source_kind: 'order', p_source_id: o5, p_remedy_minor: 100, p_reason: 'x', p_idempotency: `predisp2-${suffix}` })).error?.message)).toContain('order_disputed');
+    expect(((await dAdmin.rpc('claim_payment_refunds', { p_limit: 5, p_ids: [r.data.refund_id] })).data ?? []).length).toBe(0);
+    expect((await dAdmin.from('payment_refunds').select('state').eq('id', r.data.refund_id).single()).data!.state).toBe('requested');
+    // A refund already at the provider (processing) is surfaced but never mutated by dispute events.
+    await dAdmin.from('payment_refunds').update({ state: 'processing' }).eq('id', r.data.refund_id);
+    expect((await upsert(`dp_ref_${suffix}`, pi, 'under_review')).error).toBeNull(); // duplicate/updated event
+    expect((await dAdmin.from('payment_refunds').select('state').eq('id', r.data.refund_id).single()).data!.state).toBe('processing');
+  });
+
+  it('an unmapped dispute is retained as unresolved, then reconciled to its order', async () => {
+    const o2 = await synthOrder(2000);
+    const id = `dp_unmap_${suffix}`;
+    expect((await upsert(id, `pi_nonexistent_${suffix}`, 'needs_response')).error).toBeNull();
+    const before = await disputes(id);
+    expect(before.data![0].internal_state).toBe('unresolved');
+    expect(before.data![0].payment_order_id).toBeNull();
+    expect((await dAdmin.rpc('reconcile_unresolved_dispute', { p_stripe_dispute_id: id, p_payment_intent: (await dAdmin.from('payment_orders').select('stripe_payment_intent_id').eq('id', o2).single()).data!.stripe_payment_intent_id, p_charge: null })).error).toBeNull();
+    expect((await disputes(id)).data![0].payment_order_id).toBe(o2);
+  });
+
+  it('an unknown provider status stays recordable; a terminal close is never moved backwards', async () => {
+    const o3 = await synthOrder(1000);
+    const pi = (await dAdmin.from('payment_orders').select('stripe_payment_intent_id').eq('id', o3).single()).data!.stripe_payment_intent_id;
+    const id = `dp_ooo_${suffix}`;
+    expect((await upsert(id, pi, 'a_brand_new_status')).error).toBeNull(); // future-tolerant
+    expect((await disputes(id)).data![0].internal_state).toBe('open');
+    expect((await dAdmin.rpc('record_dispute_closed', { p_stripe_dispute_id: id, p_provider_status: 'won', p_outcome: 'won' })).error).toBeNull();
+    expect((await upsert(id, pi, 'needs_response')).error).toBeNull(); // out-of-order update
+    expect((await disputes(id)).data![0].internal_state).toBe('won'); // terminal preserved
+  });
+
+  it('dispute records are private + support-gated; normal users cannot read or forge', async () => {
+    expect((await dc.from('payment_disputes').select('id')).data ?? []).toHaveLength(0);
+    expect((await client().from('payment_disputes').select('id')).data ?? []).toHaveLength(0);
+    expect((await dc.from('payment_disputes').insert({ stripe_dispute_id: `forge-${suffix}` })).error).not.toBeNull();
+    expect((await dsup.rpc('support_dispute_overview')).error).toBeNull();
+    expect((await dc.rpc('support_dispute_overview')).error).not.toBeNull();
+  });
+});
