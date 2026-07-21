@@ -14,11 +14,17 @@ const M = readFileSync(join(ROOT, 'supabase', 'migrations', '0056_payment_disput
 const M57 = readFileSync(join(ROOT, 'supabase', 'migrations', '0057_payment_disputes_hosted_fixes.sql'), 'utf-8');
 const M58 = readFileSync(join(ROOT, 'supabase', 'migrations', '0058_payment_dispute_reconciliation_fix.sql'), 'utf-8');
 const M59 = readFileSync(join(ROOT, 'supabase', 'migrations', '0059_dispute_fund_event_ordering.sql'), 'utf-8');
+const M60 = readFileSync(join(ROOT, 'supabase', 'migrations', '0060_dispute_closure_audit_fix.sql'), 'utf-8');
 const HOOK = readFileSync(join(ROOT, 'supabase', 'functions', 'stripe-webhook', 'index.ts'), 'utf-8');
 function fn59(name: string): string {
   const s = M59.indexOf(`create or replace function ${name}`);
   if (s < 0) throw new Error(`0059 fn not found: ${name}`);
   return M59.slice(s, M59.indexOf('\n$$;', s));
+}
+function fn60(name: string): string {
+  const s = M60.indexOf(`create or replace function ${name}`);
+  if (s < 0) throw new Error(`0060 fn not found: ${name}`);
+  return M60.slice(s, M60.indexOf('\n$$;', s));
 }
 function fn(name: string): string {
   const s = M.indexOf(`create or replace function ${name}`);
@@ -348,5 +354,64 @@ describe('0059 out-of-order dispute fund events (final 2G6D correction)', () => 
     // Event is only marked processed AFTER the switch; RPC errors still 500.
     expect(HOOK).toContain("status: 'processed', processed_at: new Date().toISOString(), result,");
     expect(HOOK).toContain('status: ok ? 200 : 500');
+  });
+});
+
+describe('0060 dispute closure-audit fix (final 2G6D correction)', () => {
+  it('is additive: redefine-only, no table/index/row mutation', () => {
+    expect(M60).not.toMatch(/create\s+table/i);
+    expect(M60).not.toMatch(/alter\s+table/i);
+    expect(M60).not.toMatch(/create\s+(unique\s+)?index/i);
+    expect(M60).not.toMatch(/\bdelete\s+from\b/i);
+    expect(M60).not.toMatch(/\btruncate\b/i);
+    expect(M60).toContain("select pg_notify('pgrst', 'reload schema')");
+  });
+
+  it('closed no longer early-returns on a terminal row; it completes the audit fields', () => {
+    const cl = fn60('public.record_dispute_closed');
+    // The blanket terminal early-return is gone.
+    expect(cl).not.toMatch(/if v_d\.internal_state in \('won', 'lost', 'closed_warning'\) then return/);
+    // outcome filled once (never overwritten), closed_at write-once.
+    expect(cl).toContain('outcome = coalesce(public.payment_disputes.outcome, p_outcome, p_provider_status)');
+    expect(cl).toContain('closed_at = coalesce(public.payment_disputes.closed_at, now())');
+  });
+
+  it('never reverses a terminal state and never invents a terminal from an unknown status', () => {
+    const cl = fn60('public.record_dispute_closed');
+    // Already terminal → keep internal_state (no reversal).
+    expect(cl).toContain('when v_was_terminal then public.payment_disputes.internal_state');
+    // Non-terminal row → finalise only for a KNOWN terminal provider status.
+    expect(cl).toContain("when v_derived in ('won', 'lost', 'closed_warning') then v_derived");
+    // Unknown status → leave internal_state unchanged (recordable, no invented terminal).
+    expect(cl).toContain('else public.payment_disputes.internal_state');
+    expect(cl).toContain('v_derived := app_private.dispute_internal_state(coalesce(p_outcome, p_provider_status))');
+  });
+
+  it('preserves order restoration + hold release for won/closed_warning', () => {
+    const cl = fn60('public.record_dispute_closed');
+    expect(cl).toContain("if v_final in ('won', 'closed_warning') then");
+    expect(cl).toContain("set hold_state = 'released'");
+    expect(cl).toContain('perform app_private.restore_order_after_dispute(v_d.payment_order_id, v_d.id)');
+  });
+
+  it('stays service-role only', () => {
+    expect(M60).toContain('revoke all on function public.record_dispute_closed(text, text, text) from public, anon, authenticated');
+    expect(M60).toContain('grant execute on function public.record_dispute_closed(text, text, text) to service_role');
+  });
+
+  it('adds a service-role-only closure recovery RPC taking provider identifiers/status only', () => {
+    const rc = fn60('public.reconcile_dispute_closure');
+    // No order id / client timestamp.
+    expect(rc).not.toMatch(/p_order|p_closed_at|p_timestamp|p_amount/);
+    expect(rc).toContain('perform public.record_dispute_closed(p_stripe_dispute_id, p_provider_status, coalesce(p_outcome, p_provider_status))');
+    expect(M60).toContain('revoke all on function public.reconcile_dispute_closure(text, text, text) from public, anon, authenticated');
+    expect(M60).toContain('grant execute on function public.reconcile_dispute_closure(text, text, text) to service_role');
+  });
+
+  it('the webhook already ensures the dispute exists before closing (no webhook change needed)', () => {
+    const cl = HOOK.slice(HOOK.indexOf("case 'charge.dispute.closed'"), HOOK.indexOf("case 'charge.dispute.funds_withdrawn'"));
+    expect(cl).toContain("admin.rpc('record_dispute_upsert', disputeUpsertArgs(d))");
+    expect(cl).toContain("admin.rpc('record_dispute_closed'");
+    expect(cl).toContain('p_provider_status: d.status');
   });
 });

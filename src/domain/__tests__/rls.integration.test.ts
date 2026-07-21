@@ -4546,4 +4546,98 @@ describe.skipIf(!enabled)('2G6D disputes (requires live Supabase)', () => {
     expect((await dAdmin.rpc('record_dispute_closed', { p_stripe_dispute_id: id, p_provider_status: 'won', p_outcome: 'won' })).error).toBeNull();
     expect((await disputes(id)).data![0].internal_state).toBe('won');
   });
+
+  // ---- 0060 closure-audit fix (final 2G6D correction) ----
+
+  it('0060: updated(won) BEFORE closed(won) still fills outcome and closed_at', async () => {
+    const o = await synthOrder(1500);
+    const pi = (await dAdmin.from('payment_orders').select('stripe_payment_intent_id').eq('id', o).single()).data!.stripe_payment_intent_id;
+    const id = `dp_cl_upd_${suffix}`;
+    // updated(won): the row becomes terminal 'won' with NO closure audit yet.
+    expect((await upsert(id, pi, 'won')).error).toBeNull();
+    const mid = (await disputes(id)).data![0];
+    expect(mid.internal_state).toBe('won');
+    expect(mid.outcome).toBeNull();
+    expect(mid.closed_at).toBeNull();
+    // closed(won) on the already-terminal row completes the audit fields.
+    expect((await dAdmin.rpc('record_dispute_closed', { p_stripe_dispute_id: id, p_provider_status: 'won', p_outcome: 'won' })).error).toBeNull();
+    const after = (await disputes(id)).data![0];
+    expect(after.internal_state).toBe('won');
+    expect(after.outcome).toBe('won');
+    expect(after.closed_at).not.toBeNull();
+  });
+
+  it('0060: funds_reinstated BEFORE closed(won) fills outcome and closed_at (genuine du_ shape)', async () => {
+    const pi = await orderPi();
+    const id = `dp_cl_ri_${suffix}`;
+    expect((await upsert(id, pi, 'needs_response')).error).toBeNull();
+    expect((await dAdmin.rpc('record_dispute_funds_withdrawn', { p_stripe_dispute_id: id })).error).toBeNull();
+    expect((await dAdmin.rpc('record_dispute_funds_reinstated', { p_stripe_dispute_id: id })).error).toBeNull();
+    const mid = (await disputes(id)).data![0];
+    expect(mid.funds_reinstated).toBe(true);
+    expect(mid.closed_at).toBeNull(); // reinstatement does not close
+    expect((await dAdmin.rpc('record_dispute_closed', { p_stripe_dispute_id: id, p_provider_status: 'won', p_outcome: 'won' })).error).toBeNull();
+    const after = (await disputes(id)).data![0];
+    expect(after.internal_state).toBe('won');
+    expect(after.outcome).toBe('won');
+    expect(after.closed_at).not.toBeNull();
+  });
+
+  it('0060: duplicate closed is idempotent and closed_at is write-once', async () => {
+    const o = await synthOrder(1000);
+    const pi = (await dAdmin.from('payment_orders').select('stripe_payment_intent_id').eq('id', o).single()).data!.stripe_payment_intent_id;
+    const id = `dp_cl_dup_${suffix}`;
+    expect((await upsert(id, pi, 'needs_response')).error).toBeNull();
+    expect((await dAdmin.rpc('record_dispute_closed', { p_stripe_dispute_id: id, p_provider_status: 'won', p_outcome: 'won' })).error).toBeNull();
+    const first = (await disputes(id)).data![0];
+    expect(first.closed_at).not.toBeNull();
+    // duplicate identical closed → no change.
+    expect((await dAdmin.rpc('record_dispute_closed', { p_stripe_dispute_id: id, p_provider_status: 'won', p_outcome: 'won' })).error).toBeNull();
+    const second = (await disputes(id)).data![0];
+    expect(second.closed_at).toBe(first.closed_at); // write-once, never moved
+    expect(second.outcome).toBe('won');
+  });
+
+  it('0060: a conflicting later terminal status cannot reverse the original outcome', async () => {
+    const o = await synthOrder(1000);
+    const pi = (await dAdmin.from('payment_orders').select('stripe_payment_intent_id').eq('id', o).single()).data!.stripe_payment_intent_id;
+    const id = `dp_cl_conf_${suffix}`;
+    expect((await upsert(id, pi, 'needs_response')).error).toBeNull();
+    expect((await dAdmin.rpc('record_dispute_closed', { p_stripe_dispute_id: id, p_provider_status: 'won', p_outcome: 'won' })).error).toBeNull();
+    // A conflicting closed(lost) must NOT reverse the recorded outcome.
+    expect((await dAdmin.rpc('record_dispute_closed', { p_stripe_dispute_id: id, p_provider_status: 'lost', p_outcome: 'lost' })).error).toBeNull();
+    const d = (await disputes(id)).data![0];
+    expect(d.internal_state).toBe('won');
+    expect(d.outcome).toBe('won');
+    // A later updated() must not clear closure fields either.
+    expect((await upsert(id, pi, 'under_review')).error).toBeNull();
+    const d2 = (await disputes(id)).data![0];
+    expect(d2.internal_state).toBe('won');
+    expect(d2.outcome).toBe('won');
+    expect(d2.closed_at).not.toBeNull();
+  });
+
+  it('0060: recovery RPC repairs an already-processed closed event (provider status only, service-role)', async () => {
+    const o = await synthOrder(1000);
+    const pi = (await dAdmin.from('payment_orders').select('stripe_payment_intent_id').eq('id', o).single()).data!.stripe_payment_intent_id;
+    const id = `dp_cl_recover_${suffix}`;
+    // Reproduce the genuine broken shape: terminal 'won' with null closure fields.
+    expect((await upsert(id, pi, 'won')).error).toBeNull();
+    await dAdmin.from('payment_disputes').update({ outcome: null, closed_at: null }).eq('stripe_dispute_id', id);
+    const broken = (await disputes(id)).data![0];
+    expect(broken.internal_state).toBe('won');
+    expect(broken.outcome).toBeNull();
+    expect(broken.closed_at).toBeNull();
+    // Recovery uses provider status only — no order id, no client timestamp.
+    const rec = await dAdmin.rpc('reconcile_dispute_closure', { p_stripe_dispute_id: id, p_provider_status: 'won', p_outcome: 'won' });
+    expect(rec.error).toBeNull();
+    expect(rec.data.outcome).toBe('won');
+    expect(rec.data.closed_at).not.toBeNull();
+    expect(rec.data.internal_state).toBe('won');
+    // Idempotent: a second recovery keeps the same closed_at.
+    const rec2 = await dAdmin.rpc('reconcile_dispute_closure', { p_stripe_dispute_id: id, p_provider_status: 'won', p_outcome: 'won' });
+    expect(rec2.data.closed_at).toBe(rec.data.closed_at);
+    // Clients cannot invoke recovery.
+    expect((await dc.rpc('reconcile_dispute_closure', { p_stripe_dispute_id: id, p_provider_status: 'won', p_outcome: 'won' })).error).not.toBeNull();
+  });
 });
