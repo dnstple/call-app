@@ -4460,115 +4460,173 @@ describe.skipIf(!enabled)('2G6D disputes (requires live Supabase)', () => {
     expect((await dc.rpc('support_dispute_overview')).error).not.toBeNull();
   });
 
-  // ---- 2G6E-A dispute support operations (0059), same fixture ----
+  // ---- 2G6E-A dispute support operations (0061), same fixture ----
 
-  it('0059: support dispute detail is support-only and exposes operational context', async () => {
+  it('2G6E-A: support detail is support-only with case + audit; other roles are refused', async () => {
     const det = await dsup.rpc('support_dispute_detail', { p_dispute: dp1Uuid });
     expect(det.error).toBeNull();
     expect(det.data.dispute.id).toBe(dp1Uuid);
     expect(det.data.order.id).toBe(orderId);
-    expect(Array.isArray(det.data.allocations)).toBe(true);
     expect(det.data.allocations.length).toBe(2);
-    expect(det.data.workflow.state).toBeDefined();
-    // Normal users cannot read the detail.
+    expect(Array.isArray(det.data.audit)).toBe(true);
+    // Coordinator, an unrelated authenticated user, and anon are all refused.
     expect((await dc.rpc('support_dispute_detail', { p_dispute: dp1Uuid })).error).not.toBeNull();
+    expect((await dcmp.rpc('support_dispute_detail', { p_dispute: dp1Uuid })).error).not.toBeNull();
     expect((await client().rpc('support_dispute_detail', { p_dispute: dp1Uuid })).error).not.toBeNull();
+    // Direct table reads by a normal user are denied (RLS, no policy).
+    expect((await dc.from('dispute_support_cases').select('id')).data ?? []).toHaveLength(0);
+    expect((await dc.from('dispute_support_audit').select('id')).data ?? []).toHaveLength(0);
   });
 
-  it('0059: notes are append-only, support-only and private to customers/companions', async () => {
+  it('2G6E-A: claim is single-winner + idempotent; release restores; status transitions validated + audited', async () => {
+    // Concurrent claims from the SAME owner: at most one write, exactly one owner.
+    const [c1, c2] = await Promise.all([
+      dsup.rpc('support_claim_dispute', { p_dispute: dp1Uuid }),
+      dsup.rpc('support_claim_dispute', { p_dispute: dp1Uuid }),
+    ]);
+    expect(c1.error).toBeNull();
+    expect(c2.error).toBeNull();
+    const det1 = await dsup.rpc('support_dispute_detail', { p_dispute: dp1Uuid });
+    expect(det1.data.case.assigned_account_id).toBe(supId3);
+    expect(det1.data.case.handling_status).toBe('in_review');
+    // Repeating the claim by the current owner is an idempotent no-op.
+    expect((await dsup.rpc('support_claim_dispute', { p_dispute: dp1Uuid })).error).toBeNull();
+    // Status transition through the allowed vocabulary; invalid rejected.
+    expect((await dsup.rpc('support_set_case_status', { p_dispute: dp1Uuid, p_status: 'evidence_prepared' })).error).toBeNull();
+    expect((await dsup.rpc('support_set_case_status', { p_dispute: dp1Uuid, p_status: 'bogus' })).error).not.toBeNull();
+    // Release restores unassigned; a claimed audit + status_changed audit exist.
+    expect((await dsup.rpc('support_release_dispute', { p_dispute: dp1Uuid })).error).toBeNull();
+    const det2 = await dsup.rpc('support_dispute_detail', { p_dispute: dp1Uuid });
+    expect(det2.data.case.assigned_account_id).toBeNull();
+    expect(det2.data.case.handling_status).toBe('unassigned');
+    const actions = (det2.data.audit as Array<{ action_type: string; actor_account_id: string }>);
+    expect(actions.some((a) => a.action_type === 'case_claimed')).toBe(true);
+    expect(actions.some((a) => a.action_type === 'case_released')).toBe(true);
+    expect(actions.every((a) => a.actor_account_id === supId3)).toBe(true); // server-derived actor
+    // Normal users cannot claim / set status.
+    expect((await dc.rpc('support_claim_dispute', { p_dispute: dp1Uuid })).error).not.toBeNull();
+    expect((await dc.rpc('support_set_case_status', { p_dispute: dp1Uuid, p_status: 'resolved' })).error).not.toBeNull();
+  });
+
+  it('2G6E-A: a SECOND owner cannot steal a claimed case (single winner across owners)', async () => {
+    const o = await synthOrder(900);
+    const pi = (await dAdmin.from('payment_orders').select('stripe_payment_intent_id').eq('id', o).single()).data!.stripe_payment_intent_id;
+    const id = `dp_claim_${suffix}`;
+    expect((await upsert(id, pi, 'needs_response')).error).toBeNull();
+    const du = (await disputes(id)).data![0].id as string;
+    // Register a second support admin, claim from dsup, then dsup2 is refused.
+    const dsup2 = await signedInClient(`rls-dpsup2-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    const sup2Id = (await dsup2.auth.getUser()).data.user!.id;
+    if ((await dsup2.rpc('ensure_current_account')).error) throw new Error('ensure2');
+    if ((await dAdmin.from('support_admins').upsert({ account_id: sup2Id }, { onConflict: 'account_id', ignoreDuplicates: true })).error) throw new Error('support2');
+    expect((await dsup.rpc('support_claim_dispute', { p_dispute: du })).error).toBeNull();
+    expect((await dsup2.rpc('support_claim_dispute', { p_dispute: du })).error).not.toBeNull(); // already_claimed
+    expect((await dsup2.rpc('support_release_dispute', { p_dispute: du })).error).not.toBeNull(); // not_owner
+    await dAdmin.from('support_admins').delete().eq('account_id', sup2Id);
+  });
+
+  it('2G6E-A: notes are append-only, support-only and private; forging is denied', async () => {
     expect((await dsup.rpc('support_add_dispute_note', { p_dispute: dp1Uuid, p_body: 'first note' })).error).toBeNull();
     expect((await dsup.rpc('support_add_dispute_note', { p_dispute: dp1Uuid, p_body: 'second note' })).error).toBeNull();
     const det = await dsup.rpc('support_dispute_detail', { p_dispute: dp1Uuid });
-    expect(det.data.notes.length).toBe(2); // both retained → append-only
-    expect(det.data.notes[0].author_account_id).toBe(supId3); // authorship audited
-    // Normal users can neither add nor read notes.
+    expect(det.data.notes.length).toBe(2);
+    expect(det.data.notes[0].author_account_id).toBe(supId3);
+    expect((await dsup.rpc('support_add_dispute_note', { p_dispute: dp1Uuid, p_body: '' })).error).not.toBeNull(); // empty rejected
+    // Normal users cannot add or read notes; a direct insert is denied.
     expect((await dc.rpc('support_add_dispute_note', { p_dispute: dp1Uuid, p_body: 'x' })).error).not.toBeNull();
     expect((await dc.from('dispute_notes').select('id')).data ?? []).toHaveLength(0);
+    expect((await dc.from('dispute_notes').insert({ dispute_id: dp1Uuid, author_account_id: supId3, body: 'forge' })).error).not.toBeNull();
   });
 
-  it('0059: ownership and handling changes are audited and blocked for normal users', async () => {
-    expect((await dsup.rpc('support_assign_dispute', { p_dispute: dp1Uuid, p_owner: supId3 })).error).toBeNull();
-    expect((await dsup.rpc('support_set_dispute_workflow', { p_dispute: dp1Uuid, p_state: 'awaiting_evidence' })).error).toBeNull();
-    const det = await dsup.rpc('support_dispute_detail', { p_dispute: dp1Uuid });
-    expect(det.data.workflow.owner_account_id).toBe(supId3);
-    expect(det.data.workflow.state).toBe('awaiting_evidence'); // separate from provider/internal state
-    expect(det.data.workflow.updated_by).toBe(supId3);
-    expect(det.data.workflow.assigned_at).not.toBeNull();
-    // Invalid workflow state rejected; normal users blocked.
-    expect((await dsup.rpc('support_set_dispute_workflow', { p_dispute: dp1Uuid, p_state: 'bogus' })).error).not.toBeNull();
-    expect((await dc.rpc('support_assign_dispute', { p_dispute: dp1Uuid, p_owner: supId3 })).error).not.toBeNull();
-    expect((await dc.rpc('support_set_dispute_workflow', { p_dispute: dp1Uuid, p_state: 'completed' })).error).not.toBeNull();
-  });
-
-  it('0059: manual evidence records are idempotent and never claim Stripe acceptance', async () => {
+  it('2G6E-A: manual evidence is append-only, idempotent, support-only and never claims Stripe acceptance', async () => {
     const idem = `ev-${suffix}`;
-    const r1 = await dsup.rpc('support_record_manual_evidence', { p_dispute: dp1Uuid, p_summary: 'submitted in Stripe dashboard', p_categories: ['service_documentation'], p_idempotency: idem });
+    const r1 = await dsup.rpc('support_record_manual_evidence', {
+      p_dispute: dp1Uuid, p_provider_reference: 'stripe_sub_1', p_categories: ['service_documentation'],
+      p_packet_version: 1, p_summary: 'submitted in dashboard', p_internal_note: null, p_provider_status: 'won', p_idempotency: idem });
     expect(r1.error).toBeNull();
     expect(r1.data.created).toBe(true);
     expect(String(r1.data.note)).toContain('acceptance is not implied');
-    const r2 = await dsup.rpc('support_record_manual_evidence', { p_dispute: dp1Uuid, p_summary: 'again', p_categories: [], p_idempotency: idem });
-    expect(r2.error).toBeNull();
-    expect(r2.data.created).toBe(false); // deduped by idempotency key
+    const r2 = await dsup.rpc('support_record_manual_evidence', {
+      p_dispute: dp1Uuid, p_provider_reference: null, p_categories: [], p_packet_version: 1,
+      p_summary: 'again', p_internal_note: null, p_provider_status: null, p_idempotency: idem });
+    expect(r2.data.created).toBe(false); // deduped
     expect(r2.data.id).toBe(r1.data.id);
     const det = await dsup.rpc('support_dispute_detail', { p_dispute: dp1Uuid });
     expect(det.data.manual_evidence.length).toBe(1);
-    // Normal users cannot record evidence.
-    expect((await dc.rpc('support_record_manual_evidence', { p_dispute: dp1Uuid, p_summary: 'x', p_categories: [], p_idempotency: `hack-${suffix}` })).error).not.toBeNull();
+    // The provider dispute state is unchanged by recording a manual submission.
+    const before = (await disputes(`dp_main_${suffix}`)).data![0];
+    expect(before.internal_state).toBe(det.data.dispute.internal_state);
+    // Normal users cannot record; direct insert denied.
+    expect((await dc.rpc('support_record_manual_evidence', {
+      p_dispute: dp1Uuid, p_provider_reference: null, p_categories: [], p_packet_version: 1,
+      p_summary: 'x', p_internal_note: null, p_provider_status: null, p_idempotency: `hack-${suffix}` })).error).not.toBeNull();
+    expect((await dc.from('dispute_manual_evidence').select('id')).data ?? []).toHaveLength(0);
   });
 
-  it('0059: evidence packet exposes allowed facts and excludes bodies, private reviews and earnings', async () => {
+  it('2G6E-A: evidence packet has counts/timestamps and call metadata but excludes bodies, reviews text and earnings', async () => {
     const pk = await dsup.rpc('support_dispute_evidence_packet', { p_dispute: dp1Uuid });
     expect(pk.error).toBeNull();
+    expect(pk.data.packet_version).toBe(1);
     expect(pk.data.shareable).toBeDefined();
     expect(pk.data.internal_only).toBeDefined();
-    expect(pk.data.shareable.messaging).toBeDefined();
     expect(typeof pk.data.shareable.messaging.user_message_count).toBe('number');
+    expect('first_message_at' in pk.data.shareable.messaging).toBe(true);
     expect(Array.isArray(pk.data.shareable.sessions)).toBe(true);
     const blob = JSON.stringify(pk.data);
     expect(blob).not.toContain('private_feedback'); // private review text excluded
     expect(blob).not.toContain('net_minor'); // earnings excluded
     expect(blob).not.toContain('commission_minor');
     expect(blob).not.toContain('dispute_after_transfer'); // platform-loss classification excluded
-    // Normal users cannot assemble the packet.
+    // Reviews expose only existence/rating metadata, never body text.
+    expect(blob).not.toContain('"body"');
     expect((await dc.rpc('support_dispute_evidence_packet', { p_dispute: dp1Uuid })).error).not.toBeNull();
   });
 
-  it('0059: dispute adjustments are acknowledged/resolved with audit and never deleted', async () => {
+  it('2G6E-A: adjustments acknowledge/resolve are support-only, idempotent, amount-preserving and retained', async () => {
     const compAcct2 = (await dAdmin.from('companion_earnings').select('companion_account_id').eq('id', e2).single()).data!.companion_account_id as string;
     const ins = await dAdmin.from('settlement_adjustments').insert({
       refund_id: null, dispute_id: dp1Uuid, companion_earning_id: e2,
       companion_account_id: compAcct2, amount_minor: 500, adjustment_type: 'dispute_after_transfer', state: 'open',
-    }).select('id').single();
+    }).select('id, amount_minor').single();
     expect(ins.error).toBeNull();
     const adjId = ins.data!.id as string;
-    // A resolve without a reason is refused.
-    expect((await dsup.rpc('support_resolve_adjustment', { p_adjustment: adjId, p_reason: '' })).error).not.toBeNull();
-    // Acknowledge → resolve, both audited.
+    // acknowledge is idempotent.
     expect((await dsup.rpc('support_acknowledge_adjustment', { p_adjustment: adjId })).error).toBeNull();
+    expect((await dsup.rpc('support_acknowledge_adjustment', { p_adjustment: adjId })).error).toBeNull();
+    // resolve requires a reason; then is idempotent same-state.
+    expect((await dsup.rpc('support_resolve_adjustment', { p_adjustment: adjId, p_reason: '' })).error).not.toBeNull();
     expect((await dsup.rpc('support_resolve_adjustment', { p_adjustment: adjId, p_reason: 'platform absorbed' })).error).toBeNull();
-    const row = (await dAdmin.from('settlement_adjustments').select('state, resolution_reason, resolved_by, acknowledged_by').eq('id', adjId).single()).data!;
-    expect(row.state).toBe('resolved'); // still present — not deleted
-    expect(row.resolution_reason).toBe('platform absorbed');
+    expect((await dsup.rpc('support_resolve_adjustment', { p_adjustment: adjId, p_reason: 'noop' })).error).toBeNull(); // idempotent
+    const row = (await dAdmin.from('settlement_adjustments').select('state, amount_minor, resolution_reason, resolved_by, acknowledged_by').eq('id', adjId).single()).data!;
+    expect(row.state).toBe('resolved'); // retained, not deleted
+    expect(row.amount_minor).toBe(500); // amount never mutated by support ops
+    expect(row.resolution_reason).toBe('platform absorbed'); // first reason kept (no rewrite)
     expect(row.resolved_by).toBe(supId3);
     expect(row.acknowledged_by).toBe(supId3);
-    // No history rewrite (second resolve rejected); normal users blocked.
-    expect((await dsup.rpc('support_resolve_adjustment', { p_adjustment: adjId, p_reason: 'again' })).error).not.toBeNull();
+    // Normal users blocked.
     expect((await dc.rpc('support_acknowledge_adjustment', { p_adjustment: adjId })).error).not.toBeNull();
   });
 
-  it('0059: unresolved list + support reconcile are support-only and provider-identifier based', async () => {
+  it('2G6E-A: unresolved reconcile is provider-identifier only, support-only, and writes an audit event', async () => {
     const o7 = await synthOrder(1200);
     const pi = (await dAdmin.from('payment_orders').select('stripe_payment_intent_id').eq('id', o7).single()).data!.stripe_payment_intent_id;
     const id = `dp_supunmap_${suffix}`;
     expect((await upsert(id, `pi_sup_ghost_${suffix}`, 'needs_response')).error).toBeNull();
+    const du = (await disputes(id)).data![0].id as string;
     // Appears in the unresolved list.
     const list = await dsup.rpc('support_unresolved_disputes');
-    expect(list.error).toBeNull();
     expect((list.data as Array<{ stripe_dispute_id: string }>).some((d) => d.stripe_dispute_id === id)).toBe(true);
-    // Support reconcile, via provider identifiers only, maps it.
+    // Provider-identifier-only reconcile returns a structured result and maps it.
     const res = await dsup.rpc('support_reconcile_dispute', { p_stripe_dispute_id: id, p_payment_intent: pi, p_charge: null });
     expect(res.error).toBeNull();
-    expect(res.data).toBe('mapped');
+    expect(res.data.result).toBe('mapped');
+    expect(res.data.payment_order_id).toBe(o7);
+    // A reconcile_attempted audit event was written.
+    const det = await dsup.rpc('support_dispute_detail', { p_dispute: du });
+    expect((det.data.audit as Array<{ action_type: string }>).some((a) => a.action_type === 'reconcile_attempted')).toBe(true);
+    // Idempotent: a second attempt is already_mapped and never re-routes.
+    const res2 = await dsup.rpc('support_reconcile_dispute', { p_stripe_dispute_id: id, p_payment_intent: `pi_other_${suffix}`, p_charge: null });
+    expect(res2.data.result).toBe('already_mapped');
     expect((await disputes(id)).data![0].payment_order_id).toBe(o7);
     // Normal users can neither list nor reconcile.
     expect((await dc.rpc('support_unresolved_disputes')).error).not.toBeNull();

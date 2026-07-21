@@ -19,6 +19,8 @@ const MembersPage = lazy(() => import('./pages/MembersPage'));
 const GuestJoin = lazy(() => import('./pages/GuestJoin'));
 const InternalIssues = lazy(() => import('./pages/InternalIssues'));
 const InternalIssueDetail = lazy(() => import('./pages/InternalIssueDetail'));
+const InternalDisputes = lazy(() => import('./pages/InternalDisputes'));
+const InternalDisputeDetail = lazy(() => import('./pages/InternalDisputeDetail'));
 import Settings from './pages/Settings';
 import AvailabilityRates from './pages/AvailabilityRates';
 import SignupWizard from './signup/SignupWizard';
@@ -216,6 +218,9 @@ function AppRoutes() {
                 {/* Internal support queue — DB-role protected, not in normal nav. */}
                 <Route path="/internal/issues" element={<SupportOnly><InternalIssues /></SupportOnly>} />
                 <Route path="/internal/issues/:issueId" element={<SupportOnly><InternalIssueDetail /></SupportOnly>} />
+                {/* 2G6E-A internal dispute operations — DB-role protected. */}
+                <Route path="/internal/disputes" element={<SupportOnly><InternalDisputes /></SupportOnly>} />
+                <Route path="/internal/disputes/:disputeId" element={<SupportOnly><InternalDisputeDetail /></SupportOnly>} />
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/availability" element={<AvailabilityRates />} />
                 <Route
