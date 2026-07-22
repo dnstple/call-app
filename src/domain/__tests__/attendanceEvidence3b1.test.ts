@@ -227,8 +227,14 @@ describe('frontend — calm, neutral, role-correct evidence wording', () => {
   it('the evidence note is non-accusatory and free of payout wording', () => {
     expect(NOTE).toContain('The call connection record is incomplete. Your response has been saved.');
     expect(NOTE).toContain('get_conversation_completion_state');
-    // No payout/earning wording in the executable component (comments excluded).
-    expect(stripTs(NOTE)).not.toMatch(/payout|earning|transfer|paid|no-show|no_show/i);
+    // No accusatory or money-detail wording in the executable component (comments excluded).
+    // Stage 3B2 adds one neutral Companion line — "Payout under review" — so the bare
+    // word "payout" is permitted ONLY in that calm phrasing; everything else stays out.
+    const code = stripTs(NOTE);
+    expect(code).not.toMatch(/earning|transfer|paid|no-show|no_show/i);
+    // Only the neutral 3B2 note ("Payout under review" / "before payout continues")
+    // and the server flag it reads (payout_under_review) may mention payout.
+    expect(code).not.toMatch(/payout(?!(_under_review|\s+(under review|continues)))/i);
   });
   it('BookingDetail renders the evidence note only for an accepted, ended conversation', () => {
     expect(DETAIL).toContain('CallEvidenceNote');

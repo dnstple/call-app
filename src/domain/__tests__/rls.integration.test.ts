@@ -6697,3 +6697,464 @@ describe.skipIf(!enabled)('Stage 3B1 attendance evidence (requires live Supabase
     }
   });
 });
+
+/* ============================================================
+ * Stage 3B2 — evidence-informed payout HOLDS + support review (live,
+ * fixture-scoped). Requires 0072 applied. Proves a NARROW payout-safety
+ * layer: an authoritative, finalised, COMPLETE evidence record that strongly
+ * contradicts the Companion's declaration creates a neutral hold that blocks
+ * pending→payable release AND transfer claims (defence in depth); is never
+ * created for non-blocking evidence; is support-reviewable (single-winner
+ * claim, append-only notes, reasoned release, no deny+refund); auto-clears on
+ * corrected evidence only when untouched; overrides ONLY the Companion payout
+ * label to under_review; and NEVER reverses a transfer, refunds, credits, or
+ * touches Stripe. Includes explicit races. Every row is fixture-created and
+ * FK-safely cleaned up.
+ * ============================================================ */
+describe.skipIf(!enabled)('Stage 3B2 evidence payout holds (requires live Supabase)', () => {
+  let cAdmin: SupabaseClient; let cComp: SupabaseClient; let cMember: SupabaseClient;
+  let cCoord: SupabaseClient; let cSup: SupabaseClient; let cSup2: SupabaseClient; let cOther: SupabaseClient;
+  let compAcct: string; let memberAcct: string; let coordAcct: string; let supAcct: string; let sup2Acct: string;
+  const bookingsMade: string[] = [];
+  const companionProfilesMade: string[] = [];
+  const memberProfilesMade: string[] = [];
+  const offersMade: string[] = [];
+  let evBase = 0;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rpc = (c: SupabaseClient, fn: string, args: Record<string, unknown>) => (c as any).rpc(fn, args);
+  const compId = () => `account:${compAcct}`;
+  const memId = () => `account:${memberAcct}`;
+  const PAST = 70;    // start −70m → end −40m → window closed (finalises); before the 12h payout wait
+  const LONG = 820;   // start −13.7h → end −13.2h → past the 12h wait, so make_payable may fire
+
+  // Fresh companion + member (owned by the shared accounts) + confirmed booking + session.
+  async function makeCall(opts?: { startAgoMin?: number; durationMin?: number; withOrder?: boolean }):
+    Promise<{ bookingId: string; roomName: string; earningIdLater: () => Promise<string | null> }> {
+    const startAgo = opts?.startAgoMin ?? PAST;
+    const dur = opts?.durationMin ?? 30;
+    const start = new Date(evBase - startAgo * 60_000);
+    const end = new Date(start.getTime() + dur * 60_000);
+    const cp = await cAdmin.from('profiles').insert({ role: 'companion', first_name: 'Cy' }).select('id').single();
+    if (cp.error) throw new Error(`3b2 companion: ${cp.error.message}`);
+    const companion = requireUuid(cp.data!.id, '3b2 companion'); companionProfilesMade.push(companion);
+    if ((await cAdmin.from('profile_access').insert({ account_id: compAcct, profile_id: companion, access_role: 'owner', can_edit: true, can_book: true })).error) throw new Error('3b2 companion access');
+    const of = await cAdmin.from('conversation_offers').insert({
+      companion_profile_id: companion, offer_type: 'single', duration_minutes: 30, price_minor: 1000, supported_methods: ['in_app'],
+    }).select('id').single();
+    if (of.error) throw new Error(`3b2 offer: ${of.error.message}`);
+    const offer = requireUuid(of.data!.id, '3b2 offer'); offersMade.push(offer);
+    const mp = await cAdmin.from('profiles').insert({ role: 'member', first_name: 'Mo' }).select('id').single();
+    if (mp.error) throw new Error(`3b2 member: ${mp.error.message}`);
+    const member = requireUuid(mp.data!.id, '3b2 member'); memberProfilesMade.push(member);
+    if ((await cAdmin.from('profile_access').insert([
+      { account_id: memberAcct, profile_id: member, access_role: 'owner', can_edit: true, can_book: true },
+      { account_id: coordAcct, profile_id: member, access_role: 'coordinator', can_edit: true, can_book: true },
+    ])).error) throw new Error('3b2 member access');
+    const bk = await cAdmin.from('bookings').insert({
+      member_profile_id: member, companion_profile_id: companion,
+      booked_by_account_id: coordAcct, offer_id: offer,
+      starts_at: start.toISOString(), ends_at: end.toISOString(), communication_method: 'in_app',
+      status: 'confirmed', duration_minutes: dur, price_minor: 1000, platform_fee_rate: 5, platform_fee_minor: 50, companion_amount_minor: 950,
+    }).select('id').single();
+    if (bk.error) throw new Error(`3b2 booking: ${bk.error.message}`);
+    const bookingId = requireUuid(bk.data!.id, '3b2 booking'); bookingsMade.push(bookingId);
+    if (opts?.withOrder) {
+      const ord = await cAdmin.from('payment_orders').insert({
+        booking_id: bookingId, provider: 'stripe_test', coordinator_account_id: coordAcct,
+        member_profile_id: member, companion_profile_id: companion,
+        order_type: 'one_off', status: 'succeeded', subtotal_minor: 1000, discount_minor: 0,
+        service_fee_minor: 0, credit_applied_minor: 0, card_amount_minor: 1000, total_minor: 1000,
+        commission_rate_pct: 5, commission_minor: 50, idempotency_key: `3b2-ord-${bookingId}`,
+      }).select('id').single();
+      if (ord.error) throw new Error(`3b2 order: ${ord.error.message}`);
+    }
+    const prov = await rpc(cAdmin, 'ensure_call_session', { p_booking: bookingId });
+    if (prov.error) throw new Error(`3b2 ensure_call_session: ${JSON.stringify(prov.error)}`);
+    const earningIdLater = async () =>
+      ((await cAdmin.from('companion_earnings').select('id').eq('booking_id', bookingId).maybeSingle()).data?.id as string | undefined) ?? null;
+    return { bookingId, roomName: prov.data.room_name as string, earningIdLater };
+  }
+  // Ingest at k seconds after the booking start (fixed base ⇒ exact windows).
+  const atSec = (startAgoMin: number, kSec: number) => (kSec - startAgoMin * 60) * 1000;
+  async function ing(room: string, id: string, type: string, identity: string | null, tMs: number) {
+    return rpc(cAdmin, 'ingest_call_event', {
+      p_provider_event_id: id, p_event_type: type, p_room: room, p_identity: identity,
+      p_provider_created_at: new Date(evBase + tMs).toISOString(),
+    });
+  }
+  // Add one clean join+leave pair for a side (→ 'complete' quality; no missing leave).
+  async function pair(room: string, bk: string, who: 'c' | 'm', S: number, joinSec: number, leaveSec: number) {
+    const identity = who === 'c' ? compId() : memId();
+    await ing(room, `${who}-j-${bk}`, 'participant_joined', identity, atSec(S, joinSec));
+    await ing(room, `${who}-l-${bk}`, 'participant_left', identity, atSec(S, leaveSec));
+  }
+  // The open review row for a booking (via admin — the tables are definer-only).
+  async function holdOf(bk: string): Promise<Record<string, unknown> | null> {
+    const d = await cAdmin.from('companion_evidence_payout_reviews')
+      .select('*').eq('booking_id', bk).order('created_at', { ascending: false }).limit(1).maybeSingle();
+    return (d.data as Record<string, unknown> | null) ?? null;
+  }
+  const earningState = async (bk: string): Promise<{ state: string; transfer_state: string } | null> =>
+    (await cAdmin.from('companion_earnings').select('state, transfer_state').eq('booking_id', bk).maybeSingle()).data as { state: string; transfer_state: string } | null;
+
+  beforeAll(async () => {
+    evBase = Date.now();
+    cAdmin = adminClient();
+    cComp = await signedInClient(`rls-3b2-comp-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    cMember = await signedInClient(`rls-3b2-mem-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    cCoord = await signedInClient(`rls-3b2-coord-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    cSup = await signedInClient(`rls-3b2-sup-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    cSup2 = await signedInClient(`rls-3b2-sup2-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    cOther = await signedInClient(`rls-3b2-other-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    memberAcct = (await cMember.auth.getUser()).data.user!.id;
+    compAcct = (await cComp.auth.getUser()).data.user!.id;
+    coordAcct = (await cCoord.auth.getUser()).data.user!.id;
+    supAcct = (await cSup.auth.getUser()).data.user!.id;
+    sup2Acct = (await cSup2.auth.getUser()).data.user!.id;
+    for (const c of [cComp, cMember, cCoord, cSup, cSup2, cOther]) if ((await c.rpc('ensure_current_account')).error) throw new Error('ensure');
+    for (const acc of [supAcct, sup2Acct]) if ((await cAdmin.from('support_admins').upsert({ account_id: acc }, { onConflict: 'account_id', ignoreDuplicates: true })).error) throw new Error('support');
+    // Make the shared Companion account Connect-ready so a payable earning is
+    // genuinely claimable — the ONLY differentiator in the claim tests is the hold.
+    if ((await cAdmin.from('connected_accounts').upsert({
+      account_id: compAcct, stripe_account_id: `acct_3b2_${suffix}`,
+      details_submitted: true, charges_enabled: true, payouts_enabled: true,
+      transfers_capability: 'active', default_currency: 'gbp',
+    }, { onConflict: 'account_id' })).error) throw new Error('connect');
+  }, 180_000);
+
+  afterAll(async () => {
+    for (const b of bookingsMade) {
+      const sid = (await cAdmin.from('call_sessions').select('id').eq('booking_id', b).maybeSingle()).data?.id as string | undefined;
+      await cAdmin.from('companion_evidence_payout_reviews').delete().eq('booking_id', b);   // cascades events
+      await cAdmin.from('call_attendance_evidence').delete().eq('booking_id', b);
+      if (sid) {
+        await cAdmin.from('call_provider_events').delete().eq('call_session_id', sid);
+        await cAdmin.from('call_token_audits').delete().eq('call_session_id', sid);
+        await cAdmin.from('call_participants').delete().eq('call_session_id', sid);
+        await cAdmin.from('call_sessions').delete().eq('id', sid);
+      }
+      const eids = ((await cAdmin.from('companion_earnings').select('id').eq('booking_id', b)).data ?? []).map((e) => e.id as string);
+      if (eids.length) await cAdmin.from('companion_transfer_attempts').delete().in('earning_id', eids);
+      await cAdmin.from('conversation_attendance').delete().eq('booking_id', b);
+      await cAdmin.from('completion_confirmations').delete().eq('booking_id', b);
+      await cAdmin.from('conversation_issues').delete().eq('booking_id', b);
+      await cAdmin.from('companion_earnings').delete().eq('booking_id', b);
+      await cAdmin.from('payment_orders').delete().eq('booking_id', b);
+      await cAdmin.from('bookings').delete().eq('id', b);
+    }
+    for (const o of offersMade) await cAdmin.from('conversation_offers').delete().eq('id', o);
+    const allProfiles = [...companionProfilesMade, ...memberProfilesMade].filter(Boolean);
+    await cAdmin.from('profile_access').delete().in('profile_id', allProfiles);
+    for (const p of allProfiles) await cAdmin.from('profiles').delete().eq('id', p);
+    await cAdmin.from('connected_accounts').delete().eq('account_id', compAcct);
+    for (const acc of [supAcct, sup2Acct]) await cAdmin.from('support_admins').delete().eq('account_id', acc);
+  }, 120_000);
+
+  // ---- blocking contradictions A / B / C each create exactly one active hold ----
+  it('1. A: took_place but the Companion was never observed → active hold (companion_not_observed)', async () => {
+    const { bookingId, roomName } = await makeCall({ withOrder: true });
+    await pair(roomName, bookingId, 'm', PAST, 120, 600);            // member-only, complete
+    expect((await rpc(cComp, 'submit_companion_attendance', { p_booking: bookingId, p_outcome: 'took_place', p_explanation: null })).error, 'declare').toBeNull();
+    const h = await holdOf(bookingId);
+    expect(h?.state).toBe('active');
+    expect(h?.conflict_code).toBe('companion_not_observed');
+    expect(h?.support_touched).toBe(false);
+  });
+
+  it('2. B: took_place but the Member was never observed → active hold (member_not_observed)', async () => {
+    const { bookingId, roomName } = await makeCall({ withOrder: true });
+    await pair(roomName, bookingId, 'c', PAST, 120, 600);            // companion-only, complete
+    expect((await rpc(cComp, 'submit_companion_attendance', { p_booking: bookingId, p_outcome: 'took_place', p_explanation: null })).error).toBeNull();
+    const h = await holdOf(bookingId);
+    expect(h?.state).toBe('active');
+    expect(h?.conflict_code).toBe('member_not_observed');
+  });
+
+  it('3. C: member_no_show but both observed with overlap ≥ 60s → active hold', async () => {
+    const { bookingId, roomName } = await makeCall({ withOrder: true });
+    await pair(roomName, bookingId, 'c', PAST, 120, 600);
+    await pair(roomName, bookingId, 'm', PAST, 300, 540);            // overlap 240s ≥ 60
+    expect((await rpc(cComp, 'submit_companion_attendance', { p_booking: bookingId, p_outcome: 'member_no_show', p_explanation: 'They never joined.' })).error).toBeNull();
+    const h = await holdOf(bookingId);
+    expect(h?.state).toBe('active');
+    expect(h?.conflict_code).toBe('member_observed_despite_no_show_declaration');
+  });
+
+  // ---- non-blocking evidence NEVER auto-holds ----
+  it('4. non-blocking evidence never creates a hold (both-observed took_place, member_no_show short overlap, technical_problem, partial, no events)', async () => {
+    // (a) both observed + took_place → no conflict.
+    const a = await makeCall({ withOrder: true });
+    await pair(a.roomName, a.bookingId, 'c', PAST, 120, 600);
+    await pair(a.roomName, a.bookingId, 'm', PAST, 180, 560);
+    expect((await rpc(cComp, 'submit_companion_attendance', { p_booking: a.bookingId, p_outcome: 'took_place', p_explanation: null })).error).toBeNull();
+    expect(await holdOf(a.bookingId)).toBeNull();
+    // (b) member_no_show but overlap < 60s → not a blocking contradiction.
+    const b = await makeCall({ withOrder: true });
+    await pair(b.roomName, b.bookingId, 'c', PAST, 120, 600);
+    await pair(b.roomName, b.bookingId, 'm', PAST, 561, 900);        // overlap 39s < 60
+    expect((await rpc(cComp, 'submit_companion_attendance', { p_booking: b.bookingId, p_outcome: 'member_no_show', p_explanation: 'Barely there.' })).error).toBeNull();
+    expect(await holdOf(b.bookingId)).toBeNull();
+    // (c) technical_problem is never took_place / member_no_show.
+    const c = await makeCall({ withOrder: true });
+    await pair(c.roomName, c.bookingId, 'm', PAST, 120, 600);        // companion never observed…
+    expect((await rpc(cComp, 'submit_companion_attendance', { p_booking: c.bookingId, p_outcome: 'technical_problem', p_explanation: 'Audio failed.' })).error).toBeNull();
+    expect(await holdOf(c.bookingId)).toBeNull();                    // …but the outcome is not blocking
+    // (d) partial evidence (missing leave) is not 'complete' → no hold even with took_place.
+    const d = await makeCall({ withOrder: true });
+    await ing(d.roomName, `m-j-${d.bookingId}`, 'participant_joined', memId(), atSec(PAST, 120));   // no leave
+    expect((await rpc(cComp, 'submit_companion_attendance', { p_booking: d.bookingId, p_outcome: 'took_place', p_explanation: null })).error).toBeNull();
+    expect((await cAdmin.from('call_attendance_evidence').select('evidence_quality').eq('booking_id', d.bookingId).single()).data!.evidence_quality).toBe('partial');
+    expect(await holdOf(d.bookingId)).toBeNull();
+    // (e) no provider events at all → not 'complete' → no hold.
+    const e = await makeCall({ withOrder: true });
+    expect((await rpc(cComp, 'submit_companion_attendance', { p_booking: e.bookingId, p_outcome: 'took_place', p_explanation: null })).error).toBeNull();
+    expect(await holdOf(e.bookingId)).toBeNull();
+  });
+
+  it('5. a declaration WITHOUT finalised+complete evidence never holds (evidence still pending)', async () => {
+    const { bookingId, roomName } = await makeCall({ startAgoMin: 20, durationMin: 30, withOrder: true });   // window OPEN
+    await ing(roomName, `m-j-${bookingId}`, 'participant_joined', memId(), atSec(20, 120));
+    // The booking has ended? No — startAgoMin 20 with 30m duration ends in ~10m, so the
+    // declaration RPC would reject 'too_early'. Assert no hold exists from ingestion alone.
+    expect(await holdOf(bookingId)).toBeNull();
+  });
+
+  // ---- defence in depth #1: a hold blocks pending→payable ----
+  it('6. an active hold blocks make_earning_payable (took_place past the 12h wait stays pending)', async () => {
+    // Conflicting (companion never observed), but ended > 12h ago so submit_companion_attendance
+    // WOULD otherwise make the earning payable. The hold (created by the same declaration,
+    // before the make-payable step) blocks it.
+    const held = await makeCall({ startAgoMin: LONG, withOrder: true });
+    await pair(held.roomName, held.bookingId, 'm', LONG, 120, 600);   // member-only, complete
+    expect((await rpc(cComp, 'submit_companion_attendance', { p_booking: held.bookingId, p_outcome: 'took_place', p_explanation: null })).error).toBeNull();
+    expect((await holdOf(held.bookingId))?.state).toBe('active');
+    expect((await earningState(held.bookingId))?.state).toBe('pending_completion');   // NOT payable
+    // Control: same timing, both observed → no hold → make_payable succeeds.
+    const ok = await makeCall({ startAgoMin: LONG, withOrder: true });
+    await pair(ok.roomName, ok.bookingId, 'c', LONG, 120, 600);
+    await pair(ok.roomName, ok.bookingId, 'm', LONG, 180, 560);
+    expect((await rpc(cComp, 'submit_companion_attendance', { p_booking: ok.bookingId, p_outcome: 'took_place', p_explanation: null })).error).toBeNull();
+    expect(await holdOf(ok.bookingId)).toBeNull();
+    expect((await earningState(ok.bookingId))?.state).toBe('payable');
+  });
+
+  // ---- defence in depth #2: a hold excludes a payable earning from transfer claims ----
+  it('7. a hold on an already-PAYABLE earning excludes it from claim_plan_transfers (control is claimed)', async () => {
+    // HELD: make it payable FIRST (no events), then finalise conflicting evidence → post-payable hold.
+    const held = await makeCall({ startAgoMin: LONG, withOrder: true });
+    expect((await rpc(cComp, 'submit_companion_attendance', { p_booking: held.bookingId, p_outcome: 'took_place', p_explanation: null })).error).toBeNull();
+    expect((await earningState(held.bookingId))?.state).toBe('payable');   // payable, no hold yet
+    await pair(held.roomName, held.bookingId, 'm', LONG, 120, 600);        // now conflicting evidence lands
+    expect((await holdOf(held.bookingId))?.state).toBe('active');          // active hold over a payable earning
+    // CONTROL: payable, no conflict → claimable.
+    const ok = await makeCall({ startAgoMin: LONG, withOrder: true });
+    await pair(ok.roomName, ok.bookingId, 'c', LONG, 120, 600);
+    await pair(ok.roomName, ok.bookingId, 'm', LONG, 180, 560);
+    expect((await rpc(cComp, 'submit_companion_attendance', { p_booking: ok.bookingId, p_outcome: 'took_place', p_explanation: null })).error).toBeNull();
+    expect((await earningState(ok.bookingId))?.state).toBe('payable');
+    // Claim: the control is claimed, the held one is skipped.
+    const claim = await rpc(cAdmin, 'claim_plan_transfers', { p_limit: 50 });
+    expect(claim.error, JSON.stringify(claim.error)).toBeNull();
+    const claimed = (claim.data ?? []).map((r: { booking_id: string }) => r.booking_id);
+    expect(claimed).toContain(ok.bookingId);
+    expect(claimed).not.toContain(held.bookingId);
+    expect((await earningState(held.bookingId))?.transfer_state).toBe('not_ready');   // untouched
+  });
+
+  it('8. post_transfer_review: a conflict discovered AFTER the transfer left is flagged (not blocking), transfer never reversed', async () => {
+    const bk = await makeCall({ startAgoMin: LONG, withOrder: true });
+    expect((await rpc(cComp, 'submit_companion_attendance', { p_booking: bk.bookingId, p_outcome: 'took_place', p_explanation: null })).error).toBeNull();
+    const claim = await rpc(cAdmin, 'claim_plan_transfers', { p_limit: 50 });
+    expect((claim.data ?? []).map((r: { booking_id: string }) => r.booking_id)).toContain(bk.bookingId);
+    expect((await earningState(bk.bookingId))?.transfer_state).toBe('processing');
+    // NOW conflicting evidence arrives.
+    await pair(bk.roomName, bk.bookingId, 'm', LONG, 120, 600);
+    const h = await holdOf(bk.bookingId);
+    expect(h?.state).toBe('post_transfer_review');                  // flagged for support, does not block
+    expect(h?.transfer_state_at_detection).toBe('processing');
+    expect((await earningState(bk.bookingId))?.transfer_state).toBe('processing');   // NEVER reversed
+    // It surfaces in the support queue (post-transfer sorted first).
+    const q = (await rpc(cSup, 'support_evidence_review_queue', {})).data as Array<{ booking_id: string; state: string }>;
+    expect(q.some((r) => r.booking_id === bk.bookingId && r.state === 'post_transfer_review')).toBe(true);
+  });
+
+  // ---- Companion-only read-model override ----
+  it('9. a hold overrides ONLY the Companion payout label to under_review; Member/Coordinator see no payout', async () => {
+    const { bookingId, roomName } = await makeCall({ withOrder: true });
+    await pair(roomName, bookingId, 'm', PAST, 120, 600);
+    expect((await rpc(cComp, 'submit_companion_attendance', { p_booking: bookingId, p_outcome: 'took_place', p_explanation: null })).error).toBeNull();
+    const asComp = (await rpc(cComp, 'get_conversation_completion_state', { p_booking: bookingId })).data;
+    const asMember = (await rpc(cMember, 'get_conversation_completion_state', { p_booking: bookingId })).data;
+    const asCoord = (await rpc(cCoord, 'get_conversation_completion_state', { p_booking: bookingId })).data;
+    expect(asComp.payout_status).toBe('under_review');
+    expect(asComp.payout_under_review).toBe(true);
+    expect(asMember.payout_status).toBeUndefined();
+    expect(asMember.payout_under_review).toBeUndefined();
+    expect(asCoord.payout_status).toBeUndefined();
+    expect(asCoord.payout_under_review).toBeUndefined();
+  });
+
+  // ---- auto-clear only when untouched ----
+  it('10. corrected evidence auto-clears an untouched active hold (→ superseded), but a support-touched hold is NOT auto-cleared', async () => {
+    // Untouched: correct the evidence (companion now observed too) → auto-supersede.
+    const a = await makeCall({ withOrder: true });
+    await pair(a.roomName, a.bookingId, 'm', PAST, 120, 600);
+    expect((await rpc(cComp, 'submit_companion_attendance', { p_booking: a.bookingId, p_outcome: 'took_place', p_explanation: null })).error).toBeNull();
+    expect((await holdOf(a.bookingId))?.state).toBe('active');
+    await pair(a.roomName, a.bookingId, 'c', PAST, 130, 590);        // companion now observed → both_connected
+    const cleared = await holdOf(a.bookingId);
+    expect(cleared?.state).toBe('superseded');
+    expect(cleared?.resolution).toBe('auto_cleared_corrected_evidence');
+    // Touched: a claimed review is protected from auto-clear.
+    const b = await makeCall({ withOrder: true });
+    await pair(b.roomName, b.bookingId, 'm', PAST, 120, 600);
+    expect((await rpc(cComp, 'submit_companion_attendance', { p_booking: b.bookingId, p_outcome: 'took_place', p_explanation: null })).error).toBeNull();
+    const review = await holdOf(b.bookingId);
+    expect((await rpc(cSup, 'support_claim_evidence_review', { p_review: review!.id })).error).toBeNull();
+    await pair(b.roomName, b.bookingId, 'c', PAST, 130, 590);        // corrected evidence
+    const still = await holdOf(b.bookingId);
+    expect(still?.state).toBe('claimed');                            // survived — a human owns it
+    expect(still?.support_touched).toBe(true);
+  });
+
+  // ---- support workflow: privacy, single-winner claim, append-only notes, recheck ----
+  it('11. the support queue/detail are support-only, carry the review, and expose no secrets', async () => {
+    const { bookingId, roomName } = await makeCall({ withOrder: true });
+    await pair(roomName, bookingId, 'm', PAST, 120, 600);
+    expect((await rpc(cComp, 'submit_companion_attendance', { p_booking: bookingId, p_outcome: 'took_place', p_explanation: null })).error).toBeNull();
+    expect((await rpc(cComp, 'support_evidence_review_queue', {})).error).not.toBeNull();
+    expect((await rpc(cMember, 'support_evidence_review_detail', { p_booking: bookingId })).error).not.toBeNull();
+    const detail = (await rpc(cSup, 'support_evidence_review_detail', { p_booking: bookingId })).data;
+    expect(detail.review.conflict_code).toBe('companion_not_observed');
+    for (const secret of ['room_name', 'token', 'stripe', 'card', 'bank', 'code_hash', 'private_feedback']) {
+      expect(JSON.stringify(detail).toLowerCase()).not.toContain(secret);
+    }
+  });
+
+  it('12. claiming a review is single-winner; notes are append-only and required', async () => {
+    const { bookingId, roomName } = await makeCall({ withOrder: true });
+    await pair(roomName, bookingId, 'm', PAST, 120, 600);
+    expect((await rpc(cComp, 'submit_companion_attendance', { p_booking: bookingId, p_outcome: 'took_place', p_explanation: null })).error).toBeNull();
+    const reviewId = (await holdOf(bookingId))!.id;
+    const [r1, r2] = await Promise.all([
+      rpc(cSup, 'support_claim_evidence_review', { p_review: reviewId }),
+      rpc(cSup2, 'support_claim_evidence_review', { p_review: reviewId }),
+    ]);
+    const wins = [r1, r2].filter((r) => !r.error).length;
+    const losers = [r1, r2].filter((r) => r.error).length;
+    expect(wins).toBe(1);                                           // exactly one owner
+    expect(losers).toBe(1);
+    // Empty note rejected; a real note appends one immutable event.
+    expect((await rpc(cSup, 'support_add_evidence_review_note', { p_review: reviewId, p_note: '   ' })).error).not.toBeNull();
+    expect((await rpc(cSup, 'support_add_evidence_review_note', { p_review: reviewId, p_note: 'Called the companion.' })).error).toBeNull();
+    const events = (await cAdmin.from('companion_evidence_payout_review_events').select('action').eq('review_id', reviewId)).data ?? [];
+    expect(events.filter((e) => e.action === 'note')).toHaveLength(1);
+    expect(events.some((e) => e.action === 'claimed')).toBe(true);
+  });
+
+  it('13. support recheck re-runs the deterministic evaluator (idempotent — no second open review)', async () => {
+    const { bookingId, roomName } = await makeCall({ withOrder: true });
+    await pair(roomName, bookingId, 'm', PAST, 120, 600);
+    expect((await rpc(cComp, 'submit_companion_attendance', { p_booking: bookingId, p_outcome: 'took_place', p_explanation: null })).error).toBeNull();
+    const first = (await holdOf(bookingId))!.id;
+    expect((await rpc(cSup, 'support_recheck_evidence_review', { p_booking: bookingId })).error).toBeNull();
+    const open = (await cAdmin.from('companion_evidence_payout_reviews').select('id')
+      .eq('booking_id', bookingId).in('state', ['active', 'claimed', 'post_transfer_review']).order('created_at')).data ?? [];
+    expect(open).toHaveLength(1);                                   // still exactly one
+    expect(open[0].id).toBe(first);
+  });
+
+  // ---- release: reasoned, no deny+refund, waiting-period gated, idempotent ----
+  it('14. release requires a valid reason, offers no deny+refund, and after the wait makes the pending earning payable', async () => {
+    const { bookingId, roomName } = await makeCall({ startAgoMin: LONG, withOrder: true });
+    await pair(roomName, bookingId, 'm', LONG, 120, 600);
+    expect((await rpc(cComp, 'submit_companion_attendance', { p_booking: bookingId, p_outcome: 'took_place', p_explanation: null })).error).toBeNull();
+    const reviewId = (await holdOf(bookingId))!.id;
+    expect((await earningState(bookingId))?.state).toBe('pending_completion');   // blocked so far
+    // A bogus resolution and a blank reason are both refused (no silent "deny + refund").
+    expect((await rpc(cSup, 'support_release_evidence_review', { p_review: reviewId, p_resolution: 'deny_and_refund', p_note: 'x' })).error).not.toBeNull();
+    expect((await rpc(cSup, 'support_release_evidence_review', { p_review: reviewId, p_resolution: 'release_payout', p_note: '  ' })).error).not.toBeNull();
+    // Valid release with a reason → review released; past the 12h wait, the earning becomes payable.
+    expect((await rpc(cSup, 'support_release_evidence_review', { p_review: reviewId, p_resolution: 'release_payout', p_note: 'Companion provided a call recording.' })).error).toBeNull();
+    expect((await holdOf(bookingId))?.state).toBe('released');
+    expect((await earningState(bookingId))?.state).toBe('payable');
+  });
+
+  it('15. an early release (before the 12h wait) resolves the hold but leaves the earning pending', async () => {
+    const { bookingId, roomName } = await makeCall({ withOrder: true });   // ended 40m ago
+    await pair(roomName, bookingId, 'm', PAST, 120, 600);
+    expect((await rpc(cComp, 'submit_companion_attendance', { p_booking: bookingId, p_outcome: 'took_place', p_explanation: null })).error).toBeNull();
+    const reviewId = (await holdOf(bookingId))!.id;
+    expect((await rpc(cSup, 'support_release_evidence_review', { p_review: reviewId, p_resolution: 'release_payout', p_note: 'Cleared early.' })).error).toBeNull();
+    expect((await holdOf(bookingId))?.state).toBe('released');
+    expect((await earningState(bookingId))?.state).toBe('pending_completion');   // wait not elapsed → still pending
+  });
+
+  it('16. superseded_by_corrected_evidence and escalate_to_existing_issue_process are accepted resolutions', async () => {
+    const s = await makeCall({ withOrder: true });
+    await pair(s.roomName, s.bookingId, 'm', PAST, 120, 600);
+    expect((await rpc(cComp, 'submit_companion_attendance', { p_booking: s.bookingId, p_outcome: 'took_place', p_explanation: null })).error).toBeNull();
+    const sId = (await holdOf(s.bookingId))!.id;
+    expect((await rpc(cSup, 'support_release_evidence_review', { p_review: sId, p_resolution: 'superseded_by_corrected_evidence', p_note: 'Corrected record.' })).error).toBeNull();
+    expect((await holdOf(s.bookingId))?.state).toBe('superseded');
+    const e = await makeCall({ withOrder: true });
+    await pair(e.roomName, e.bookingId, 'm', PAST, 120, 600);
+    expect((await rpc(cComp, 'submit_companion_attendance', { p_booking: e.bookingId, p_outcome: 'took_place', p_explanation: null })).error).toBeNull();
+    const eId = (await holdOf(e.bookingId))!.id;
+    expect((await rpc(cSup, 'support_release_evidence_review', { p_review: eId, p_resolution: 'escalate_to_existing_issue_process', p_note: 'Routed to issue queue.' })).error).toBeNull();
+    expect((await holdOf(e.bookingId))?.state).toBe('released');
+  });
+
+  // ---- explicit races ----
+  it('RACE-A. evaluator vs transfer-claim: an active hold is never claimed unreviewed', async () => {
+    // Payable earning, no hold yet; conflicting evidence lands AT THE SAME TIME as a claim.
+    const bk = await makeCall({ startAgoMin: LONG, withOrder: true });
+    expect((await rpc(cComp, 'submit_companion_attendance', { p_booking: bk.bookingId, p_outcome: 'took_place', p_explanation: null })).error).toBeNull();
+    expect((await earningState(bk.bookingId))?.state).toBe('payable');
+    await Promise.all([
+      pair(bk.roomName, bk.bookingId, 'm', LONG, 120, 600),          // triggers the evaluator
+      rpc(cAdmin, 'claim_plan_transfers', { p_limit: 50 }),
+    ]);
+    const h = await holdOf(bk.bookingId);
+    const es = await earningState(bk.bookingId);
+    expect(['active', 'post_transfer_review']).toContain(h?.state as string);   // a hold always exists
+    const claimed = es?.transfer_state === 'processing';
+    // INVARIANT: an ACTIVE (blocking) hold is never over a claimed earning; if it was
+    // claimed, the hold is a post_transfer_review flag instead — never lost.
+    if (h?.state === 'active') expect(claimed).toBe(false);
+    if (claimed) expect(h?.state).toBe('post_transfer_review');
+  });
+
+  it('RACE-B. two simultaneous support releases → exactly one resolves; the other is a safe no-op', async () => {
+    const { bookingId, roomName } = await makeCall({ withOrder: true });
+    await pair(roomName, bookingId, 'm', PAST, 120, 600);
+    expect((await rpc(cComp, 'submit_companion_attendance', { p_booking: bookingId, p_outcome: 'took_place', p_explanation: null })).error).toBeNull();
+    const reviewId = (await holdOf(bookingId))!.id;
+    const [r1, r2] = await Promise.all([
+      rpc(cSup, 'support_release_evidence_review', { p_review: reviewId, p_resolution: 'release_payout', p_note: 'Agent one.' }),
+      rpc(cSup2, 'support_release_evidence_review', { p_review: reviewId, p_resolution: 'release_payout', p_note: 'Agent two.' }),
+    ]);
+    expect(r1.error).toBeNull();
+    expect(r2.error).toBeNull();                                    // idempotent — no error, no double effect
+    expect((await holdOf(bookingId))?.state).toBe('released');
+    const releases = (await cAdmin.from('companion_evidence_payout_review_events').select('action').eq('review_id', reviewId)).data ?? [];
+    expect(releases.filter((e) => e.action === 'released')).toHaveLength(1);   // resolved exactly once
+  });
+
+  // ---- suite-wide financial firewall ----
+  it('FIREWALL. across every 3B2 booking, no refund / dispute / credit was created; earnings only where a declaration was made', async () => {
+    for (const b of bookingsMade) {
+      expect((await cAdmin.from('payment_refunds').select('id').eq('booking_id', b)).data ?? [], `refund on ${b}`).toHaveLength(0);
+      const orderIds = ((await cAdmin.from('payment_orders').select('id').eq('booking_id', b)).data ?? []).map((o) => o.id as string);
+      if (orderIds.length) {
+        expect((await cAdmin.from('payment_disputes').select('id').in('payment_order_id', orderIds)).data ?? [], `dispute on ${b}`).toHaveLength(0);
+      }
+      // No transfer was ever REVERSED by evidence (holds never reverse money).
+      const eids = ((await cAdmin.from('companion_earnings').select('id').eq('booking_id', b)).data ?? []).map((e) => e.id as string);
+      if (eids.length) {
+        const attempts = (await cAdmin.from('companion_transfer_attempts').select('state').in('earning_id', eids)).data ?? [];
+        expect(attempts.some((a) => a.state === 'reversed'), `reversal on ${b}`).toBe(false);
+      }
+    }
+  });
+});

@@ -25,6 +25,8 @@ type CompletionState = {
   both_observed?: boolean;
   companion_observed?: boolean;
   member_observed?: boolean;
+  // Stage 3B2 — Companion-only; the server redacts it from other roles.
+  payout_under_review?: boolean;
 };
 
 /** Neutral, evidence-focused wording. Never a financial or no-show verdict. */
@@ -80,6 +82,21 @@ export function CallEvidenceNote({ bookingId }: { bookingId: string }) {
   if (!isSupabaseMode() || !loaded || !state) return null;
 
   const processing = state.evidence_processing;
+  // Stage 3B2: a Companion payout under an evidence review sees a calm, neutral
+  // note — never an accusation, a conflict code, a support note, or a claim that
+  // payout is cancelled. The server only exposes this flag to the Companion.
+  if (state.payout_under_review) {
+    return (
+      <div className="card card-muted" style={{ margin: 0 }}>
+        <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+          <Radio size={15} aria-hidden="true" />
+          <span className="muted small">
+            <strong>Payout under review.</strong> The call connection record needs a quick review before payout continues.
+          </span>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="card card-muted" style={{ margin: 0 }}>
       <div className="row" style={{ gap: 8, alignItems: 'center' }}>
