@@ -175,23 +175,26 @@ describe('join rule (shared module + Edge Function contract)', () => {
   const soon = () => booking(10).starts_at;
   void soon;
 
-  it('1. an unrelated account gets unauthorised — with no booking details', () => {
-    // RLS returns nothing for outsiders; the rule maps that to unauthorised.
+  it('1. an unrelated account gets unauthorised — with no booking details (Stage 3A)', () => {
+    // The client mirror still maps "no booking" to unauthorised.
     expect(evaluateBookingJoin(null)).toBe('unauthorised');
-    // The function loads through the caller-scoped view and answers 403
-    // with only a state field.
-    expect(EDGE_FN).toContain("from('my_bookings')");
-    expect(EDGE_FN).toContain("json({ state: 'unauthorised' }, 403)");
+    // Stage 3A: eligibility is delegated to the authoritative DB RPC, which fails
+    // CLOSED and identically for unauthorised/nonexistent; the function returns a
+    // uniform not_found/unauthorised alias with no booking detail.
+    expect(EDGE_FN).toContain("rpc('call_join_eligibility'");
+    expect(EDGE_FN).toContain("state: 'unauthorised'");
+    expect(EDGE_FN).toContain("error: 'not_found'");
   });
 
-  it('2+3. the browser cannot choose the room or the identity', () => {
+  it('2+3. the browser cannot choose the room or the identity (Stage 3A)', () => {
     // Only bookingId is read from the request body…
-    expect(EDGE_FN).toContain("typeof body?.bookingId === 'string'");
-    expect(EDGE_FN).not.toMatch(/body[.?]*\s*\.\s*(room|identity|role|memberId|companionId)/);
-    // …and both are derived server-side.
-    expect(EDGE_FN).toContain('room: `booking-${booking.id}`');
-    expect(EDGE_FN).toMatch(/identity = companionSide\s*\?\s*`companion-\$\{booking\.companion_profile_id\}`/);
-    expect(roomNameFor('abc')).toBe('booking-abc'); // no names, no emails
+    expect(EDGE_FN).toContain("typeof parsedBody?.bookingId === 'string'");
+    expect(EDGE_FN).not.toMatch(/parsedBody[.?]*\s*\.\s*(room|identity|role|permissions|ttl)/);
+    // …room + identity are SERVER-derived (opaque room from ensure_call_session;
+    // identity = account:<uuid> from the shared module).
+    expect(EDGE_FN).toContain("rpc('ensure_call_session'");
+    expect(EDGE_FN).toContain('participantIdentity(accountId)');
+    expect(EDGE_FN).toContain('buildCallGrant(session.room_name)');
   });
 
   it('4+5. cancelled and requested bookings never open a room', () => {
@@ -218,9 +221,11 @@ describe('join rule (shared module + Edge Function contract)', () => {
     expect(WAITING_ROOM_OPEN_MINUTES).toBe(10);
     expect(MEDIA_OPEN_MINUTES).toBe(5);
     expect(ROOM_CLOSE_AFTER_END_MINUTES).toBe(30);
-    // and the function embeds the same boundaries
-    expect(EDGE_FN).toContain('MEDIA_OPEN_MINUTES = 5');
-    expect(EDGE_FN).toContain('ROOM_CLOSE_AFTER_END_MINUTES = 30');
+    // Stage 3A: the authoritative window lives in the DB (call_config + the
+    // eligibility RPC); the function delegates and maps the timing reasons.
+    expect(EDGE_FN).toContain("rpc('call_join_eligibility'");
+    expect(EDGE_FN).toContain("'too_early'");
+    expect(EDGE_FN).toContain("'join_window_closed'");
   });
 
   it('9+10+11+12. participants in, outsiders out — via RLS plus profile_access', () => {
@@ -228,17 +233,21 @@ describe('join rule (shared module + Edge Function contract)', () => {
     // read the booking through my_bookings (established RLS); anyone the
     // view rejects — including unrelated Coordinators — gets unauthorised
     // before any booking data exists in the response.
-    expect(EDGE_FN).toContain('if (!booking) return json({ state: \'unauthorised\' }, 403)');
-    // The side (and therefore identity) comes from profile_access.can_edit,
-    // never from the request.
-    expect(EDGE_FN).toContain("from('profile_access')");
-    expect(EDGE_FN).toContain('r.profile_id === booking.companion_profile_id && r.can_edit');
+    // Stage 3A: role + participant authorisation are decided by the DB RPC
+    // (profile OWNER accounts only — a Coordinator who booked is excluded), not
+    // by the edge function trusting client input. The role comes back on the RPC.
+    expect(EDGE_FN).toContain("rpc('call_join_eligibility'");
+    expect(EDGE_FN).toContain('e.your_role');
+    expect(EDGE_FN).toContain("state: 'unauthorised'"); // fail-closed alias
   });
 
-  it('tokens are short-lived and narrowly granted', () => {
-    expect(EDGE_FN).toContain('TOKEN_TTL_SECONDS = 15 * 60');
-    expect(EDGE_FN).toContain('canPublishData: false');
-    expect(EDGE_FN).not.toMatch(/roomCreate\s*:\s*true|roomAdmin\s*:\s*true|roomList\s*:\s*true|recorder\s*:\s*true/);
+  it('tokens are short-lived and narrowly granted (Stage 3A: mic-only, 10 min)', () => {
+    // The grant + TTL now live in the shared, separately-tested callToken module;
+    // the function builds the grant from it and adds the microphone source only.
+    expect(EDGE_FN).toContain('buildCallGrant(session.room_name)');
+    expect(EDGE_FN).toContain('TrackSource.MICROPHONE');
+    expect(EDGE_FN).toContain('TOKEN_TTL_SECONDS');
+    expect(EDGE_FN).not.toMatch(/roomCreate\s*:\s*true|roomAdmin\s*:\s*true|roomList\s*:\s*true|recorder\s*:\s*true|roomRecord\s*:\s*true/);
   });
 });
 

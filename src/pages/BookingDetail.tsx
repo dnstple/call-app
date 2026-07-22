@@ -281,15 +281,16 @@ export default function BookingDetail() {
             {IN_APP_CALL_EXPLAINER}{' '}
             {canRescheduleBooking(booking) ? RESCHEDULE_OPEN_COPY : ''}
           </p>
-          {/* 2F1: the way into the call room. The room itself opens ten
-              minutes before the start; the server decides admission. */}
+          {/* Stage 3A: the way into the secure audio call. Admission (window +
+              participant check) is decided by the server; the page opens the
+              pre-join screen and the server issues a short-lived token. */}
           {booking.status === 'confirmed' && !ended && (
             <div className="col" style={{ gap: 4 }}>
-              <Link to={`/calls/${booking.id}`} className="btn btn-primary" style={{ alignSelf: 'flex-start' }}>
-                <Phone size={18} aria-hidden="true" /> Open the call room
+              <Link to={`/conversations/${booking.id}/call`} className="btn btn-primary" style={{ alignSelf: 'flex-start' }}>
+                <Phone size={18} aria-hidden="true" /> Join the audio call
               </Link>
               <span className="faint">
-                The room opens ten minutes before your conversation starts.
+                Audio only · opens ten minutes before your conversation starts · not recorded.
               </span>
             </div>
           )}

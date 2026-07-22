@@ -5570,3 +5570,200 @@ describe.skipIf(!enabled)('2G6E-C financial reconciliation (requires live Supaba
     })).error).not.toBeNull();
   });
 });
+
+/* ============================================================
+ * Stage 3A — secure audio-call foundations (live, fixture-scoped). Exercises the
+ * DB surface directly (eligibility, session provisioning, event ingestion, safe
+ * read + support diagnostics) WITHOUT LiveKit: no token is minted and no real
+ * room is opened. Proves participant authorisation, one-session-per-booking,
+ * idempotent + ordering-safe ingestion, RLS, and that NO call event changes the
+ * booking or any money. Cleanup is fixture-scoped; the support-admin baseline is
+ * restored.
+ * ============================================================ */
+describe.skipIf(!enabled)('3A LiveKit audio foundations (requires live Supabase)', () => {
+  let cAdmin: SupabaseClient;
+  let cMember: SupabaseClient; let cComp: SupabaseClient; let cCoord: SupabaseClient; let cOther: SupabaseClient; let cSup: SupabaseClient;
+  let memberAcct: string; let compAcct: string; let coordAcct: string; let supAcct: string;
+  let memberProfile: string; let companionProfile: string; let offerId: string; let bookingId: string;
+  const memberIdentity = () => `account:${memberAcct}`;
+  const compIdentity = () => `account:${compAcct}`;
+
+  // Untyped rpc accessor (0064 RPCs are not in generated types until applied).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rpc = (c: SupabaseClient, fn: string, args: Record<string, unknown>) => (c as any).rpc(fn, args);
+
+  beforeAll(async () => {
+    cAdmin = adminClient();
+    cMember = await signedInClient(`rls-c3a-mem-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    cComp = await signedInClient(`rls-c3a-comp-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    cCoord = await signedInClient(`rls-c3a-coord-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    cOther = await signedInClient(`rls-c3a-other-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    cSup = await signedInClient(`rls-c3a-sup-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    memberAcct = (await cMember.auth.getUser()).data.user!.id;
+    compAcct = (await cComp.auth.getUser()).data.user!.id;
+    coordAcct = (await cCoord.auth.getUser()).data.user!.id;
+    supAcct = (await cSup.auth.getUser()).data.user!.id;
+    for (const c of [cMember, cComp, cCoord, cOther, cSup]) {
+      if ((await c.rpc('ensure_current_account')).error) throw new Error('ensure account');
+    }
+    if ((await cAdmin.from('support_admins').upsert({ account_id: supAcct }, { onConflict: 'account_id', ignoreDuplicates: true })).error) throw new Error('support');
+
+    // Profiles + owner access rows for the two real participants (member + companion).
+    const mp = await cAdmin.from('profiles').insert({ role: 'member', first_name: 'Cara' }).select('id').single();
+    if (mp.error) throw new Error(`member profile: ${mp.error.message}`);
+    memberProfile = mp.data!.id as string;
+    const cp = await cAdmin.from('profiles').insert({ role: 'companion', first_name: 'Devon' }).select('id').single();
+    if (cp.error) throw new Error(`companion profile: ${cp.error.message}`);
+    companionProfile = cp.data!.id as string;
+    const access = [
+      { account_id: memberAcct, profile_id: memberProfile, access_role: 'owner', can_edit: true, can_book: true },
+      { account_id: compAcct, profile_id: companionProfile, access_role: 'owner', can_edit: true, can_book: true },
+      // A managing Coordinator has access to the member profile but is NOT the owner.
+      { account_id: coordAcct, profile_id: memberProfile, access_role: 'coordinator', can_edit: true, can_book: true },
+    ];
+    if ((await cAdmin.from('profile_access').insert(access)).error) throw new Error('profile_access');
+    const of = await cAdmin.from('conversation_offers').insert({
+      companion_profile_id: companionProfile, offer_type: 'single', duration_minutes: 30, price_minor: 1000, supported_methods: ['in_app'],
+    }).select('id').single();
+    if (of.error) throw new Error(`offer: ${of.error.message}`);
+    offerId = of.data!.id as string;
+
+    // A CONFIRMED booking whose window is open now (start −2 min → end +28 min).
+    const start = new Date(Date.now() - 2 * 60_000);
+    const end = new Date(start.getTime() + 30 * 60_000);
+    const bk = await cAdmin.from('bookings').insert({
+      member_profile_id: memberProfile, companion_profile_id: companionProfile, booked_by_account_id: coordAcct,
+      offer_id: offerId, starts_at: start.toISOString(), ends_at: end.toISOString(), communication_method: 'in_app',
+      status: 'confirmed', duration_minutes: 30, price_minor: 1000, platform_fee_rate: 0, platform_fee_minor: 0,
+      companion_amount_minor: 1000,
+    }).select('id').single();
+    if (bk.error) throw new Error(`booking: ${bk.error.message}`);
+    bookingId = requireUuid(bk.data!.id, '3a booking');
+  }, 120_000);
+
+  afterAll(async () => {
+    let sessionId: string | null = null;
+    const s = (await cAdmin.from('call_sessions').select('id').eq('booking_id', bookingId).maybeSingle()).data;
+    sessionId = (s?.id as string) ?? null;
+    if (sessionId) {
+      await cAdmin.from('call_provider_events').delete().eq('call_session_id', sessionId);
+      await cAdmin.from('call_token_audits').delete().eq('call_session_id', sessionId);
+      await cAdmin.from('call_participants').delete().eq('call_session_id', sessionId);
+      await cAdmin.from('call_sessions').delete().eq('id', sessionId);
+    }
+    if (bookingId) await cAdmin.from('bookings').delete().eq('id', bookingId);
+    if (offerId) await cAdmin.from('conversation_offers').delete().eq('id', offerId);
+    await cAdmin.from('profile_access').delete().in('profile_id', [memberProfile, companionProfile].filter(Boolean));
+    if (companionProfile) await cAdmin.from('profiles').delete().eq('id', companionProfile);
+    if (memberProfile) await cAdmin.from('profiles').delete().eq('id', memberProfile);
+    await cAdmin.from('support_admins').delete().eq('account_id', supAcct);
+  });
+
+  it('1+2. member and companion each read eligibility for their booking (server-derived role)', async () => {
+    const m = await rpc(cMember, 'call_join_eligibility', { p_booking: bookingId });
+    expect(m.error).toBeNull();
+    expect(m.data.eligible).toBe(true);
+    expect(m.data.your_role).toBe('member');
+    const c = await rpc(cComp, 'call_join_eligibility', { p_booking: bookingId });
+    expect(c.data.eligible).toBe(true);
+    expect(c.data.your_role).toBe('companion');
+  });
+
+  it('3. the booking Coordinator cannot obtain call access (only the two talk)', async () => {
+    const co = await rpc(cCoord, 'call_join_eligibility', { p_booking: bookingId });
+    expect(co.data.eligible).toBe(false);
+    expect(co.data.reason).toBe('coordinator_not_permitted');
+  });
+
+  it('4+5. an unrelated user gets not_found; anon cannot call the RPC at all', async () => {
+    const o = await rpc(cOther, 'call_join_eligibility', { p_booking: bookingId });
+    expect(o.data.eligible).toBe(false);
+    expect(o.data.reason).toBe('not_found'); // identical to nonexistent — no leak
+    expect((await rpc(client(), 'call_join_eligibility', { p_booking: bookingId })).error).not.toBeNull();
+  });
+
+  it('7. a cancelled booking cannot create a session and reads not_confirmed', async () => {
+    const start = new Date(Date.now() - 2 * 60_000); const end = new Date(start.getTime() + 30 * 60_000);
+    const bk = await cAdmin.from('bookings').insert({
+      member_profile_id: memberProfile, companion_profile_id: companionProfile, booked_by_account_id: memberAcct,
+      offer_id: offerId, starts_at: new Date(start.getTime() + 40 * 60_000).toISOString(),
+      ends_at: new Date(end.getTime() + 40 * 60_000).toISOString(), communication_method: 'in_app',
+      status: 'cancelled', duration_minutes: 30, price_minor: 1000, platform_fee_rate: 0, platform_fee_minor: 0, companion_amount_minor: 1000,
+    }).select('id').single();
+    expect(bk.error).toBeNull();
+    const cancelled = bk.data!.id as string;
+    try {
+      expect((await rpc(cMember, 'call_join_eligibility', { p_booking: cancelled })).data.reason).toBe('not_confirmed');
+      expect((await rpc(cAdmin, 'ensure_call_session', { p_booking: cancelled })).error).not.toBeNull();
+      expect((await cAdmin.from('call_sessions').select('id').eq('booking_id', cancelled)).data ?? []).toHaveLength(0);
+    } finally {
+      await cAdmin.from('bookings').delete().eq('id', cancelled);
+    }
+  });
+
+  it('8+9+10+11. ensure_call_session is idempotent: one session, two expected participants, no coordinator', async () => {
+    const r1 = await rpc(cAdmin, 'ensure_call_session', { p_booking: bookingId });
+    expect(r1.error).toBeNull();
+    const r2 = await rpc(cAdmin, 'ensure_call_session', { p_booking: bookingId });
+    expect(r2.data.call_session_id).toBe(r1.data.call_session_id); // stable, never duplicated
+    expect((r1.data.room_name as string).startsWith('call_')).toBe(true);
+    const sessions = (await cAdmin.from('call_sessions').select('id').eq('booking_id', bookingId)).data ?? [];
+    expect(sessions).toHaveLength(1);
+    const parts = (await cAdmin.from('call_participants').select('account_id, booking_role').eq('call_session_id', r1.data.call_session_id)).data ?? [];
+    expect(parts).toHaveLength(2);
+    expect(parts.map((p) => p.booking_role).sort()).toEqual(['companion', 'member']);
+    expect(parts.some((p) => p.account_id === coordAcct)).toBe(false); // Coordinator never a participant
+  });
+
+  it('12+13. direct writes to call tables are denied; the provider ledger is not client-readable', async () => {
+    expect((await cMember.from('call_sessions').insert({ booking_id: bookingId, room_name: `forge_${suffix}`, scheduled_start: new Date().toISOString(), scheduled_end: new Date().toISOString() })).error).not.toBeNull();
+    expect((await cMember.from('call_participants').select('id')).data ?? []).toHaveLength(0);
+    expect((await cMember.from('call_provider_events').select('id')).data ?? []).toHaveLength(0);
+  });
+
+  it('14. the safe user RPC hides the room name and provider diagnostics', async () => {
+    const st = await rpc(cMember, 'call_state_for_booking', { p_booking: bookingId });
+    expect(st.error).toBeNull();
+    expect(st.data.your_role).toBe('member');
+    expect(JSON.stringify(st.data)).not.toMatch(/room_name|provider_identity|call_/);
+  });
+
+  it('15. support diagnostics are support-only and expose connection metadata', async () => {
+    expect((await rpc(cMember, 'support_call_diagnostics', { p_booking: bookingId })).error).not.toBeNull();
+    const d = await rpc(cSup, 'support_call_diagnostics', { p_booking: bookingId });
+    expect(d.error).toBeNull();
+    expect((d.data.session.room_name as string).startsWith('call_')).toBe(true);
+    expect(Array.isArray(d.data.participants)).toBe(true);
+  });
+
+  it('16+17. webhook ingestion is idempotent and ordering-safe; unknown rooms are ignored', async () => {
+    const sess = (await cAdmin.from('call_sessions').select('id, room_name').eq('booking_id', bookingId).single()).data!;
+    const room = sess.room_name as string;
+    const t0 = new Date(Date.now() - 5 * 60_000).toISOString();
+    const t1 = new Date(Date.now() - 4 * 60_000).toISOString();
+    // Member joins.
+    const j = await rpc(cAdmin, 'ingest_call_event', { p_provider_event_id: `ev-join-${suffix}`, p_event_type: 'participant_joined', p_room: room, p_identity: memberIdentity(), p_provider_created_at: t1 });
+    expect(j.data.result).toBe('participant_joined');
+    // Duplicate event id → no double count.
+    const dup = await rpc(cAdmin, 'ingest_call_event', { p_provider_event_id: `ev-join-${suffix}`, p_event_type: 'participant_joined', p_room: room, p_identity: memberIdentity(), p_provider_created_at: t1 });
+    expect(dup.data.result).toBe('duplicate_ignored');
+    let part = (await cAdmin.from('call_participants').select('join_count, currently_connected').eq('call_session_id', sess.id).eq('booking_role', 'member').single()).data!;
+    expect(part.join_count).toBe(1);
+    expect(part.currently_connected).toBe(true);
+    // An OLDER 'left' (t0 < t1) must NOT flip the newer connected state.
+    await rpc(cAdmin, 'ingest_call_event', { p_provider_event_id: `ev-oldleft-${suffix}`, p_event_type: 'participant_left', p_room: room, p_identity: memberIdentity(), p_provider_created_at: t0 });
+    part = (await cAdmin.from('call_participants').select('join_count, currently_connected').eq('call_session_id', sess.id).eq('booking_role', 'member').single()).data!;
+    expect(part.currently_connected).toBe(true);
+    // Unknown room → safe ignore.
+    expect((await rpc(cAdmin, 'ingest_call_event', { p_provider_event_id: `ev-unk-${suffix}`, p_event_type: 'participant_joined', p_room: `call_${'9'.repeat(32)}`, p_identity: memberIdentity(), p_provider_created_at: t1 })).data.result).toBe('ignored_unknown_room');
+    // Unexpected identity → ignored.
+    expect((await rpc(cAdmin, 'ingest_call_event', { p_provider_event_id: `ev-bad-${suffix}`, p_event_type: 'participant_joined', p_room: room, p_identity: 'account:00000000-0000-0000-0000-000000000000', p_provider_created_at: t1 })).data.result).toBe('ignored_unexpected_identity');
+  });
+
+  it('18. no call event changes the booking status or creates any money row', async () => {
+    const status = (await cAdmin.from('bookings').select('status').eq('id', bookingId).single()).data!.status;
+    expect(status).toBe('confirmed'); // ingestion never completes the booking
+    expect((await cAdmin.from('companion_earnings').select('id').eq('booking_id', bookingId)).data ?? []).toHaveLength(0);
+    expect((await cAdmin.from('payment_orders').select('id').eq('booking_id', bookingId)).data ?? []).toHaveLength(0);
+  });
+});

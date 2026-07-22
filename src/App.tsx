@@ -11,6 +11,7 @@ import MyProfile from './pages/MyProfile';
 import Conversations from './pages/Conversations';
 import BookingDetail from './pages/BookingDetail';
 const CallRoom = lazy(() => import('./pages/CallRoom'));
+const CallPage = lazy(() => import('./pages/CallPage'));
 const PlanMemberProfile = lazy(() => import('./pages/PlanMemberProfile'));
 const MessagesPage = lazy(() => import('./pages/MessagesPage'));
 const PlanDetail = lazy(() => import('./pages/PlanDetail'));
@@ -206,6 +207,8 @@ function AppRoutes() {
                 <Route path="/members" element={<MembersPage />} />
                 <Route path="/conversations" element={<Conversations />} />
                 <Route path="/conversations/:bookingId" element={<BookingDetail />} />
+                {/* Stage 3A — secure audio call for the two booked participants. */}
+                <Route path="/conversations/:bookingId/call" element={<CallPage />} />
                 {/* Documented boundary for in-app calling (not built yet). */}
                 <Route path="/calls/:bookingId" element={<CallRoom />} />
                 <Route path="/messages" element={<MessagesPage />} />

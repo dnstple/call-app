@@ -1,24 +1,29 @@
 /**
- * Stage 2F1 — LiveKit token service (Supabase Edge Function).
+ * Stage 3A — LiveKit audio-call token service (Supabase Edge Function).
  *
- * The ONLY way a browser obtains call credentials. The browser sends a
- * bookingId and nothing else; everything of consequence is derived here:
+ * The ONLY way an authenticated browser obtains call credentials. The browser
+ * sends { bookingId } and NOTHING else of consequence; everything is derived
+ * server-side:
  *
- * - the caller must hold a valid Supabase session (JWT verified);
- * - the booking loads through an RLS-scoped read AS the caller, so an
- *   unrelated account (including an unrelated Coordinator) simply sees
- *   nothing — "unauthorised" leaks no booking details;
- * - eligibility: only CONFIRMED bookings, inside the documented window
- *   (starts_at − 5 min → ends_at + 30 min; server clock is authority);
- * - room name  = booking-{bookingId}   (no names, emails or identifiers);
- * - identity   = member-{profileId} | companion-{profileId} (server-derived
- *   from profile_access; Coordinators with Member access join member-side);
- * - the token is short-lived (15 min), booking- and participant-specific,
- *   and grants ONLY roomJoin/publish/subscribe on that one room. No room
- *   creation, no admin, no data channel, no recording.
+ *  - the caller must hold a valid Supabase session (JWT verified);
+ *  - the authoritative DB RPC `call_join_eligibility` decides eligibility using
+ *    the SERVER clock and a SERVER-derived role (the profile's own OWNER account
+ *    only — a Coordinator who merely booked cannot join);
+ *  - the call session (one stable opaque room per booking) is created/retrieved
+ *    idempotently by `ensure_call_session` (service role);
+ *  - participant identity is `account:<uuid>` (server-derived, no PII);
+ *  - the room name is server-generated and opaque (`call_<hex>`), never chosen
+ *    or seen by the browser except implicitly inside the JWT;
+ *  - the token is short-lived (10 min) and grants ONLY: roomJoin on that one
+ *    room, subscribe, publish MICROPHONE only, canPublishData=false. No camera,
+ *    no screen-share, no data, no room admin/create/list, no recording,
+ *    no ingress/egress/SIP.
  *
- * Secrets (LIVEKIT_URL / LIVEKIT_API_KEY / LIVEKIT_API_SECRET) live in
- * Supabase Function secrets — never in VITE_ variables or the bundle.
+ * The generated JWT is NEVER logged or persisted; only a token-issuance AUDIT
+ * (session/booking/account/role/expiry) is recorded.
+ *
+ * Secrets (LIVEKIT_URL / LIVEKIT_API_KEY / LIVEKIT_API_SECRET) live in Supabase
+ * Function secrets — never in VITE_ variables or the bundle.
  *
  *   supabase secrets set LIVEKIT_URL=wss://your-project.livekit.cloud
  *   supabase secrets set LIVEKIT_API_KEY=...
@@ -26,12 +31,13 @@
  *   supabase functions deploy livekit-token
  */
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { AccessToken } from 'npm:livekit-server-sdk@2';
+import { AccessToken, TrackSource } from 'npm:livekit-server-sdk@2';
+import { buildCallGrant, participantIdentity, TOKEN_TTL_SECONDS } from '../_shared/callToken.ts';
 
-// Mirrors src/calls/joinRules.ts — keep both in sync (documented contract).
-const MEDIA_OPEN_MINUTES = 5;
-const ROOM_CLOSE_AFTER_END_MINUTES = 30;
-const TOKEN_TTL_SECONDS = 15 * 60;
+// Legacy guest-branch window (Redesign-C invitation flow; unchanged).
+const GUEST_OPEN_MINUTES = 15;
+const GUEST_CLOSE_AFTER_END_MINUTES = 30;
+const GUEST_TTL_SECONDS = 15 * 60;
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -47,20 +53,14 @@ function json(body: unknown, status = 200): Response {
 }
 
 /**
- * Redesign Phase C — guest branch. An anonymous managed Member exchanges
- * a valid invitation token + access code for a short-lived, restricted
- * guest_member room token. The database RPC enforces hashing, expiry,
- * revocation and code-attempt rate limiting; joining never consumes the
- * invitation (reconnect grace), which stays valid until call end + 30 min.
+ * Redesign Phase C — anonymous guest branch. Unchanged by Stage 3A: an
+ * anonymous managed Member exchanges an invitation token for a short-lived,
+ * restricted guest room token. Kept intact for backwards compatibility.
  */
 async function handleGuestJoin(body: Record<string, unknown>): Promise<Response> {
   const invitationToken = typeof body?.invitationToken === 'string' ? body.invitationToken : null;
   if (!invitationToken) return json({ state: 'invalid' }, 200);
 
-  // 0028: the high-entropy invitation link alone is the credential — no
-  // access code. Expiry, revocation, booking status, the join window and
-  // per-invitation rate limiting all stay server-side.
-  // Service-role client: exchange_guest_invitation is locked to service_role.
   const admin = createClient(
     Deno.env.get('SUPABASE_URL')!,
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
@@ -72,13 +72,10 @@ async function handleGuestJoin(body: Record<string, unknown>): Promise<Response>
   if (error) return json({ state: 'invalid' }, 200);
   const r = result as { ok?: boolean; reason?: string; booking_id?: string; invitation_id?: string };
   if (!r?.ok) {
-    // Neutral states only — nothing about other bookings leaks.
     if (r?.reason === 'rate_limited') return json({ state: 'rate_limited' }, 429);
     return json({ state: 'invalid' }, 200);
   }
 
-  // Time window (server clock): guests join slightly early and reconnect
-  // within the grace window after the end.
   const { data: booking } = await admin
     .from('bookings')
     .select('id, status, starts_at, ends_at')
@@ -86,8 +83,8 @@ async function handleGuestJoin(body: Record<string, unknown>): Promise<Response>
     .maybeSingle();
   if (!booking || booking.status !== 'confirmed') return json({ state: 'invalid' }, 200);
   const now = Date.now();
-  const opensAt = Date.parse(booking.starts_at) - 15 * 60_000;
-  const closesAt = Date.parse(booking.ends_at) + ROOM_CLOSE_AFTER_END_MINUTES * 60_000;
+  const opensAt = Date.parse(booking.starts_at) - GUEST_OPEN_MINUTES * 60_000;
+  const closesAt = Date.parse(booking.ends_at) + GUEST_CLOSE_AFTER_END_MINUTES * 60_000;
   if (now < opensAt) return json({ state: 'too_early', opensAt: new Date(opensAt).toISOString() }, 200);
   if (now > closesAt) return json({ state: 'ended' }, 200);
 
@@ -99,7 +96,7 @@ async function handleGuestJoin(body: Record<string, unknown>): Promise<Response>
   const token = new AccessToken(apiKey, apiSecret, {
     identity: `guest_member-${r.invitation_id}`,
     name: 'Guest',
-    ttl: TOKEN_TTL_SECONDS,
+    ttl: GUEST_TTL_SECONDS,
   });
   token.addGrant({
     room: `booking-${booking.id}`,
@@ -107,7 +104,7 @@ async function handleGuestJoin(body: Record<string, unknown>): Promise<Response>
     canPublish: true,
     canSubscribe: true,
     canPublishData: false,
-    // The narrowest grant: one room, publish/subscribe, nothing else.
+    canPublishSources: [TrackSource.MICROPHONE],
   });
   return json({
     state: 'joinable',
@@ -120,7 +117,7 @@ async function handleGuestJoin(body: Record<string, unknown>): Promise<Response>
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
-  if (req.method !== 'POST') return json({ state: 'unauthorised' }, 405);
+  if (req.method !== 'POST') return json({ error: 'unauthenticated' }, 405);
 
   // Guest branch: an invitation token instead of an authenticated session.
   let parsedBody: Record<string, unknown> = {};
@@ -133,107 +130,109 @@ Deno.serve(async (req) => {
     return handleGuestJoin(parsedBody);
   }
 
-  // 1. A valid authenticated Supabase session is required.
+  // 1. Require a valid authenticated Supabase session.
   const authHeader = req.headers.get('Authorization') ?? '';
-  const supabase = createClient(
+  const caller = createClient(
     Deno.env.get('SUPABASE_URL')!,
     Deno.env.get('SUPABASE_ANON_KEY')!,
     { global: { headers: { Authorization: authHeader } }, auth: { persistSession: false } },
   );
-  const { data: userData, error: userError } = await supabase.auth.getUser();
-  if (userError || !userData?.user) return json({ state: 'unauthorised' }, 401);
+  const { data: userData, error: userError } = await caller.auth.getUser();
+  if (userError || !userData?.user) return json({ error: 'unauthenticated' }, 401);
+  const accountId = userData.user.id;
 
-  // 2. Accept ONLY bookingId. Room name, identity, role, participants,
-  //    times and permissions from the request body are ignored by design.
-  let bookingId: string | null = null;
-  try {
-    const body = await req.json();
-    bookingId = typeof body?.bookingId === 'string' ? body.bookingId : null;
-  } catch {
-    bookingId = null;
-  }
-  if (!bookingId) return json({ state: 'unauthorised' }, 400);
+  // 2. Accept ONLY bookingId. Room, identity, role, account, permissions, TTL,
+  //    publish sources and LiveKit URL from the body are IGNORED by design.
+  const bookingId = typeof parsedBody?.bookingId === 'string' ? parsedBody.bookingId : null;
+  if (!bookingId) return json({ error: 'not_found' }, 400);
 
-  // 3+4+5. RLS-scoped load AS the caller: participants (member side,
-  // companion side, Coordinators with access) see the row; nobody else
-  // does — and the refusal carries no booking details.
-  const { data: booking } = await supabase
-    .from('my_bookings')
-    .select('id, status, starts_at, ends_at, timezone, duration_minutes, '
-      + 'member_profile_id, companion_profile_id, '
-      + 'member_first_name, member_last_initial, companion_first_name, companion_last_initial')
-    .eq('id', bookingId)
-    .maybeSingle();
-  if (!booking) return json({ state: 'unauthorised' }, 403);
-
-  // Safe metadata only: first names + initials, times, duration.
-  const meta = {
-    bookingId: booking.id,
-    startsAt: booking.starts_at,
-    endsAt: booking.ends_at,
-    timezone: booking.timezone,
-    durationMinutes: booking.duration_minutes,
-    memberName: `${booking.member_first_name}${booking.member_last_initial ? ` ${booking.member_last_initial}.` : ''}`,
-    companionName: `${booking.companion_first_name}${booking.companion_last_initial ? ` ${booking.companion_last_initial}.` : ''}`,
+  // 3. Authoritative eligibility, evaluated AS the caller (server clock + role).
+  const { data: elig, error: eligErr } = await caller.rpc('call_join_eligibility', { p_booking: bookingId });
+  if (eligErr || !elig) return json({ error: 'not_found' }, 404);
+  const e = elig as {
+    eligible: boolean; reason: string; your_role?: string;
+    opens_at?: string; closes_at?: string; scheduled_start?: string; scheduled_end?: string;
   };
-
-  // 6. Eligibility: only suitable confirmed bookings open a room.
-  if (booking.status !== 'confirmed') {
-    return json({ state: 'booking_not_eligible', ...meta }, 200);
+  const timing = {
+    opensAt: e.opens_at, closesAt: e.closes_at,
+    scheduledStart: e.scheduled_start, scheduledEnd: e.scheduled_end,
+  };
+  if (!e.eligible) {
+    // `error` is the Stage 3A code; `state` is the legacy 2F1 alias kept so the
+    // older /calls CallRoom keeps working off the same endpoint.
+    if (e.reason === 'unauthenticated') return json({ error: 'unauthenticated', state: 'unauthorised' }, 401);
+    if (e.reason === 'not_found') return json({ error: 'not_found', state: 'unauthorised' }, 404);
+    if (e.reason === 'too_early') return json({ error: 'too_early', state: 'too_early', ...timing }, 200);
+    if (e.reason === 'join_window_closed') return json({ error: 'join_window_closed', state: 'ended', ...timing }, 200);
+    // coordinator_not_permitted / not_confirmed / call_closed → uniform not_eligible.
+    return json({ error: 'not_eligible', state: 'booking_not_eligible', reason: e.reason, ...timing }, 200);
   }
-  const now = Date.now(); // server clock is the authority
-  const opensAt = Date.parse(booking.starts_at) - MEDIA_OPEN_MINUTES * 60_000;
-  const closesAt = Date.parse(booking.ends_at) + ROOM_CLOSE_AFTER_END_MINUTES * 60_000;
-  if (now < opensAt) {
-    return json({ state: 'too_early', opensAt: new Date(opensAt).toISOString(), ...meta }, 200);
-  }
-  if (now > closesAt) return json({ state: 'ended', ...meta }, 200);
+  const role = e.your_role === 'companion' ? 'companion' : 'member';
 
-  // 7+8. Room and identity are derived HERE, never from the browser.
-  // Which side is the caller? Companion-side needs can_edit on the
-  // Companion profile; everyone else RLS admitted is member-side
-  // (the Member themselves or a Coordinator acting for them).
-  const { data: accessRows } = await supabase
-    .from('profile_access')
-    .select('profile_id, can_edit')
-    .eq('account_id', userData.user.id);
-  const companionSide = (accessRows ?? []).some(
-    (r) => r.profile_id === booking.companion_profile_id && r.can_edit,
-  );
-  const identity = companionSide
-    ? `companion-${booking.companion_profile_id}`
-    : `member-${booking.member_profile_id}`;
-  const displayName = companionSide ? meta.companionName : meta.memberName;
-
-  // 9. Short-lived, narrowly-granted token for this one room.
+  // 4. Configuration must be present (server-only secrets).
   const apiKey = Deno.env.get('LIVEKIT_API_KEY');
   const apiSecret = Deno.env.get('LIVEKIT_API_SECRET');
   const serverUrl = Deno.env.get('LIVEKIT_URL');
-  if (!apiKey || !apiSecret || !serverUrl) {
-    return json({ state: 'booking_not_eligible', reason: 'calling_not_configured', ...meta }, 200);
+  if (!apiKey || !apiSecret || !serverUrl) return json({ error: 'configuration_missing', ...timing }, 200);
+
+  // 5. Idempotently create/retrieve the booking's call session (service role).
+  const admin = createClient(
+    Deno.env.get('SUPABASE_URL')!,
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    { auth: { persistSession: false } },
+  );
+  const { data: sessionRes, error: sessionErr } = await admin.rpc('ensure_call_session', { p_booking: bookingId });
+  if (sessionErr || !sessionRes) return json({ error: 'not_eligible', ...timing }, 200);
+  const session = sessionRes as { call_session_id: string; room_name: string };
+
+  // 6. Mint the short-lived, microphone-only token for this one room. The
+  //    identity and room are SERVER-derived; the browser never supplied them.
+  let jwt: string;
+  const expiresAt = new Date(Date.now() + TOKEN_TTL_SECONDS * 1000).toISOString();
+  try {
+    const at = new AccessToken(apiKey, apiSecret, {
+      identity: participantIdentity(accountId),
+      ttl: TOKEN_TTL_SECONDS,
+    });
+    const grant = buildCallGrant(session.room_name);
+    at.addGrant({ ...grant, canPublishSources: [TrackSource.MICROPHONE] });
+    jwt = await at.toJwt();
+  } catch {
+    return json({ error: 'token_generation_failed', ...timing }, 200);
   }
-  const token = new AccessToken(apiKey, apiSecret, {
-    identity,
-    name: displayName,
-    ttl: TOKEN_TTL_SECONDS,
-  });
-  token.addGrant({
-    room: `booking-${booking.id}`,
-    roomJoin: true,
-    canPublish: true,
-    canSubscribe: true,
-    canPublishData: false,
-    // deliberately absent: roomCreate, roomAdmin, roomList, recorder,
-    // ingressAdmin — browsers get the narrowest possible grant.
+
+  // 7. Record a SAFE issuance audit (never the JWT).
+  await admin.rpc('record_call_token_audit', {
+    p_session: session.call_session_id, p_booking: bookingId,
+    p_account: accountId, p_role: role, p_expires: expiresAt,
   });
 
-  // 10. Server URL, participant token, safe metadata — nothing else.
+  // Safe display names for the UI (first name + initial), loaded AS the caller.
+  let memberName: string | undefined; let companionName: string | undefined;
+  try {
+    const { data: b } = await caller.from('my_bookings')
+      .select('member_first_name, member_last_initial, companion_first_name, companion_last_initial')
+      .eq('id', bookingId).maybeSingle();
+    if (b) {
+      memberName = `${b.member_first_name}${b.member_last_initial ? ` ${b.member_last_initial}.` : ''}`;
+      companionName = `${b.companion_first_name}${b.companion_last_initial ? ` ${b.companion_last_initial}.` : ''}`;
+    }
+  } catch { /* names are cosmetic; never block the call */ }
+
+  // 8. Return only what the client needs. The token stays in memory client-side;
+  //    it is never logged here. `state`/`room`/names are legacy 2F1 aliases so the
+  //    older CallRoom keeps working off the same endpoint.
   return json({
-    state: 'joinable',
+    token: jwt,
     serverUrl,
-    token: await token.toJwt(),
-    room: `booking-${booking.id}`,
-    viewerSide: companionSide ? 'companion' : 'member',
-    ...meta,
+    callSessionId: session.call_session_id,
+    expiresAt,
+    role,
+    state: 'joinable',
+    room: session.room_name,
+    viewerSide: role,
+    memberName,
+    companionName,
+    ...timing,
   }, 200);
 });
