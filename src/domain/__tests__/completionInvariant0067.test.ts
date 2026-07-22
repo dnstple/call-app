@@ -13,6 +13,12 @@ import { describe, expect, it } from 'vitest';
 
 const ROOT = join(__dirname, '..', '..', '..');
 const M = readFileSync(join(ROOT, 'supabase', 'migrations', '0067_completion_and_earning_invariant_fix.sql'), 'utf-8');
+const M68 = readFileSync(join(ROOT, 'supabase', 'migrations', '0068_restore_completion_earning_semantics.sql'), 'utf-8');
+function fn68(name: string): string {
+  const s = M68.indexOf(`create or replace function ${name}`);
+  if (s < 0) throw new Error(`0068 fn not found: ${name}`);
+  return M68.slice(s, M68.indexOf('\n$$;', s));
+}
 const DETAIL = readFileSync(join(ROOT, 'src', 'pages', 'BookingDetail.tsx'), 'utf-8');
 const REVIEW = readFileSync(join(ROOT, 'src', 'components', 'ReviewCard.tsx'), 'utf-8');
 const SCAN = readFileSync(join(ROOT, 'docs', 'diagnostics', 'completion_earning_invariant_scan.sql'), 'utf-8');
@@ -91,6 +97,42 @@ describe('frontend renders no completion/payout card for a non-accepted booking'
     expect(REVIEW).toContain('friendlyReviewError');
     expect(REVIEW).not.toMatch(/setError\(String\(e\.message/); // raw error not shown
     expect(REVIEW).toMatch(/not_completed|not\.\*complete|completion/); // mapped
+  });
+});
+
+describe('0068 restores the 0046 cumulative earning body + keeps the invariant', () => {
+  const e = fn68('app_private.ensure_companion_earning');
+  it('adds the confirmed-status invariant at the narrowest choke point (before both funding paths)', () => {
+    expect(e).toContain('if v_b.status <> \'confirmed\' then');
+    // The guard precedes Path A (the one-off order lookup).
+    expect(e.indexOf("v_b.status <> 'confirmed'")).toBeLessThan(e.indexOf("provider = 'stripe_test' and status = 'succeeded'"));
+  });
+  it('restores Path A (one-off/trial) resolving the Companion from the BOOKING, not the order', () => {
+    expect(e).toContain("provider = 'stripe_test' and status = 'succeeded'");
+    // 0046 fix: companion owner comes from the booking (orders may omit it).
+    expect(e).toContain('where pa.profile_id = v_b.companion_profile_id');
+    expect(e).not.toContain('pa.profile_id = v_order.companion_profile_id'); // the stale 0034 lookup is gone
+  });
+  it('restores Path B (recurring-plan occurrence) + payer_charge / plan snapshots', () => {
+    expect(e).toContain("v_b.booking_source <> 'package_credit'");
+    expect(e).toContain("v_plan.funding_mode <> 'recurring'");
+    expect(e).toContain('from public.plan_billing_periods');
+    expect(e).toContain("status = 'paid'");
+    expect(e).toContain('v_period.payment_order_id');
+    // The insert carries the plan + payer-charge snapshot columns (0046).
+    expect(e).toContain('plan_id, plan_billing_period_id, payer_charge_minor');
+  });
+  it('resolve_unconfirmed_attendance keeps recurring eligibility AND the confirmed gate', () => {
+    const r = fn68('public.resolve_unconfirmed_attendance');
+    expect(r).toContain("b.status = 'confirmed'");
+    expect(r).toContain("p.funding_mode = 'recurring'");        // recurring path restored
+    expect(r).toContain("bp.status = 'paid'");
+    expect(r).toContain('make_earning_payable');                // mechanics unchanged
+  });
+  it('does not reintroduce the requested-booking defect (no permissive status fallback)', () => {
+    expect(M68).not.toMatch(/status in \('requested'/);
+    expect(M68).not.toMatch(/b\.status not in \('cancelled', 'declined'/);
+    expect(M68).toContain("select pg_notify('pgrst', 'reload schema')");
   });
 });
 

@@ -5949,8 +5949,13 @@ describe.skipIf(!enabled)('0067 completion/earning invariant (requires live Supa
     if (bk.error) throw new Error(`booking: ${bk.error.message}`);
     bookingId = requireUuid(bk.data!.id, 'booking');
     const ord = await cAdmin.from('payment_orders').insert({
+      // NOTE: companion_profile_id / member_profile_id are DELIBERATELY omitted
+      // from the order — the real payment RPCs don't always set them, and 0046's
+      // ensure_companion_earning resolves the Companion from the BOOKING. This
+      // reproduces the 0067 regression (stale 0034 body read the order) and
+      // proves the 0068 restoration.
       booking_id: bookingId, provider: 'stripe_test', coordinator_account_id: coordAcct,
-      member_profile_id: memberProfile, companion_profile_id: companionProfile, order_type: 'one_off', status: 'succeeded',
+      order_type: 'one_off', status: 'succeeded',
       subtotal_minor: 1000, discount_minor: 0, service_fee_minor: 0, credit_applied_minor: 0, card_amount_minor: 1000,
       total_minor: 1000, commission_rate_pct: 5, commission_minor: 50,
       stripe_payment_intent_id: `pi_inv_${suffix}`, idempotency_key: `inv-o-${suffix}`,
@@ -5980,18 +5985,23 @@ describe.skipIf(!enabled)('0067 completion/earning invariant (requires live Supa
     expect((await cAdmin.from('companion_earnings').select('id').eq('booking_id', bookingId)).data ?? []).toHaveLength(0);
   });
 
-  it('2+3. a DECLINED and a CANCELLED booking also refuse attendance (no earning)', async () => {
-    for (const st of ['declined', 'cancelled']) {
-      await cAdmin.from('bookings').update({ status: st }).eq('id', bookingId);
+  it('2+3+4. declined, cancelled and change_proposed bookings refuse attendance (no earning)', async () => {
+    for (const st of ['declined', 'cancelled', 'change_proposed']) {
+      const up = await cAdmin.from('bookings').update({ status: st }).eq('id', bookingId).select('id, status').single();
+      expect(up.error, JSON.stringify(up.error)).toBeNull();
+      expect(up.data?.status).toBe(st);
       expect((await rpc(cComp, 'submit_companion_attendance', { p_booking: bookingId, p_outcome: 'took_place', p_explanation: null })).error).not.toBeNull();
       expect((await cAdmin.from('companion_earnings').select('id').eq('booking_id', bookingId)).data ?? []).toHaveLength(0);
     }
   });
 
-  it('8+9. a CONFIRMED booking earns exactly once and repeat submission is idempotent', async () => {
-    await cAdmin.from('bookings').update({ status: 'confirmed' }).eq('id', bookingId);
+  it('8+9. a CONFIRMED funded booking earns exactly once (companion resolved from the booking) and is idempotent', async () => {
+    // Assert the status update actually took effect (never assume it succeeded).
+    const confirmResult = await cAdmin.from('bookings').update({ status: 'confirmed' }).eq('id', bookingId).select('id, status').single();
+    expect(confirmResult.error, JSON.stringify(confirmResult.error)).toBeNull();
+    expect(confirmResult.data?.status).toBe('confirmed');
     const r1 = await rpc(cComp, 'submit_companion_attendance', { p_booking: bookingId, p_outcome: 'took_place', p_explanation: null });
-    expect(r1.error).toBeNull();
+    expect(r1.error, JSON.stringify(r1.error)).toBeNull();               // 0068: earning created from booking's companion
     const earnings = (await cAdmin.from('companion_earnings').select('id, state').eq('booking_id', bookingId)).data ?? [];
     expect(earnings).toHaveLength(1);                                 // exactly one earning
     // Ended >12h ago with no issue → payable.
