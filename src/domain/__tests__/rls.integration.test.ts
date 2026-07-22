@@ -5404,14 +5404,23 @@ describe.skipIf(!enabled)('2G6E-C financial reconciliation (requires live Supaba
 
   it('a critical missing-refund-id finding notifies both support admins (deduped) and is not duplicated on re-run', async () => {
     const o = await mkOrder('refund', true);
+    // A LEGALLY VALID succeeded refund row. Every column below is a well-formed
+    // value the production schema requires — including reason (NOT NULL, 1–500
+    // chars, free text; mirrors what request_payment_refund persists). The SINGLE
+    // intentionally-inconsistent field is stripe_refund_id = null while
+    // state = 'succeeded': that is the reconciliation anomaly under test, not an
+    // otherwise-malformed row.
     const rf = await cAdmin.from('payment_refunds').insert({
       payment_order_id: o, payer_account_id: cfcId, remedy_minor: 500, credit_restore_minor: 0, card_refund_minor: 500,
-      state: 'succeeded', stripe_refund_id: null, idempotency_key: `frec-r-${suffix}`,
+      state: 'succeeded', stripe_refund_id: null, reason: 'Reconciliation fixture: succeeded refund missing provider id',
+      idempotency_key: `frec-r-${suffix}`,
     }).select('id').single();
     expect(rf.error).toBeNull();
-    refunds.push(rf.data!.id as string); entityIds.push(rf.data!.id as string);
+    expect(rf.data).toBeTruthy();
+    const refundId = requireUuid(rf.data!.id, 'frec refund id');
+    refunds.push(refundId); entityIds.push(refundId);
     expect((await reconcile()).error).toBeNull();
-    const f = await findingByKey(`refund_missing_provider_id:${rf.data!.id}`);
+    const f = await findingByKey(`refund_missing_provider_id:${refundId}`);
     expect(f).toBeTruthy();
     expect(f.severity).toBe('critical');
     // BOTH support pool members got exactly one notification for this finding.
