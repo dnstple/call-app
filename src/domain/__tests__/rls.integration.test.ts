@@ -2746,6 +2746,17 @@ describe.skipIf(!enabled)('2G4E internal issue queue (requires live Supabase)', 
     }).select('id').single();
     singleOfferId = single.data!.id;
 
+    // The Companion must be Connect-ready before a funded booking can be
+    // ACCEPTED (0033 gate_paid_acceptance): a post-conversation issue fixture is
+    // a confirmed, funded, ended booking, so the paid-acceptance gate applies.
+    const cmpAcct = (await cmp.auth.getUser()).data.user!.id;
+    expect((await admin.from('connected_accounts').upsert({
+      account_id: cmpAcct, companion_profile_id: companionId,
+      stripe_account_id: `acct_2g4e_${suffix}`,
+      details_submitted: true, charges_enabled: true, payouts_enabled: true,
+      transfers_capability: 'active', default_currency: 'gbp',
+    }, { onConflict: 'account_id' })).error).toBeNull();
+
     // Plenty of credit so every fixture order is fully covered (no card).
     expect((await admin.rpc('issue_account_credit', {
       p_account: coId, p_amount: 100000, p_source_type: 'support_adjustment',
@@ -5929,7 +5940,9 @@ describe.skipIf(!enabled)('3A LiveKit audio foundations (requires live Supabase)
 describe.skipIf(!enabled)('0067 completion/earning invariant (requires live Supabase)', () => {
   let cAdmin: SupabaseClient; let cComp: SupabaseClient; let cCoord: SupabaseClient;
   let compAcct: string; let coordAcct: string;
-  let companionProfile: string; let memberProfile: string; let offerId: string; let bookingId: string; let orderId: string;
+  let companionProfile: string; let memberProfile: string; let offerId: string;
+  let bookingId: string; let orderId: string;         // NEGATIVE fixture (mutated by the refusal cases)
+  let posBookingId: string; let posOrderId: string;   // POSITIVE fixture (never declined; test 8+9)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const rpc = (c: SupabaseClient, fn: string, args: Record<string, unknown>) => (c as any).rpc(fn, args);
 
@@ -5958,48 +5971,72 @@ describe.skipIf(!enabled)('0067 completion/earning invariant (requires live Supa
     if (of.error) throw new Error(`offer: ${of.error.message}`);
     offerId = requireUuid(of.data!.id, 'offer');
 
-    // A PRODUCTION-FAITHFUL funded one-off, built exactly as the real payment
-    // flow does: create_paid_request → finalize_paid_order → a 'succeeded' order
-    // and its booking (created REQUESTED — the Companion never accepted). This is
-    // the same proven path the 2G4E issue fixtures use, so the payment_orders row
-    // is byte-for-byte a real finalised order (server-derived subtotal, service
-    // fee, commission; member/companion profile ids; offer; slot) — never a
-    // hand-assembled synthetic row.
-    const futureSlot = new Date(Date.now() + 3 * 86400_000).toISOString();
-    const created = await rpc(cCoord, 'create_paid_request', {
-      p_member: memberProfile, p_companion: companionProfile, p_offer: offerId,
-      p_starts_at: futureSlot, p_idempotency: `inv-o-${suffix}`,
-    });
-    if (created.error) throw new Error(`create_paid_request: ${created.error.message}`);
-    orderId = requireUuid(created.data.order_id, 'order');
-    if (created.data.status !== 'succeeded') {
-      const fin = await rpc(cAdmin, 'finalize_paid_order', { p_order: orderId, p_outcome: 'succeeded', p_intent: null });
-      if (fin.error) throw new Error(`finalize_paid_order: ${fin.error.message}`);
-    }
-    const bk = await cAdmin.from('bookings').select('id, status, duration_minutes')
-      .eq('companion_profile_id', companionProfile).eq('starts_at', futureSlot).single();
-    if (bk.error || !bk.data) throw new Error(`find booking: ${bk.error?.message ?? 'not found'}`);
-    bookingId = requireUuid(bk.data.id, 'booking');
-    expect(bk.data.status).toBe('requested');                       // funded but never accepted
-    // Move the conversation into the PAST (ended >12h ago) so attendance is
-    // honestly allowed while the booking is still REQUESTED.
-    const durationMs = (bk.data.duration_minutes as number) * 60_000;
-    const startMs = Date.now() - 13.5 * 60 * 60_000;
-    const moved = await cAdmin.from('bookings')
-      .update({ starts_at: new Date(startMs).toISOString(), ends_at: new Date(startMs + durationMs).toISOString() })
-      .eq('id', bookingId).select('id, status').single();
-    if (moved.error) throw new Error(`time-travel: ${moved.error.message}`);
-    expect(moved.data?.status).toBe('requested');
+    // The Companion must be Connect-ready before a funded booking can be
+    // ACCEPTED: 0033's gate_paid_acceptance blocks a requested→confirmed
+    // transition on a succeeded Stripe order unless the Companion's payout
+    // account is live. Attendance/earning eligibility itself is independent of
+    // readiness — this only unblocks the accept step the positive case needs.
+    expect((await cAdmin.from('connected_accounts').upsert({
+      account_id: compAcct, companion_profile_id: companionProfile,
+      stripe_account_id: `acct_inv_${suffix}`,
+      details_submitted: true, charges_enabled: true, payouts_enabled: true,
+      transfers_capability: 'active', default_currency: 'gbp',
+    }, { onConflict: 'account_id' })).error).toBeNull();
+
+    // Build a PRODUCTION-FAITHFUL funded one-off exactly as the real payment flow
+    // does: create_paid_request → finalize_paid_order → a 'succeeded' order and its
+    // booking (created REQUESTED — the Companion never accepted), then time-travel
+    // it into the past (ended >12h ago) so attendance is honestly allowed. The
+    // order row is byte-for-byte a real finalised order, never a synthetic one.
+    const fundPastRequested = async (idem: string, aheadDays: number, hoursAgo: number): Promise<{ bId: string; oId: string }> => {
+      const futureSlot = new Date(Date.now() + aheadDays * 86400_000).toISOString();
+      const created = await rpc(cCoord, 'create_paid_request', {
+        p_member: memberProfile, p_companion: companionProfile, p_offer: offerId,
+        p_starts_at: futureSlot, p_idempotency: idem,
+      });
+      if (created.error) throw new Error(`create_paid_request[${idem}]: ${created.error.message}`);
+      const oId = requireUuid(created.data.order_id, 'order');
+      if (created.data.status !== 'succeeded') {
+        const fin = await rpc(cAdmin, 'finalize_paid_order', { p_order: oId, p_outcome: 'succeeded', p_intent: null });
+        if (fin.error) throw new Error(`finalize_paid_order[${idem}]: ${fin.error.message}`);
+      }
+      const bk = await cAdmin.from('bookings').select('id, status, duration_minutes')
+        .eq('companion_profile_id', companionProfile).eq('starts_at', futureSlot).single();
+      if (bk.error || !bk.data) throw new Error(`find booking[${idem}]: ${bk.error?.message ?? 'not found'}`);
+      const bId = requireUuid(bk.data.id, 'booking');
+      expect(bk.data.status).toBe('requested');                     // funded but never accepted
+      const durationMs = (bk.data.duration_minutes as number) * 60_000;
+      const startMs = Date.now() - hoursAgo * 60 * 60_000;
+      const moved = await cAdmin.from('bookings')
+        .update({ starts_at: new Date(startMs).toISOString(), ends_at: new Date(startMs + durationMs).toISOString() })
+        .eq('id', bId).select('id, status').single();
+      if (moved.error) throw new Error(`time-travel[${idem}]: ${moved.error.message}`);
+      expect(moved.data?.status).toBe('requested');
+      return { bId, oId };
+    };
+
+    // NEGATIVE fixture: the requested booking the refusal cases mutate. Declining
+    // a real funded booking CREDITS its order — which is exactly why the positive
+    // case needs its OWN, untouched funded booking below.
+    const neg = await fundPastRequested(`inv-neg-${suffix}`, 3, 13.5);
+    bookingId = neg.bId; orderId = neg.oId;
+    // POSITIVE fixture: a separate funded booking, never declined, that test 8+9
+    // accepts and earns on (distinct past window → no Companion slot overlap).
+    const pos = await fundPastRequested(`inv-pos-${suffix}`, 6, 40);
+    posBookingId = pos.bId; posOrderId = pos.oId;
   }, 120_000);
 
   afterAll(async () => {
-    await cAdmin.from('conversation_issues').delete().eq('booking_id', bookingId);
-    await cAdmin.from('conversation_attendance').delete().eq('booking_id', bookingId);
-    await cAdmin.from('companion_transfer_attempts').delete().in('earning_id',
-      ((await cAdmin.from('companion_earnings').select('id').eq('booking_id', bookingId)).data ?? []).map((r) => r.id as string));
-    await cAdmin.from('companion_earnings').delete().eq('booking_id', bookingId);
-    if (orderId) await cAdmin.from('payment_orders').delete().eq('id', orderId);
-    if (bookingId) await cAdmin.from('bookings').delete().eq('id', bookingId);
+    for (const bId of [bookingId, posBookingId].filter(Boolean)) {
+      await cAdmin.from('conversation_issues').delete().eq('booking_id', bId);
+      await cAdmin.from('conversation_attendance').delete().eq('booking_id', bId);
+      await cAdmin.from('companion_transfer_attempts').delete().in('earning_id',
+        ((await cAdmin.from('companion_earnings').select('id').eq('booking_id', bId)).data ?? []).map((r) => r.id as string));
+      await cAdmin.from('companion_earnings').delete().eq('booking_id', bId);
+    }
+    for (const oId of [orderId, posOrderId].filter(Boolean)) await cAdmin.from('payment_orders').delete().eq('id', oId);
+    for (const bId of [bookingId, posBookingId].filter(Boolean)) await cAdmin.from('bookings').delete().eq('id', bId);
+    await cAdmin.from('connected_accounts').delete().eq('account_id', compAcct);
     if (offerId) await cAdmin.from('conversation_offers').delete().eq('id', offerId);
     await cAdmin.from('profile_access').delete().in('profile_id', [companionProfile, memberProfile].filter(Boolean));
     if (companionProfile) await cAdmin.from('profiles').delete().eq('id', companionProfile);
@@ -6024,46 +6061,49 @@ describe.skipIf(!enabled)('0067 completion/earning invariant (requires live Supa
   });
 
   it('8+9. a CONFIRMED funded booking earns exactly once (companion resolved from the booking) and is idempotent', async () => {
-    // Prove the earning resolves the Companion from bookings.companion_profile_id
-    // (0046/0068), NOT from the order: null out ONLY the order's Companion id while
-    // every other funding field stays exactly as the real flow produced it. This
-    // is the production shape 0046's fix exists for (orders may omit it).
+    // Uses the DEDICATED positive fixture (never declined → its order stays
+    // 'succeeded'). Prove the earning resolves the Companion from
+    // bookings.companion_profile_id (0046/0068), NOT the order: null out ONLY the
+    // order's Companion id while every other funding field stays exactly as the
+    // real flow produced it — the production shape 0046's fix exists for.
     const strip = await cAdmin.from('payment_orders').update({ companion_profile_id: null })
-      .eq('id', orderId).select('id, provider, status, companion_profile_id').single();
+      .eq('id', posOrderId).select('id, provider, status, companion_profile_id').single();
     expect(strip.error, JSON.stringify(strip.error)).toBeNull();
     expect(strip.data?.companion_profile_id).toBeNull();
     expect(strip.data?.provider).toBe('stripe_test');                // Path A funding intact
     expect(strip.data?.status).toBe('succeeded');
-    // Assert the status update actually took effect (never assume it succeeded).
-    const confirmResult = await cAdmin.from('bookings').update({ status: 'confirmed' }).eq('id', bookingId).select('id, status').single();
+    // Accept the funded booking (Connect-ready → 0033 gate passes). Assert the
+    // status update actually took effect (never assume it succeeded).
+    const confirmResult = await cAdmin.from('bookings').update({ status: 'confirmed' }).eq('id', posBookingId).select('id, status').single();
     expect(confirmResult.error, JSON.stringify(confirmResult.error)).toBeNull();
     expect(confirmResult.data?.status).toBe('confirmed');
-    const r1 = await rpc(cComp, 'submit_companion_attendance', { p_booking: bookingId, p_outcome: 'took_place', p_explanation: null });
+    const r1 = await rpc(cComp, 'submit_companion_attendance', { p_booking: posBookingId, p_outcome: 'took_place', p_explanation: null });
     expect(r1.error, JSON.stringify(r1.error)).toBeNull();               // 0068: earning created from booking's companion
     const earnings = (await cAdmin.from('companion_earnings')
-      .select('id, state, companion_profile_id, companion_account_id, payment_order_id').eq('booking_id', bookingId)).data ?? [];
+      .select('id, state, companion_profile_id, companion_account_id, payment_order_id').eq('booking_id', posBookingId)).data ?? [];
     expect(earnings).toHaveLength(1);                                 // exactly one earning
     // Path A eligibility: the earning is snapshotted from THIS succeeded order.
-    expect(earnings[0].payment_order_id).toBe(orderId);
+    expect(earnings[0].payment_order_id).toBe(posOrderId);
     // Companion identity came from the BOOKING even though the order omits it.
     expect(earnings[0].companion_profile_id).toBe(companionProfile);
     expect(earnings[0].companion_account_id).toBe(compAcct);
     // Ended >12h ago with no issue → payable.
     expect(['payable', 'pending_completion']).toContain(earnings[0].state);
-    const r2 = await rpc(cComp, 'submit_companion_attendance', { p_booking: bookingId, p_outcome: 'took_place', p_explanation: null });
+    const r2 = await rpc(cComp, 'submit_companion_attendance', { p_booking: posBookingId, p_outcome: 'took_place', p_explanation: null });
     expect(r2.error).toBeNull();
     expect(r2.data.repeat).toBe(true);                               // idempotent
-    expect((await cAdmin.from('companion_earnings').select('id').eq('booking_id', bookingId)).data ?? []).toHaveLength(1);
+    expect((await cAdmin.from('companion_earnings').select('id').eq('booking_id', posBookingId)).data ?? []).toHaveLength(1);
   });
 
   it('10+11. payout state is Companion-only — the Coordinator cannot read completion state', async () => {
-    expect((await rpc(cComp, 'get_companion_completion_state', { p_booking: bookingId })).error).toBeNull();
-    expect((await rpc(cCoord, 'get_companion_completion_state', { p_booking: bookingId })).error).not.toBeNull();
+    expect((await rpc(cComp, 'get_companion_completion_state', { p_booking: posBookingId })).error).toBeNull();
+    expect((await rpc(cCoord, 'get_companion_completion_state', { p_booking: posBookingId })).error).not.toBeNull();
   });
 
   it('16. no global worker / financial worker is invoked by these tests', async () => {
-    // The suite only calls submit_companion_attendance + read RPCs; assert no
-    // extra bookings/orders were touched beyond this fixture.
+    // The suite only calls submit_companion_attendance + read RPCs; assert each
+    // fixture booking still has exactly its own single order (nothing else touched).
     expect((await cAdmin.from('payment_orders').select('id').eq('booking_id', bookingId)).data ?? []).toHaveLength(1);
+    expect((await cAdmin.from('payment_orders').select('id').eq('booking_id', posBookingId)).data ?? []).toHaveLength(1);
   });
 });
