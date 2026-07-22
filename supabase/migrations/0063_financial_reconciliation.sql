@@ -30,7 +30,9 @@ alter table public.notifications
 create table if not exists public.financial_reconciliation_runs (
   id uuid primary key default gen_random_uuid(),
   scope text not null default 'full' check (scope in ('full', 'entity')),
-  trigger_type text not null check (trigger_type in ('scheduled', 'manual', 'entity')),
+  -- scheduled = cron; manual = service dry run; entity = support recheck (has an
+  -- actor); test = fixture-scoped service run (excluded from operational readers).
+  trigger_type text not null check (trigger_type in ('scheduled', 'manual', 'entity', 'test')),
   status text not null default 'running' check (status in ('running', 'completed', 'failed')),
   started_at timestamptz not null default now(),
   completed_at timestamptz,
@@ -42,10 +44,11 @@ create table if not exists public.financial_reconciliation_runs (
   error_summary text,                            -- safe: no secrets, no payloads
   actor_account_id uuid references public.accounts(id),
   created_at timestamptz not null default now(),
-  -- A batch (scheduled/manual service) run has no human actor; a support-triggered
-  -- entity recheck MUST record its actor. Prevents forged actorless entity runs.
+  -- A batch (scheduled/manual/test service) run has no human actor; a
+  -- support-triggered 'entity' recheck MUST record its actor. A caller cannot
+  -- label an actorless run as 'entity'.
   constraint financial_reconciliation_runs_actor_check
-    check (actor_account_id is not null or trigger_type in ('scheduled', 'manual'))
+    check (actor_account_id is not null or trigger_type in ('scheduled', 'manual', 'test'))
 );
 create index if not exists financial_reconciliation_runs_started_idx
   on public.financial_reconciliation_runs (started_at desc);
@@ -74,6 +77,10 @@ create table if not exists public.financial_reconciliation_findings (
   first_seen_at timestamptz not null default now(),
   last_seen_at timestamptz not null default now(),
   occurrence_count integer not null default 1,
+  -- Bumped each time the finding enters a NEW active cycle (created / reopened
+  -- from cleared or resolved). Part of the notification dedupe key so a genuine
+  -- recurrence re-notifies while repeated scans of the same cycle do not.
+  notify_cycle integer not null default 1,
   cleared_at timestamptz,
   acknowledged_at timestamptz,
   acknowledged_by uuid references public.accounts(id),
@@ -133,13 +140,16 @@ revoke all on function app_private.write_frec_audit(uuid, text, uuid, jsonb) fro
 -- Notify the support pool for a new/worsened finding (recipient-deduped via the
 -- established notifications dedupe_key + on-conflict-do-nothing). Info findings do
 -- not notify. Body carries only a safe finding reference + severity + type.
-create or replace function app_private.notify_frec_finding(p_finding uuid, p_severity text, p_finding_type text)
+create or replace function app_private.notify_frec_finding(p_finding uuid, p_severity text, p_finding_type text, p_cycle integer)
 returns void language plpgsql security definer set search_path = '' as $$
 declare r record; v_dedupe text;
 begin
   if p_severity not in ('warning', 'critical') then return; end if;
   for r in select account_id from public.support_admins loop
-    v_dedupe := 'frec:' || p_finding::text || ':' || p_severity || ':' || r.account_id::text;
+    -- Key scope: finding identity + active cycle + severity + recipient. A repeated
+    -- scan of the same cycle+severity dedupes; a reopen (new cycle) or a severity
+    -- worsening yields a NEW key → one fresh notification per recipient.
+    v_dedupe := 'frec:' || p_finding::text || ':' || p_cycle::text || ':' || p_severity || ':' || r.account_id::text;
     insert into public.notifications (user_id, type, title, body, finding_id, dedupe_key)
     values (r.account_id, 'financial_reconciliation_alert',
       'Financial reconciliation (' || p_severity || ')',
@@ -150,7 +160,7 @@ begin
   end loop;
 end;
 $$;
-revoke all on function app_private.notify_frec_finding(uuid, text, text) from public, anon, authenticated;
+revoke all on function app_private.notify_frec_finding(uuid, text, text, integer) from public, anon, authenticated;
 
 -- Upsert one detected finding against the current run. Deterministic dedupe on
 -- finding_key: refresh + occurrence bump; reopen a previously CLEARED finding on
@@ -163,9 +173,10 @@ create or replace function app_private.upsert_frec_finding(
   p_provider_ref text, p_expected jsonb, p_observed jsonb
 )
 returns text language plpgsql security definer set search_path = '' as $$
-declare v_id uuid; v_status text; v_action text;
+declare v_id uuid; v_status text; v_sev text; v_cycle int; v_worse boolean;
+  v_rank_new int := case p_severity when 'critical' then 3 when 'warning' then 2 else 1 end;
 begin
-  select id, status into v_id, v_status
+  select id, status, severity, notify_cycle into v_id, v_status, v_sev, v_cycle
     from public.financial_reconciliation_findings where finding_key = p_key for update;
 
   if v_id is null then
@@ -178,12 +189,12 @@ begin
        coalesce(p_expected, '{}'::jsonb), coalesce(p_observed, '{}'::jsonb), p_run)
     returning id into v_id;
     perform app_private.write_frec_audit(v_id, 'created', null, jsonb_build_object('severity', p_severity, 'type', p_type));
-    perform app_private.notify_frec_finding(v_id, p_severity, p_type);
+    perform app_private.notify_frec_finding(v_id, p_severity, p_type, 1);
     return 'created';
   end if;
 
-  if v_status in ('resolved', 'ignored') then
-    -- Terminal by support decision: record recurrence WITHOUT silently reopening.
+  if v_status = 'ignored' then
+    -- Explicitly suppressed by support: record recurrence but stay ignored + silent.
     update public.financial_reconciliation_findings
        set last_seen_at = now(), occurrence_count = occurrence_count + 1,
            observed = coalesce(p_observed, '{}'::jsonb), latest_run_id = p_run, updated_at = now()
@@ -191,24 +202,33 @@ begin
     return 'refreshed';
   end if;
 
-  if v_status = 'cleared' then
-    v_action := 'reopened';
+  if v_status in ('resolved', 'cleared') then
+    -- A genuine recurrence after a support resolution (or after auto-clear) is a
+    -- NEW active cycle: reopen so the problem is visible, clear the prior
+    -- resolution fields (history stays in the audit trail), and re-notify.
     update public.financial_reconciliation_findings
        set status = 'open', cleared_at = null, severity = p_severity,
-           last_seen_at = now(), occurrence_count = occurrence_count + 1,
-           observed = coalesce(p_observed, '{}'::jsonb), latest_run_id = p_run, updated_at = now()
+           notify_cycle = notify_cycle + 1, last_seen_at = now(),
+           occurrence_count = occurrence_count + 1, observed = coalesce(p_observed, '{}'::jsonb),
+           resolved_at = null, resolved_by = null, resolution_reason = null,
+           acknowledged_at = null, acknowledged_by = null,
+           latest_run_id = p_run, updated_at = now()
      where id = v_id;
-    perform app_private.write_frec_audit(v_id, 'reopened', null, jsonb_build_object('severity', p_severity));
-    perform app_private.notify_frec_finding(v_id, p_severity, p_type);
+    perform app_private.write_frec_audit(v_id, 'reopened', null,
+      jsonb_build_object('severity', p_severity, 'from', v_status));
+    perform app_private.notify_frec_finding(v_id, p_severity, p_type, v_cycle + 1);
     return 'reopened';
   end if;
 
-  -- open / acknowledged / investigating → refresh (preserve ack/assignment).
+  -- open / acknowledged / investigating → refresh (preserve ack/assignment). If the
+  -- severity WORSENED, re-notify (the new severity yields a distinct dedupe key).
+  v_worse := v_rank_new > case v_sev when 'critical' then 3 when 'warning' then 2 else 1 end;
   update public.financial_reconciliation_findings
      set last_seen_at = now(), occurrence_count = occurrence_count + 1,
          severity = p_severity, observed = coalesce(p_observed, '{}'::jsonb),
          latest_run_id = p_run, updated_at = now()
    where id = v_id;
+  if v_worse then perform app_private.notify_frec_finding(v_id, p_severity, p_type, v_cycle); end if;
   return 'refreshed';
 end;
 $$;
@@ -219,7 +239,7 @@ revoke all on function app_private.upsert_frec_finding(uuid, text, text, text, t
 --    Returns one row per violation in a common shape. Read-only; no mutation.
 --    STALE thresholds are centralised here (transfer/payable stuck windows).
 -- ============================================================
-create or replace function app_private.detect_financial_findings(p_limit integer)
+create or replace function app_private.detect_financial_findings(p_scope_ids uuid[], p_limit integer)
 returns table (
   finding_key text, finding_type text, severity text, entity_type text, entity_id uuid,
   order_id uuid, earning_id uuid, transfer_id uuid, refund_id uuid, dispute_id uuid,
@@ -237,6 +257,11 @@ returns table (
     where e.net_minor <> e.basis_minor - e.commission_minor
 
     -- C5: earning payable and unclaimed beyond 72h with no transfer attempt.
+    -- Gated on Connect readiness: only a companion whose connected account can
+    -- actually receive payouts should ever have an automatic transfer. A stuck
+    -- payable for an onboarding-incomplete companion is EXPECTED, not an anomaly,
+    -- so it is excluded here and represented separately (informational) below —
+    -- this prevents flooding support with known onboarding backlog.
     union all
     select 'earning_stuck_payable:' || e.id::text, 'earning_stuck_payable', 'warning',
            'earning', e.id, e.payment_order_id, e.id, null, null, null, null,
@@ -246,6 +271,26 @@ returns table (
     where e.state = 'payable' and e.transfer_state = 'not_ready'
       and e.payable_at is not null and e.payable_at < now() - interval '72 hours'
       and not exists (select 1 from public.companion_transfer_attempts ta where ta.earning_id = e.id)
+      and exists (select 1 from public.connected_accounts ca
+                  where ca.account_id = e.companion_account_id
+                    and ca.payouts_enabled and ca.charges_enabled)
+
+    -- C5b: payable beyond 72h but the companion cannot yet receive payouts
+    -- (Connect onboarding incomplete). Surfaced separately and informational so
+    -- the backlog stays visible without paging support as an anomaly.
+    union all
+    select 'earning_payable_connect_incomplete:' || e.id::text, 'earning_payable_connect_incomplete', 'info',
+           'earning', e.id, e.payment_order_id, e.id, null, null, null, null,
+           jsonb_build_object('expected', 'companion Connect payouts enabled before payable transfer'),
+           jsonb_build_object('state', e.state, 'transfer_state', e.transfer_state, 'payable_at', e.payable_at,
+             'connect_ready', false)
+    from public.companion_earnings e
+    where e.state = 'payable' and e.transfer_state = 'not_ready'
+      and e.payable_at is not null and e.payable_at < now() - interval '72 hours'
+      and not exists (select 1 from public.companion_transfer_attempts ta where ta.earning_id = e.id)
+      and not exists (select 1 from public.connected_accounts ca
+                      where ca.account_id = e.companion_account_id
+                        and ca.payouts_enabled and ca.charges_enabled)
 
     -- C1: a succeeded transfer must have a provider transfer id.
     union all
@@ -276,6 +321,19 @@ returns table (
     from public.companion_transfer_attempts ta
     join public.companion_earnings e on e.id = ta.earning_id
     where ta.state in ('queued', 'processing') and ta.created_at < now() - interval '24 hours'
+
+    -- C7: a permanently-failed transfer whose earning is not in a terminal
+    -- transfer state remains actionable — the companion is owed money that never
+    -- moved. Without this, a hard-failed payout is a silent false negative.
+    union all
+    select 'transfer_failed_permanent:' || ta.id::text, 'transfer_failed_permanent', 'warning',
+           'transfer', ta.id, e.payment_order_id, ta.earning_id, ta.id, null, null, null,
+           jsonb_build_object('expected', 'failed payout resolved (retried, reversed or written off)'),
+           jsonb_build_object('attempt_state', ta.state, 'earning_transfer_state', e.transfer_state)
+    from public.companion_transfer_attempts ta
+    join public.companion_earnings e on e.id = ta.earning_id
+    where ta.state = 'failed_permanent'
+      and e.transfer_state not in ('transferred', 'reversed')
 
     -- D1: a succeeded refund must have a provider refund id.
     union all
@@ -337,10 +395,12 @@ returns table (
     from public.payment_disputes d
     where d.payment_order_id is null and d.internal_state not in ('won', 'lost', 'closed_warning')
 
-    -- F1: a processed webhook event must record a result.
+    -- F1: a processed webhook event must record a result. The event id is text, so
+    -- a deterministic md5(id)::uuid gives it a stable uuid entity (uniformly
+    -- scopable/recheckable like every other invariant).
     union all
     select 'webhook_processed_no_result:' || w.id, 'webhook_processed_no_result', 'warning',
-           'webhook_event', null::uuid, null, null, null, null, null, w.id,
+           'webhook_event', md5(w.id)::uuid, null, null, null, null, null, w.id,
            jsonb_build_object('expected', 'non-null result when processed'),
            jsonb_build_object('status', w.status, 'result', w.result, 'event_type', w.event_type)
     from public.stripe_webhook_events w
@@ -359,70 +419,83 @@ returns table (
          order_id, earning_id, transfer_id, refund_id, dispute_id,
          provider_ref, expected, observed
   from detections
+  -- Scope filter: null p_scope_ids → full scan; otherwise ONLY the given entities
+  -- (used by support recheck + fixture-scoped runs so nothing else is evaluated).
+  where (p_scope_ids is null or entity_id = any(p_scope_ids))
   limit least(greatest(coalesce(p_limit, 500), 1), 5000);
 $$;
-revoke all on function app_private.detect_financial_findings(integer) from public, anon, authenticated;
-
--- Note: webhook_event finding uses a null entity_id (event id is text). Guard the
--- primary_entity_id NOT NULL by mapping such findings to a zero uuid sentinel in
--- the processor (see below).
+revoke all on function app_private.detect_financial_findings(uuid[], integer) from public, anon, authenticated;
 
 -- ============================================================
 -- 6. Service-role-only batch processor. Bounded, idempotent, concurrency-safe via
---    finding_key uniqueness. Records an immutable run; clears findings no longer
---    detected (preserving history + acknowledgement). Never mutates money rows.
+--    finding_key uniqueness. Records an immutable run. Never mutates money rows.
+--
+--    SAFE CLEARING (the decisive invariant): a run NEVER clears a finding merely
+--    because its entity fell outside the batch or scope.
+--      * entity-scoped run (p_scope_ids not null): clears ONLY findings whose
+--        primary_entity_id was in the scanned scope and was not re-detected.
+--      * full run (p_scope_ids null): clears stale findings ONLY when the scan was
+--        COMPLETE — i.e. detection returned fewer rows than the cap. A TRUNCATED
+--        full run (limit reached) clears nothing, because absence from a bounded
+--        result set is not proof of resolution.
+--    Any exception rolls the whole run back atomically (no half-applied changes,
+--    no run row, no clearing) and re-raises — errors are never swallowed.
 -- ============================================================
 create or replace function app_private.process_financial_reconciliation(
-  p_limit integer default 500, p_trigger text default 'scheduled', p_actor uuid default null
+  p_scope_ids uuid[] default null, p_limit integer default 500,
+  p_trigger text default 'scheduled', p_actor uuid default null
 )
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
   v_run uuid; r record; v_action text;
   v_scanned int := 0; v_created int := 0; v_refreshed int := 0; v_cleared int := 0;
-  v_entity uuid;
+  v_cap int := least(greatest(coalesce(p_limit, 500), 1), 5000);
+  v_complete boolean;
 begin
-  if p_trigger not in ('scheduled', 'manual', 'entity') then p_trigger := 'scheduled'; end if;
+  if p_trigger not in ('scheduled', 'manual', 'entity', 'test') then p_trigger := 'scheduled'; end if;
   insert into public.financial_reconciliation_runs (scope, trigger_type, status, actor_account_id)
-  values ('full', p_trigger, 'running', p_actor)
+  values (case when p_scope_ids is null then 'full' else 'entity' end, p_trigger, 'running', p_actor)
   returning id into v_run;
 
-  for r in select * from app_private.detect_financial_findings(p_limit) loop
+  for r in select * from app_private.detect_financial_findings(p_scope_ids, v_cap) loop
     v_scanned := v_scanned + 1;
-    -- webhook-event findings have no uuid entity; use a deterministic sentinel.
-    v_entity := coalesce(r.entity_id, '00000000-0000-0000-0000-000000000000'::uuid);
     v_action := app_private.upsert_frec_finding(
-      v_run, r.finding_key, r.finding_type, r.severity, r.entity_type, v_entity,
+      v_run, r.finding_key, r.finding_type, r.severity, r.entity_type, r.entity_id,
       r.order_id, r.earning_id, r.transfer_id, r.refund_id, r.dispute_id,
       r.provider_ref, r.expected, r.observed);
     if v_action = 'created' then v_created := v_created + 1;
     elsif v_action in ('refreshed', 'reopened') then v_refreshed := v_refreshed + 1; end if;
   end loop;
 
-  -- Clear findings that were actionable but not re-detected this run. History and
-  -- acknowledgement are preserved (only status + cleared_at change).
-  for r in
-    select id from public.financial_reconciliation_findings
-    where status in ('open', 'acknowledged', 'investigating')
-      and (latest_run_id is distinct from v_run)
-    for update
-  loop
-    update public.financial_reconciliation_findings
-       set status = 'cleared', cleared_at = now(), updated_at = now() where id = r.id;
-    perform app_private.write_frec_audit(r.id, 'cleared', null, '{}'::jsonb);
-    v_cleared := v_cleared + 1;
-  end loop;
+  -- Only clear when we KNOW the relevant entities were fully evaluated.
+  v_complete := v_scanned < v_cap; -- a full result below the cap is a complete scan
+  if p_scope_ids is not null or v_complete then
+    for r in
+      select id from public.financial_reconciliation_findings
+      where status in ('open', 'acknowledged', 'investigating')
+        and (latest_run_id is distinct from v_run)
+        and (p_scope_ids is null or primary_entity_id = any(p_scope_ids))
+      for update
+    loop
+      update public.financial_reconciliation_findings
+         set status = 'cleared', cleared_at = now(), updated_at = now() where id = r.id;
+      perform app_private.write_frec_audit(r.id, 'cleared', null, '{}'::jsonb);
+      v_cleared := v_cleared + 1;
+    end loop;
+  end if;
 
   update public.financial_reconciliation_runs
      set status = 'completed', completed_at = now(), scanned_count = v_scanned,
          findings_created = v_created, findings_refreshed = v_refreshed, findings_cleared = v_cleared
    where id = v_run;
 
-  return jsonb_build_object('run_id', v_run, 'scanned', v_scanned, 'created', v_created,
-    'refreshed', v_refreshed, 'cleared', v_cleared);
+  return jsonb_build_object('run_id', v_run, 'scope', case when p_scope_ids is null then 'full' else 'entity' end,
+    'scanned', v_scanned, 'created', v_created, 'refreshed', v_refreshed, 'cleared', v_cleared,
+    'complete_scan', (p_scope_ids is not null or v_complete));
 end;
 $$;
-revoke all on function app_private.process_financial_reconciliation(integer, text, uuid) from public, anon, authenticated;
-grant execute on function app_private.process_financial_reconciliation(integer, text, uuid) to service_role;
+revoke all on function app_private.process_financial_reconciliation(uuid[], integer, text, uuid) from public, anon, authenticated;
+grant execute on function app_private.process_financial_reconciliation(uuid[], integer, text, uuid) to service_role;
 
 -- ============================================================
 -- 7. Support-facing RPCs (authenticated + is_support_admin gated, fail closed).
@@ -540,21 +613,21 @@ $$;
 revoke all on function public.support_update_finding_status(uuid, text, text) from public, anon;
 grant execute on function public.support_update_finding_status(uuid, text, text) to authenticated;
 
--- Narrowly-scoped recheck: re-evaluate reconciliation and refresh/clear THIS
--- finding's state. It moves NO money, chooses no provider state, and cannot
--- change any financial amount — it only re-runs the read-only detection.
+-- Narrowly-scoped recheck: re-evaluate reconciliation for THIS finding's own
+-- entity ONLY (entity-scoped run). It moves NO money, chooses no provider state,
+-- cannot change any financial amount, and CANNOT clear findings for other
+-- entities — it only re-runs the read-only detection scoped to this entity.
 create or replace function public.support_recheck_finding(p_finding uuid)
 returns jsonb language plpgsql security definer set search_path = '' as $$
-declare v_actor uuid := auth.uid(); v_key text; v_still boolean; v_status text;
+declare v_actor uuid := auth.uid(); v_entity uuid; v_status text;
 begin
   if not app_private.is_support_admin() then raise exception 'not_found: recheck'; end if;
-  select finding_key into v_key from public.financial_reconciliation_findings where id = p_finding;
-  if v_key is null then raise exception 'not_found: recheck'; end if;
-  -- Re-run the bounded read-only detection (entity-scoped run for the audit trail).
-  perform app_private.process_financial_reconciliation(500, 'entity', v_actor);
+  select primary_entity_id into v_entity from public.financial_reconciliation_findings where id = p_finding;
+  if v_entity is null then raise exception 'not_found: recheck'; end if;
+  -- Entity-scoped run: detection + clearing are restricted to this finding's entity.
+  perform app_private.process_financial_reconciliation(array[v_entity], 5000, 'entity', v_actor);
   perform app_private.write_frec_audit(p_finding, 'rechecked', v_actor, '{}'::jsonb);
-  select (finding_key is not null), status into v_still, v_status
-    from public.financial_reconciliation_findings where id = p_finding;
+  select status into v_status from public.financial_reconciliation_findings where id = p_finding;
   return jsonb_build_object('finding_id', p_finding, 'status', v_status);
 end;
 $$;
@@ -562,19 +635,33 @@ revoke all on function public.support_recheck_finding(uuid) from public, anon;
 grant execute on function public.support_recheck_finding(uuid) to authenticated;
 
 -- ------------------------------------------------------------
--- Service-role manual entrypoint (for the documented dry run + hosted tests). It
--- runs the SAME read-only reconciliation as the deferred cron, exposed to the
--- service role ONLY (never authenticated/anon). It moves no money and takes no
--- caller-selected financial values.
+-- Service-role manual entrypoints. Both run the SAME read-only detection as the
+-- deferred cron and are exposed to the service role ONLY (never authenticated/
+-- anon). They move no money and take no caller-selected financial values.
+--   * run_financial_reconciliation()            → deliberate FULL reconciliation.
+--   * run_financial_reconciliation_for_entities → entity-scoped (fixtures / ops);
+--     tagged trigger 'test' so operational readers can exclude it.
 -- ------------------------------------------------------------
 create or replace function public.run_financial_reconciliation(p_limit integer default 500)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 begin
-  return app_private.process_financial_reconciliation(p_limit, 'manual', null);
+  return app_private.process_financial_reconciliation(null, p_limit, 'manual', null);
 end;
 $$;
 revoke all on function public.run_financial_reconciliation(integer) from public, anon, authenticated;
 grant execute on function public.run_financial_reconciliation(integer) to service_role;
+
+create or replace function public.run_financial_reconciliation_for_entities(p_entity_ids uuid[])
+returns jsonb language plpgsql security definer set search_path = '' as $$
+begin
+  if p_entity_ids is null or array_length(p_entity_ids, 1) is null then
+    raise exception 'entities_required';
+  end if;
+  return app_private.process_financial_reconciliation(p_entity_ids, 5000, 'test', null);
+end;
+$$;
+revoke all on function public.run_financial_reconciliation_for_entities(uuid[]) from public, anon, authenticated;
+grant execute on function public.run_financial_reconciliation_for_entities(uuid[]) to service_role;
 
 select pg_notify('pgrst', 'reload schema');
 

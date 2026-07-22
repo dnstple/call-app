@@ -57,7 +57,12 @@ describe('0063 run/finding/audit models + constraints', () => {
   });
   it('enforces audit-actor invariants (system-only actions may be actorless)', () => {
     expect(M).toContain("check (actor_account_id is not null\n           or action_type in ('created', 'refreshed', 'reopened', 'cleared'))");
-    expect(M).toContain("check (actor_account_id is not null or trigger_type in ('scheduled', 'manual'))");
+    // A batch run (scheduled/manual/test) may be actorless; an 'entity' recheck must record its actor.
+    expect(M).toContain("check (actor_account_id is not null or trigger_type in ('scheduled', 'manual', 'test'))");
+    expect(M).toContain("trigger_type text not null check (trigger_type in ('scheduled', 'manual', 'entity', 'test'))");
+    expect(M).toContain("scope text not null default 'full' check (scope in ('full', 'entity'))");
+    // Recurrence cycle counter participates in the notification dedupe key.
+    expect(M).toContain('notify_cycle integer not null default 1');
   });
   it('findings history is never deleted by clients (no delete path); append-only audit', () => {
     expect(M).not.toMatch(/delete\s+from\s+public\.financial_reconciliation_findings/i);
@@ -71,31 +76,55 @@ describe('0063 processor is bounded, service-role-only and deterministic', () =>
     expect(fn('app_private.detect_financial_findings')).toContain('limit least(greatest(coalesce(p_limit, 500), 1), 5000)');
   });
   it('processor + detection + helpers are service-role/definer-only (never authenticated)', () => {
-    for (const n of ['app_private.detect_financial_findings(integer)',
+    for (const n of ['app_private.detect_financial_findings(uuid[], integer)',
                      'app_private.upsert_frec_finding(uuid, text, text, text, text, uuid, uuid, uuid, uuid, uuid, uuid, text, jsonb, jsonb)',
                      'app_private.write_frec_audit(uuid, text, uuid, jsonb)',
-                     'app_private.notify_frec_finding(uuid, text, text)']) {
+                     'app_private.notify_frec_finding(uuid, text, text, integer)']) {
       expect(M).toContain(`revoke all on function ${n} from public, anon, authenticated`);
     }
-    expect(M).toContain('revoke all on function app_private.process_financial_reconciliation(integer, text, uuid) from public, anon, authenticated');
-    expect(M).toContain('grant execute on function app_private.process_financial_reconciliation(integer, text, uuid) to service_role');
+    expect(M).toContain('revoke all on function app_private.process_financial_reconciliation(uuid[], integer, text, uuid) from public, anon, authenticated');
+    expect(M).toContain('grant execute on function app_private.process_financial_reconciliation(uuid[], integer, text, uuid) to service_role');
     expect(M).not.toMatch(/grant execute on function app_private\.process_financial_reconciliation[^;]*to authenticated/);
-    // The manual entrypoint is service-role only — NEVER exposed to authenticated/anon.
+    // Both manual entrypoints are service-role only — NEVER exposed to authenticated/anon.
     expect(M).toContain('revoke all on function public.run_financial_reconciliation(integer) from public, anon, authenticated');
     expect(M).toContain('grant execute on function public.run_financial_reconciliation(integer) to service_role');
-    expect(M).not.toMatch(/grant execute on function public\.run_financial_reconciliation[^;]*to authenticated/);
+    expect(M).not.toMatch(/grant execute on function public\.run_financial_reconciliation\(integer\)[^;]*to authenticated/);
+    expect(M).toContain('revoke all on function public.run_financial_reconciliation_for_entities(uuid[]) from public, anon, authenticated');
+    expect(M).toContain('grant execute on function public.run_financial_reconciliation_for_entities(uuid[]) to service_role');
+    expect(M).not.toMatch(/grant execute on function public\.run_financial_reconciliation_for_entities[^;]*to authenticated/);
   });
-  it('clears findings no longer detected without erasing acknowledgement/history', () => {
+  it('the fixture entrypoint is entity-scoped, tagged test, and demands entities', () => {
+    const e = fn('public.run_financial_reconciliation_for_entities');
+    expect(e).toContain('entities_required');
+    expect(e).toContain("process_financial_reconciliation(p_entity_ids, 5000, 'test', null)");
+  });
+  it('BLOCKER GUARD: a bounded/scoped run never clears entities outside its scope', () => {
     const p = fn('app_private.process_financial_reconciliation');
     expect(p).toContain("set status = 'cleared', cleared_at = now()");
     expect(p).toContain("where status in ('open', 'acknowledged', 'investigating')");
+    // Entity-scoped clear is restricted to the scanned scope.
+    expect(p).toContain('and (p_scope_ids is null or primary_entity_id = any(p_scope_ids))');
+    // A FULL run only clears on a complete (non-truncated) scan.
+    expect(p).toContain('v_complete := v_scanned < v_cap');
+    expect(p).toContain('if p_scope_ids is not null or v_complete then');
+    // The clearing loop is guarded on the run identity, not a naked latest_run_id <> current.
+    expect(p).toContain('latest_run_id is distinct from v_run');
     // Clear only changes status + cleared_at (ack/assignment fields untouched).
     expect(p).not.toMatch(/set[^;]*acknowledged_by\s*=\s*null/i);
+    // Reports whether the scan was complete so operators can trust the clear.
+    expect(p).toContain("'complete_scan'");
   });
-  it('a resolved/ignored finding is not silently reopened by detection', () => {
+  it('a resolved/ignored finding is not silently reopened; cleared recurs on a new cycle', () => {
     const u = fn('app_private.upsert_frec_finding');
-    expect(u).toContain("if v_status in ('resolved', 'ignored') then");
-    expect(u).toContain("if v_status = 'cleared' then"); // cleared → reopened on new occurrence
+    // ignored → recurrence recorded but stays ignored and SILENT.
+    expect(u).toContain("if v_status = 'ignored' then");
+    // resolved OR cleared → reopen a NEW cycle (visible), never a silent revive.
+    expect(u).toContain("if v_status in ('resolved', 'cleared') then");
+    expect(u).toContain("set status = 'open', cleared_at = null");
+    expect(u).toContain('notify_cycle = notify_cycle + 1');
+    expect(u).toContain("write_frec_audit(v_id, 'reopened'");
+    // Reopen re-notifies on the fresh cycle.
+    expect(u).toContain('notify_frec_finding(v_id, p_severity, p_type, v_cycle + 1)');
   });
 });
 
@@ -123,23 +152,34 @@ describe('0063 support actions are gated and never edit financial values', () =>
     // Support NEVER edits expected/observed/severity/amounts.
     expect(s).not.toMatch(/set[^;]*\b(expected|observed|severity)\s*=/);
   });
-  it('recheck is read-only: it re-runs detection and moves no money / chooses no provider state', () => {
+  it('recheck is read-only + entity-scoped: it cannot clear other entities, moves no money', () => {
     const r = fn('public.support_recheck_finding');
-    expect(r).toContain("perform app_private.process_financial_reconciliation(500, 'entity', v_actor)");
+    // Recheck resolves the finding's OWN entity and runs an entity-scoped pass.
+    expect(r).toContain('select primary_entity_id into v_entity');
+    expect(r).toContain("perform app_private.process_financial_reconciliation(array[v_entity], 5000, 'entity', v_actor)");
     expect(r).not.toMatch(/p_amount|p_order|p_transfer_id|p_refund_amount|p_provider_status|p_outcome/);
     // No money-moving worker RPC is called from support code.
     expect(M).not.toMatch(/claim_plan_transfers|claim_payment_refunds|request_payment_refund|record_dispute_funds/i);
   });
 });
 
-describe('0063 alerting reuses notifications with recipient-specific dedupe', () => {
-  it('notifies only warning/critical, deduped per recipient, no secrets/bodies', () => {
+describe('0063 alerting reuses notifications with recipient + cycle dedupe', () => {
+  it('notifies only warning/critical, deduped per recipient per cycle, no secrets/bodies', () => {
     const n = fn('app_private.notify_frec_finding');
     expect(n).toContain("if p_severity not in ('warning', 'critical') then return");
     expect(n).toContain('insert into public.notifications');
-    expect(n).toContain("v_dedupe := 'frec:' || p_finding::text || ':' || p_severity || ':' || r.account_id::text");
+    // Dedupe key scopes finding identity + active cycle + severity + recipient. A
+    // repeat scan of the same cycle+severity dedupes; a reopen (new cycle) or a
+    // severity worsening yields a fresh key → one new notification per recipient.
+    expect(n).toContain("v_dedupe := 'frec:' || p_finding::text || ':' || p_cycle::text || ':' || p_severity || ':' || r.account_id::text");
     expect(n).toContain('on conflict (user_id, dedupe_key) where dedupe_key is not null do nothing');
     expect(M).toContain('add column if not exists finding_id uuid');
+  });
+  it('a worsened severity on an open finding re-notifies (distinct dedupe key)', () => {
+    const u = fn('app_private.upsert_frec_finding');
+    expect(u).toContain('v_rank_new int := case p_severity when \'critical\' then 3 when \'warning\' then 2 else 1 end');
+    expect(u).toContain('v_worse := v_rank_new >');
+    expect(u).toContain('if v_worse then perform app_private.notify_frec_finding(v_id, p_severity, p_type, v_cycle); end if;');
   });
 });
 
@@ -159,6 +199,35 @@ describe('0063 scheduling is define-only (never activated on apply)', () => {
     // Documented activation/inspect/disable commands are present.
     expect(M).toContain("cron.schedule('financial-reconciliation', '0 */6 * * *'");
     expect(M).toContain('cron.job_run_details');
+  });
+});
+
+describe('0063 invariant accuracy — false-positive / false-negative guards', () => {
+  const D = fn('app_private.detect_financial_findings');
+  it('earning_stuck_payable is gated on Connect payout readiness (no onboarding false positives)', () => {
+    // Only a payout-ready companion can have an expected automatic transfer.
+    expect(D).toContain('earning_stuck_payable');
+    expect(D).toMatch(/earning_stuck_payable[\s\S]*?exists \(select 1 from public\.connected_accounts ca[\s\S]*?ca\.account_id = e\.companion_account_id[\s\S]*?ca\.payouts_enabled and ca\.charges_enabled\)/);
+  });
+  it('onboarding-incomplete payable backlog is represented separately + informational', () => {
+    expect(D).toContain("'earning_payable_connect_incomplete'");
+    expect(D).toMatch(/earning_payable_connect_incomplete[\s\S]*?'info'/);
+    // Uses NOT EXISTS on the same readiness predicate, so the two branches partition cleanly.
+    expect(D).toMatch(/earning_payable_connect_incomplete[\s\S]*?not exists \(select 1 from public\.connected_accounts ca/);
+  });
+  it('permanently-failed transfers remain actionable (no silent false negative)', () => {
+    expect(D).toContain("'transfer_failed_permanent'");
+    expect(D).toMatch(/transfer_failed_permanent[\s\S]*?ta\.state = 'failed_permanent'/);
+    expect(D).toMatch(/transfer_failed_permanent[\s\S]*?e\.transfer_state not in \('transferred', 'reversed'\)/);
+  });
+  it('critical invariants (money at risk) are severity critical', () => {
+    for (const crit of ['transfer_missing_provider_id', 'refund_missing_provider_id',
+                        'refund_exceeds_card', 'dispute_lost_funds_reinstated']) {
+      expect(D).toMatch(new RegExp(`${crit}'[\\s\\S]{0,120}?'critical'`));
+    }
+  });
+  it('detection is a pure read: no writes to any table inside the detection CTE', () => {
+    expect(D).not.toMatch(/\b(insert|update|delete)\s+into?\s+public\./i);
   });
 });
 

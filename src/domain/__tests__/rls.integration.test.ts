@@ -18,6 +18,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { createHash } from 'node:crypto';
 
 // Read Node env without requiring @types/node in this browser-typed project.
 const testEnv =
@@ -5181,11 +5182,25 @@ describe.skipIf(!enabled)('2G6E-B dispute deadline alerts (requires live Supabas
  * findings/orders/refunds/webhooks are cleaned. Historical runs are retained.
  * ============================================================ */
 describe.skipIf(!enabled)('2G6E-C financial reconciliation (requires live Supabase)', () => {
-  let cAdmin: SupabaseClient; let cfsup: SupabaseClient; let cfc: SupabaseClient;
-  let cfsupId: string; let cfcId: string;
+  let cAdmin: SupabaseClient; let cfsup: SupabaseClient; let cfsup2: SupabaseClient; let cfc: SupabaseClient;
+  let cfsupId: string; let cfsup2Id: string; let cfcId: string;
+  let companionProfileId: string; let memberProfileId: string; let offerId: string;
   const orders: string[] = []; const refunds: string[] = []; const events: string[] = [];
+  const bookings: string[] = []; const earnings: string[] = []; const transfers: string[] = []; const disputes: string[] = [];
+  // Every fixture entity we want reconciliation to evaluate. Runs are ALWAYS
+  // scoped to this set — never a global reconciliation — so unrelated production
+  // (or other tests') findings are neither created, refreshed nor cleared.
+  const entityIds: string[] = [];
+  let sentinelId: string; let sentinelSnapshot: Record<string, unknown>;
 
-  const reconcile = () => cAdmin.rpc('run_financial_reconciliation', { p_limit: 5000 });
+  // Postgres computes the webhook entity as md5(id)::uuid; mirror it here.
+  const md5Uuid = (s: string): string => {
+    const h = createHash('md5').update(s).digest('hex');
+    return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+  };
+
+  // Entity-SCOPED run only. No global run_financial_reconciliation is ever called.
+  const reconcile = () => cAdmin.rpc('run_financial_reconciliation_for_entities', { p_entity_ids: entityIds });
   const findingByKey = async (key: string) =>
     (await cAdmin.from('financial_reconciliation_findings').select('*').eq('finding_key', key).maybeSingle()).data;
 
@@ -5198,59 +5213,137 @@ describe.skipIf(!enabled)('2G6E-C financial reconciliation (requires live Supaba
       idempotency_key: `frec-o-${label}-${suffix}`,
     }).select('id').single();
     if (ins.error) throw new Error(`mkOrder ${label}: ${ins.error.message}`);
-    orders.push(ins.data!.id as string);
+    const id = ins.data!.id as string;
+    orders.push(id); entityIds.push(id);
+    return id;
+  }
+
+  // A minimal, self-contained booking (declined → exempt from the slot-overlap
+  // exclusion constraints) so we can attach synthetic earnings/transfers.
+  let bookingSeq = 0;
+  async function mkBooking(): Promise<string> {
+    const start = new Date('2020-01-01T09:00:00Z'); start.setUTCHours(9 + bookingSeq++);
+    const end = new Date(start.getTime() + 30 * 60_000);
+    const ins = await cAdmin.from('bookings').insert({
+      member_profile_id: memberProfileId, companion_profile_id: companionProfileId, booked_by_account_id: cfcId,
+      offer_id: offerId, starts_at: start.toISOString(), ends_at: end.toISOString(), communication_method: 'in_app',
+      status: 'declined', duration_minutes: 30, price_minor: 1000, platform_fee_rate: 0, platform_fee_minor: 0,
+      companion_amount_minor: 1000,
+    }).select('id').single();
+    if (ins.error) throw new Error(`mkBooking: ${ins.error.message}`);
+    bookings.push(ins.data!.id as string);
     return ins.data!.id as string;
+  }
+
+  async function mkEarning(orderId: string, opts: { net?: number; basis?: number; commission?: number; state?: string; transferState?: string; payableAt?: string | null }): Promise<string> {
+    const basis = opts.basis ?? 1000; const commission = opts.commission ?? 0; const net = opts.net ?? basis - commission;
+    const bookingId = await mkBooking();
+    const ins = await cAdmin.from('companion_earnings').insert({
+      booking_id: bookingId, payment_order_id: orderId, companion_account_id: cfcId, companion_profile_id: companionProfileId,
+      member_profile_id: memberProfileId, payer_account_id: cfcId, basis_minor: basis, commission_rate_pct: 0,
+      commission_minor: commission, net_minor: net, state: opts.state ?? 'payable',
+      transfer_state: opts.transferState ?? 'transfer_pending', payable_at: opts.payableAt ?? null,
+    }).select('id').single();
+    if (ins.error) throw new Error(`mkEarning: ${ins.error.message}`);
+    const id = ins.data!.id as string;
+    earnings.push(id); entityIds.push(id);
+    return id;
+  }
+
+  async function mkTransfer(label: string, earningId: string, state: string, providerId: string | null): Promise<string> {
+    const ins = await cAdmin.from('companion_transfer_attempts').insert({
+      earning_id: earningId, companion_account_id: cfcId, companion_profile_id: companionProfileId,
+      connected_account_id: `acct_frec_${suffix}`, amount_minor: 1000, idempotency_key: `frec-t-${label}-${suffix}`,
+      state, stripe_transfer_id: providerId,
+    }).select('id').single();
+    if (ins.error) throw new Error(`mkTransfer ${label}: ${ins.error.message}`);
+    const id = ins.data!.id as string;
+    transfers.push(id); entityIds.push(id);
+    return id;
   }
 
   beforeAll(async () => {
     cAdmin = adminClient();
     cfsup = await signedInClient(`rls-cfsup-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    cfsup2 = await signedInClient(`rls-cfsup2-${suffix}@${TEST_EMAIL_DOMAIN}`);
     cfc = await signedInClient(`rls-cfc-${suffix}@${TEST_EMAIL_DOMAIN}`);
     cfsupId = (await cfsup.auth.getUser()).data.user!.id;
+    cfsup2Id = (await cfsup2.auth.getUser()).data.user!.id;
     cfcId = (await cfc.auth.getUser()).data.user!.id;
     if ((await cfsup.rpc('ensure_current_account')).error) throw new Error('ensure cfsup');
+    if ((await cfsup2.rpc('ensure_current_account')).error) throw new Error('ensure cfsup2');
     if ((await cfc.rpc('ensure_current_account')).error) throw new Error('ensure cfc');
-    if ((await cAdmin.from('support_admins').upsert({ account_id: cfsupId }, { onConflict: 'account_id', ignoreDuplicates: true })).error) throw new Error('support');
+    for (const id of [cfsupId, cfsup2Id]) {
+      if ((await cAdmin.from('support_admins').upsert({ account_id: id }, { onConflict: 'account_id', ignoreDuplicates: true })).error) throw new Error('support');
+    }
+
+    // Profiles + one offer to hang synthetic earnings/transfers off of.
+    const cp = await cAdmin.from('profiles').insert({ role: 'companion', first_name: 'FrecComp' }).select('id').single();
+    if (cp.error) throw new Error(`companion profile: ${cp.error.message}`);
+    companionProfileId = cp.data!.id as string;
+    const mp = await cAdmin.from('profiles').insert({ role: 'member', first_name: 'FrecMem' }).select('id').single();
+    if (mp.error) throw new Error(`member profile: ${mp.error.message}`);
+    memberProfileId = mp.data!.id as string;
+    const of = await cAdmin.from('conversation_offers').insert({
+      companion_profile_id: companionProfileId, offer_type: 'single', duration_minutes: 30, price_minor: 1000, supported_methods: ['in_app'],
+    }).select('id').single();
+    if (of.error) throw new Error(`offer: ${of.error.message}`);
+    offerId = of.data!.id as string;
+
+    // A pre-existing SENTINEL finding for an entity OUTSIDE every scoped run. It
+    // must remain byte-for-byte unchanged: proof that a scoped run never clears or
+    // touches entities beyond its scope (the Part-1 clearing blocker).
+    const sentinelEntity = md5Uuid(`sentinel-${suffix}`);
+    const sn = await cAdmin.from('financial_reconciliation_findings').insert({
+      finding_key: `sentinel_frec_${suffix}`, finding_type: 'order_succeeded_missing_pi', severity: 'warning',
+      status: 'open', primary_entity_type: 'order', primary_entity_id: sentinelEntity, occurrence_count: 7,
+    }).select('*').single();
+    if (sn.error) throw new Error(`sentinel: ${sn.error.message}`);
+    sentinelId = sn.data!.id as string;
+    sentinelSnapshot = sn.data as Record<string, unknown>;
   }, 120_000);
 
   afterAll(async () => {
-    // Remove ONLY fixture findings (by our entities) + their audit/notifications;
-    // NEVER delete historical runs. Then refunds → orders → webhooks → support.
-    const fids: string[] = [];
-    if (orders.length || refunds.length) {
-      const filt: string[] = [];
-      if (orders.length) filt.push(`order_id.in.(${orders.join(',')})`);
-      if (refunds.length) filt.push(`refund_id.in.(${refunds.join(',')})`);
-      const rows = (await cAdmin.from('financial_reconciliation_findings').select('id').or(filt.join(','))).data ?? [];
-      fids.push(...rows.map((r) => r.id as string));
-    }
-    for (const ev of events) {
-      const wf = (await cAdmin.from('financial_reconciliation_findings').select('id').eq('finding_key', `webhook_processed_no_result:${ev}`)).data ?? [];
-      fids.push(...wf.map((r) => r.id as string));
-    }
+    // Remove ONLY fixture findings (scoped to our entities) + their audit/
+    // notifications; NEVER delete historical runs (the immutable run ledger).
+    const fq = await cAdmin.from('financial_reconciliation_findings').select('id').in('primary_entity_id', entityIds.length ? entityIds : ['00000000-0000-0000-0000-000000000000']);
+    const fids = (fq.data ?? []).map((r) => r.id as string);
+    fids.push(sentinelId);
     if (fids.length) {
       await cAdmin.from('financial_reconciliation_audit').delete().in('finding_id', fids);
       await cAdmin.from('notifications').delete().in('finding_id', fids);
       await cAdmin.from('financial_reconciliation_findings').delete().in('id', fids);
     }
+    if (transfers.length) await cAdmin.from('companion_transfer_attempts').delete().in('id', transfers);
+    if (disputes.length) await cAdmin.from('payment_disputes').delete().in('id', disputes);
+    if (earnings.length) await cAdmin.from('companion_earnings').delete().in('id', earnings);
     if (refunds.length) await cAdmin.from('payment_refunds').delete().in('id', refunds);
+    if (bookings.length) await cAdmin.from('bookings').delete().in('id', bookings);
+    if (offerId) await cAdmin.from('conversation_offers').delete().eq('id', offerId);
     if (orders.length) await cAdmin.from('payment_orders').delete().in('id', orders);
     if (events.length) await cAdmin.from('stripe_webhook_events').delete().in('id', events);
-    await cAdmin.from('support_admins').delete().eq('account_id', cfsupId);
+    if (companionProfileId) await cAdmin.from('profiles').delete().eq('id', companionProfileId);
+    if (memberProfileId) await cAdmin.from('profiles').delete().eq('id', memberProfileId);
+    await cAdmin.from('support_admins').delete().in('account_id', [cfsupId, cfsup2Id]);
   });
 
-  it('a consistent order produces no missing-PI finding; a mismatched one produces exactly one', async () => {
+  it('BLOCKER: a scoped run leaves an out-of-scope sentinel finding byte-for-byte unchanged', async () => {
     const good = await mkOrder('good', true);   // succeeded WITH a PaymentIntent → consistent
     const bad = await mkOrder('bad', false);    // succeeded, card-funded, NO PaymentIntent → finding
     const res = await reconcile();
     expect(res.error).toBeNull();
     expect(res.data).toBeTruthy();
+    expect(res.data.scope).toBe('entity');           // never a full/global run
+    expect(res.data.complete_scan).toBe(true);       // entity scope is always a complete scan
     expect(await findingByKey(`order_succeeded_missing_pi:${good}`)).toBeNull();
     const f = await findingByKey(`order_succeeded_missing_pi:${bad}`);
     expect(f).toBeTruthy();
     expect(f.severity).toBe('warning');
     expect(f.status).toBe('open');
     expect(f.occurrence_count).toBe(1);
+    // The sentinel (out of scope) is untouched — every column identical.
+    const after = (await cAdmin.from('financial_reconciliation_findings').select('*').eq('id', sentinelId).single()).data!;
+    expect(after).toEqual(sentinelSnapshot);
   });
 
   it('re-running refreshes the finding (occurrence++) rather than duplicating it', async () => {
@@ -5289,23 +5382,89 @@ describe.skipIf(!enabled)('2G6E-C financial reconciliation (requires live Supaba
     expect(au.some((a) => a.action_type === 'cleared')).toBe(true);
   });
 
-  it('a critical missing-refund-id finding notifies support (recipient-deduped) and is not duplicated on re-run', async () => {
+  it('a genuine recurrence after support RESOLVES a finding reopens it on a new cycle + re-notifies', async () => {
+    const bad = await mkOrder('reopen', false);
+    expect((await reconcile()).error).toBeNull();
+    const f0 = await findingByKey(`order_succeeded_missing_pi:${bad}`);
+    expect(f0.notify_cycle).toBe(1);
+    const notifCount = async () => ((await cAdmin.from('notifications').select('id').eq('finding_id', f0.id).eq('user_id', cfsupId)).data ?? []).length;
+    expect(await notifCount()).toBe(1);
+    // Support resolves (with a reason) even though the underlying row is still broken.
+    expect((await cfsup.rpc('support_update_finding_status', { p_finding: f0.id, p_status: 'resolved', p_reason: 'premature close' })).error).toBeNull();
+    // Next scan still detects it → reopen on a NEW cycle (visible again) + fresh alert.
+    expect((await reconcile()).error).toBeNull();
+    const f1 = await findingByKey(`order_succeeded_missing_pi:${bad}`);
+    expect(f1.status).toBe('open');
+    expect(f1.notify_cycle).toBe(2);
+    expect(f1.resolved_at).toBeNull();
+    const au = (await cAdmin.from('financial_reconciliation_audit').select('action_type').eq('finding_id', f0.id)).data ?? [];
+    expect(au.some((a) => a.action_type === 'reopened')).toBe(true);
+    expect(await notifCount()).toBe(2); // one alert per active cycle, per recipient
+  });
+
+  it('a critical missing-refund-id finding notifies both support admins (deduped) and is not duplicated on re-run', async () => {
     const o = await mkOrder('refund', true);
     const rf = await cAdmin.from('payment_refunds').insert({
       payment_order_id: o, payer_account_id: cfcId, remedy_minor: 500, credit_restore_minor: 0, card_refund_minor: 500,
       state: 'succeeded', stripe_refund_id: null, idempotency_key: `frec-r-${suffix}`,
     }).select('id').single();
     expect(rf.error).toBeNull();
-    refunds.push(rf.data!.id as string);
+    refunds.push(rf.data!.id as string); entityIds.push(rf.data!.id as string);
     expect((await reconcile()).error).toBeNull();
     const f = await findingByKey(`refund_missing_provider_id:${rf.data!.id}`);
     expect(f).toBeTruthy();
     expect(f.severity).toBe('critical');
-    // Support pool member got exactly one notification for this finding.
-    const notifCount = async () => ((await cAdmin.from('notifications').select('id').eq('finding_id', f.id).eq('user_id', cfsupId)).data ?? []).length;
-    expect(await notifCount()).toBe(1);
+    // BOTH support pool members got exactly one notification for this finding.
+    const notifFor = async (uid: string) => ((await cAdmin.from('notifications').select('id').eq('finding_id', f.id).eq('user_id', uid)).data ?? []).length;
+    expect(await notifFor(cfsupId)).toBe(1);
+    expect(await notifFor(cfsup2Id)).toBe(1);
     expect((await reconcile()).error).toBeNull();
-    expect(await notifCount()).toBe(1); // deduped per recipient on repeated runs
+    expect(await notifFor(cfsupId)).toBe(1); // deduped per recipient per cycle on repeated runs
+  });
+
+  it('transfer invariants: a succeeded transfer missing its provider id is critical; a permanently-failed transfer stays actionable', async () => {
+    // C1 (critical): succeeded attempt with no stripe_transfer_id. Earning marked
+    // transferred so transfer_state_disagreement does not also fire.
+    const o1 = await mkOrder('tr-missing', true);
+    const e1 = await mkEarning(o1, { transferState: 'transferred' });
+    const t1 = await mkTransfer('missing', e1, 'succeeded', null);
+    // C7 (warning): permanently-failed attempt whose earning is not terminal.
+    const o2 = await mkOrder('tr-failed', true);
+    const e2 = await mkEarning(o2, { transferState: 'failed' });
+    const t2 = await mkTransfer('failed', e2, 'failed_permanent', null);
+    expect((await reconcile()).error).toBeNull();
+    const missing = await findingByKey(`transfer_missing_provider_id:${t1}`);
+    expect(missing).toBeTruthy();
+    expect(missing.severity).toBe('critical');
+    expect(await findingByKey(`transfer_state_disagreement:${t1}`)).toBeNull();
+    const failed = await findingByKey(`transfer_failed_permanent:${t2}`);
+    expect(failed).toBeTruthy();
+    expect(failed.severity).toBe('warning');
+  });
+
+  it('earning_net_mismatch fires when net <> basis - commission', async () => {
+    const o = await mkOrder('net', true);
+    const e = await mkEarning(o, { basis: 1000, commission: 200, net: 900 }); // expected 800
+    expect((await reconcile()).error).toBeNull();
+    const f = await findingByKey(`earning_net_mismatch:${e}`);
+    expect(f).toBeTruthy();
+    expect(f.severity).toBe('warning');
+    expect(f.observed.net_minor).toBe(900);
+    expect(f.expected.net_minor).toBe(800);
+  });
+
+  it('a lost dispute showing funds reinstated is a critical finding', async () => {
+    const o = await mkOrder('disp', true);
+    const d = await cAdmin.from('payment_disputes').insert({
+      stripe_dispute_id: `du_frec_${suffix}`, payment_order_id: o, disputed_amount_minor: 1000,
+      internal_state: 'lost', funds_withdrawn: true, funds_reinstated: true, outcome: 'lost', closed_at: new Date().toISOString(),
+    }).select('id').single();
+    expect(d.error).toBeNull();
+    disputes.push(d.data!.id as string); entityIds.push(d.data!.id as string);
+    expect((await reconcile()).error).toBeNull();
+    const f = await findingByKey(`dispute_lost_funds_reinstated:${d.data!.id}`);
+    expect(f).toBeTruthy();
+    expect(f.severity).toBe('critical');
   });
 
   it('support can read, acknowledge, investigate and resolve a finding; recheck moves no money', async () => {
@@ -5333,9 +5492,22 @@ describe.skipIf(!enabled)('2G6E-C financial reconciliation (requires live Supaba
     expect(after.total_minor).toBe(before.total_minor);
   });
 
+  it('two support admins can both claim/reassign a finding; the latest owner + both assignments are recorded', async () => {
+    const bad = await mkOrder('claim', false);
+    expect((await reconcile()).error).toBeNull();
+    const f = await findingByKey(`order_succeeded_missing_pi:${bad}`);
+    expect((await cfsup.rpc('support_assign_finding', { p_finding: f.id })).error).toBeNull();
+    expect((await cAdmin.from('financial_reconciliation_findings').select('assigned_account_id').eq('id', f.id).single()).data!.assigned_account_id).toBe(cfsupId);
+    // The second admin reassigns to themselves.
+    expect((await cfsup2.rpc('support_assign_finding', { p_finding: f.id })).error).toBeNull();
+    expect((await cAdmin.from('financial_reconciliation_findings').select('assigned_account_id').eq('id', f.id).single()).data!.assigned_account_id).toBe(cfsup2Id);
+    const assigns = (await cAdmin.from('financial_reconciliation_audit').select('actor_account_id').eq('finding_id', f.id).eq('action_type', 'assigned')).data ?? [];
+    expect(assigns.map((a) => a.actor_account_id).sort()).toEqual([cfsupId, cfsup2Id].sort());
+  });
+
   it('a processed webhook with no result is detected and clears when the result is set', async () => {
     const ev = `evt_frec_${suffix}`;
-    events.push(ev);
+    events.push(ev); entityIds.push(md5Uuid(ev));
     expect((await cAdmin.from('stripe_webhook_events').insert({
       id: ev, event_type: 'charge.updated', payload: {}, status: 'processed', result: null,
     })).error).toBeNull();
@@ -5344,6 +5516,28 @@ describe.skipIf(!enabled)('2G6E-C financial reconciliation (requires live Supaba
     await cAdmin.from('stripe_webhook_events').update({ result: 'reconciled' }).eq('id', ev);
     expect((await reconcile()).error).toBeNull();
     expect((await findingByKey(`webhook_processed_no_result:${ev}`)).status).toBe('cleared');
+  });
+
+  it('every reconciliation run is recorded as an immutable TEST-tagged row; history is never deleted', async () => {
+    const before = (await cAdmin.from('financial_reconciliation_runs').select('id', { count: 'exact', head: true })).count ?? 0;
+    expect((await reconcile()).error).toBeNull();
+    const rows = (await cAdmin.from('financial_reconciliation_runs').select('id, scope, trigger_type').order('started_at', { ascending: false }).limit(1)).data ?? [];
+    expect(rows[0].scope).toBe('entity');
+    expect(rows[0].trigger_type).toBe('test'); // fixture runs are tagged so operational readers can exclude them
+    const after = (await cAdmin.from('financial_reconciliation_runs').select('id', { count: 'exact', head: true })).count ?? 0;
+    expect(after).toBeGreaterThan(before); // run ledger only ever grows
+  });
+
+  it('privacy: findings/notifications carry no secrets — no client_secret, emails, card or bank detail', async () => {
+    const bad = await mkOrder('priv', false);
+    expect((await reconcile()).error).toBeNull();
+    const f = await findingByKey(`order_succeeded_missing_pi:${bad}`);
+    const detail = await cfsup.rpc('support_reconciliation_detail', { p_finding: f.id });
+    const blob = JSON.stringify(detail.data);
+    expect(blob).not.toMatch(/client_secret|_secret|@|iban|sort_code|card_number|cvc/i);
+    const notes = JSON.stringify((await cAdmin.from('notifications').select('title, body').eq('finding_id', f.id)).data ?? []);
+    expect(notes).not.toMatch(/client_secret|@|iban|sort_code|card_number/i);
+    expect(notes.toLowerCase()).toContain('no money is moved');
   });
 
   it('normal users and anon cannot read/mutate findings, run reconciliation, or write the tables', async () => {
@@ -5356,9 +5550,10 @@ describe.skipIf(!enabled)('2G6E-C financial reconciliation (requires live Supaba
     expect((await cfc.rpc('support_update_finding_status', { p_finding: f.id, p_status: 'resolved', p_reason: 'x' })).error).not.toBeNull();
     expect((await cfc.rpc('support_recheck_finding', { p_finding: f.id })).error).not.toBeNull();
     expect((await client().rpc('support_reconciliation_queue')).error).not.toBeNull();
-    // The processor is service-role only / app_private → not callable by a client.
+    // Both processor entrypoints are service-role only → not callable by a client.
     expect((await cfc.rpc('run_financial_reconciliation', { p_limit: 10 })).error).not.toBeNull();
-    expect((await cfc.rpc('process_financial_reconciliation', { p_limit: 10 })).error).not.toBeNull();
+    expect((await cfc.rpc('run_financial_reconciliation_for_entities', { p_entity_ids: [f.primary_entity_id] })).error).not.toBeNull();
+    expect((await cfc.rpc('process_financial_reconciliation', { p_scope_ids: null, p_limit: 10 })).error).not.toBeNull();
     // Direct table reads/writes denied (RLS, no policy).
     expect((await cfc.from('financial_reconciliation_findings').select('id')).data ?? []).toHaveLength(0);
     expect((await cfc.from('financial_reconciliation_findings').insert({
