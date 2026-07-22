@@ -6475,24 +6475,41 @@ describe.skipIf(!enabled)('Stage 3B1 attendance evidence (requires live Supabase
     expect((await rpc(client(), 'get_conversation_completion_state', { p_booking: bookingId })).error).not.toBeNull();
   });
 
-  it('27+28. the read model gates review with STRICT booleans through the two-step flow', async () => {
+  it('27+28. review_eligible mirrors the completed-booking write gate through the full two-step flow', async () => {
     const { bookingId } = await makeCall({ withOrder: true });          // funded, confirmed, ended
-    // 27: before the Member confirms, review is not offered — as a strict boolean.
-    const before = (await rpc(cMember, 'get_conversation_completion_state', { p_booking: bookingId })).data;
-    expect(before.review_eligible).toBe(false);                        // strict false, never null
-    expect(before.review_submitted).toBe(false);
-    // Step 1 — the Member confirms the outcome (existing validated confirmation path).
+    const state = async (c: SupabaseClient) => (await rpc(c, 'get_conversation_completion_state', { p_booking: bookingId })).data;
+    const status = async () => (await cAdmin.from('bookings').select('status').eq('id', bookingId).single()).data!.status;
+
+    // A. Before any confirmation → not eligible, not submitted (strict booleans).
+    const a = await state(cMember);
+    expect(a.review_eligible).toBe(false);
+    expect(a.review_submitted).toBe(false);
+
+    // B. MEMBER confirms 'completed' → booking STAYS 'confirmed'; review still gated,
+    //    and the write RPC still refuses (the ratings gate needs a completed booking).
     expect((await rpc(cMember, 'submit_completion_confirmation', { p_booking: bookingId, p_outcome: 'completed', p_note: null })).error).toBeNull();
-    const afterConfirm = (await rpc(cMember, 'get_conversation_completion_state', { p_booking: bookingId })).data;
-    expect(afterConfirm.review_eligible).toBe(true);                   // now eligible
-    expect(afterConfirm.review_submitted).toBe(false);                 // not yet submitted
-    // 28: Step 2 (the review RPC) is accepted.
-    expect((await rpc(cMember, 'submit_conversation_review', { p_booking: bookingId, p_rating: 5, p_feedback: 'Lovely chat', p_message_idempotency: null })).error).toBeNull();
-    const afterReview = (await rpc(cMember, 'get_conversation_completion_state', { p_booking: bookingId })).data;
-    expect(afterReview.review_submitted).toBe(true);                   // a review now exists
-    // Documented post-submission value: review_eligible STAYS true — the Member's
-    // confirmation still stands, so an edit/re-review remains permitted.
-    expect(afterReview.review_eligible).toBe(true);
+    expect(await status()).toBe('confirmed');
+    const b = await state(cMember);
+    expect(b.review_eligible).toBe(false);
+    expect(b.review_submitted).toBe(false);
+    const earlyReview = await rpc(cMember, 'submit_conversation_review', { p_booking: bookingId, p_rating: 5, p_feedback: 'Lovely chat', p_message_idempotency: null });
+    expect(earlyReview.error, 'review must be refused before the booking is completed').not.toBeNull();
+    expect(JSON.stringify(earlyReview.error)).toMatch(/booking_not_completed/);
+
+    // C. COMPANION confirms 'completed' → booking becomes 'completed'; now eligible.
+    expect((await rpc(cComp, 'submit_completion_confirmation', { p_booking: bookingId, p_outcome: 'completed', p_note: null })).error).toBeNull();
+    expect(await status()).toBe('completed');
+    const c = await state(cMember);
+    expect(c.review_eligible).toBe(true);
+    expect(c.review_submitted).toBe(false);
+
+    // D. MEMBER submits the review → succeeds; review recorded.
+    expect((await rpc(cMember, 'submit_conversation_review', { p_booking: bookingId, p_rating: 5, p_feedback: 'Lovely chat', p_message_idempotency: null })).error, 'post-completion review').toBeNull();
+    const d = await state(cMember);
+    expect(d.review_submitted).toBe(true);
+    // Documented edit policy: review_eligible STAYS true — the booking is still
+    // 'completed', so the Member may edit the review within the RPC's 24h window.
+    expect(d.review_eligible).toBe(true);
   });
 
   it('29+30. aggregation is idempotent and concurrency-safe (one deterministic result)', async () => {

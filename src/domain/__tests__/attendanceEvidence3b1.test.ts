@@ -14,6 +14,7 @@ import { describe, expect, it } from 'vitest';
 const ROOT = join(__dirname, '..', '..', '..');
 const M = readFileSync(join(ROOT, 'supabase', 'migrations', '0069_authoritative_call_attendance_evidence.sql'), 'utf-8');
 const M70 = readFileSync(join(ROOT, 'supabase', 'migrations', '0070_normalise_completion_read_model_booleans.sql'), 'utf-8');
+const M71 = readFileSync(join(ROOT, 'supabase', 'migrations', '0071_align_review_eligibility_with_completion.sql'), 'utf-8');
 const NOTE = readFileSync(join(ROOT, 'src', 'components', 'CallEvidenceNote.tsx'), 'utf-8');
 const DETAIL = readFileSync(join(ROOT, 'src', 'pages', 'BookingDetail.tsx'), 'utf-8');
 
@@ -274,5 +275,55 @@ describe('0070 normalises the completion read-model booleans (additive, narrow)'
       expect(code).not.toContain(bad);
     }
     expect(stripSql(M70)).not.toMatch(/insert\s+into\s+public\.companion_earnings|update\s+public\.companion_earnings/i);
+  });
+});
+
+describe('0071 aligns review_eligible with a COMPLETED booking (mirrors the write gate)', () => {
+  it('redefines ONLY get_conversation_completion_state, from the cumulative 0070 body, with no data change', () => {
+    expect((M71.match(/create or replace function/g) ?? [])).toHaveLength(1);
+    expect(M71).toContain('create or replace function public.get_conversation_completion_state(p_booking uuid)');
+    // Started from the 0070 cumulative body: same declarations, recompute-on-read,
+    // completion-state derivation and payload skeleton are all present.
+    expect(M71).toContain('perform app_private.recompute_attendance_evidence(p_booking)');
+    expect(M71).toContain("v_state := 'awaiting_companion_report'");
+    expect(M71).toContain("'review_submitted', v_review_done");
+    // Executable code only (the header comment states it performs no backfill etc.).
+    expect(stripSql(M71)).not.toMatch(/insert\s+into|update\s+public\.\w+\s+set|delete\s+from|backfill/i);
+    expect(stripSql(M71)).not.toMatch(/drop\s+table|alter\s+table/i);
+    expect(M71).toContain("select pg_notify('pgrst', 'reload schema')");
+  });
+  it('review_eligible now requires booking.status = completed; the old v_mconf-only gate is gone', () => {
+    expect(M71).toContain("'review_eligible', coalesce(v_role = 'member' and v_b.status = 'completed' and v_ended, false)");
+    // The 0070 early gate (confirmed + member-only confirmation) is absent from 0071.
+    expect(M71).not.toContain("v_b.status = 'confirmed' and v_ended and v_mconf = 'completed'");
+    // Both review flags remain STRICT booleans (coalesce guard + boolean source).
+    expect(M71).toMatch(/'review_eligible', coalesce\(/);
+    expect(M71).toContain("'review_submitted', v_review_done");
+  });
+  it('does NOT redefine or weaken submit_conversation_review / its completion gate', () => {
+    // Executable code only — the header comment legitimately names the write gate.
+    const code = stripSql(M71);
+    expect(code).not.toContain('function public.submit_conversation_review');
+    expect(code).not.toContain('ratings_source_check');
+    expect(code).not.toContain('check_rating_source');
+  });
+  it('preserves role privacy and the financial firewall', () => {
+    const code = stripSql(M71);
+    expect(M71).toContain('app_private.can_edit_profile(v_b.companion_profile_id)');
+    expect(M71).toContain('app_private.can_act_for_member(v_b.member_profile_id)');
+    expect(M71).toContain('app_private.is_support_admin()');
+    expect(M71).toMatch(/else\s*\n\s*raise exception 'not_found: conversation'/);
+    expect(M71.indexOf("raise exception 'not_found: conversation'"))
+      .toBeLessThan(M71.indexOf('perform app_private.recompute_attendance_evidence(p_booking)'));
+    expect(M71).toContain("if v_role = 'companion' then");
+    expect(M71).toContain("'payout_status'");
+    expect(code).not.toMatch(/room_name|stripe|transfer_state/i);
+    for (const bad of ['ensure_companion_earning', 'make_earning_payable', 'companion_transfer_attempts',
+                       'payment_refunds', 'payment_disputes', 'credit_ledger']) {
+      expect(code.toLowerCase()).not.toContain(bad);
+    }
+    expect(code).not.toMatch(/insert\s+into\s+public\.companion_earnings|update\s+public\.companion_earnings/i);
+    expect(M71).toContain('revoke all on function public.get_conversation_completion_state(uuid) from public, anon');
+    expect(M71).toContain('grant execute on function public.get_conversation_completion_state(uuid) to authenticated');
   });
 });
