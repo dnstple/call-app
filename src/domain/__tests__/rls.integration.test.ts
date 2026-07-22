@@ -7142,19 +7142,41 @@ describe.skipIf(!enabled)('Stage 3B2 evidence payout holds (requires live Supaba
   });
 
   // ---- suite-wide financial firewall ----
+  // Read-only proof over EVERY fixture booking. The per-booking queries are
+  // batched into a handful of `.in(...)` reads (instead of ~4 round-trips per
+  // booking) so the whole sweep finishes well within the timeout; the assertions
+  // and their per-booking failure messages are byte-for-byte the same as before.
   it('FIREWALL. across every 3B2 booking, no refund / dispute / credit was created; earnings only where a declaration was made', async () => {
+    // One batched read per table, then all assertions run in-memory.
+    const refundRows = (await cAdmin.from('payment_refunds').select('id, booking_id').in('booking_id', bookingsMade)).data ?? [];
+    const orderRows = (await cAdmin.from('payment_orders').select('id, booking_id').in('booking_id', bookingsMade)).data ?? [];
+    const earningRows = (await cAdmin.from('companion_earnings').select('id, booking_id').in('booking_id', bookingsMade)).data ?? [];
+    const allOrderIds = orderRows.map((o) => o.id as string);
+    const allEarningIds = earningRows.map((e) => e.id as string);
+    const disputeRows = allOrderIds.length
+      ? (await cAdmin.from('payment_disputes').select('id, payment_order_id').in('payment_order_id', allOrderIds)).data ?? []
+      : [];
+    const attemptRows = allEarningIds.length
+      ? (await cAdmin.from('companion_transfer_attempts').select('state, earning_id').in('earning_id', allEarningIds)).data ?? []
+      : [];
+    // Group by booking so each booking is checked exactly as the sequential version did.
+    const orderIdsByBooking = new Map<string, string[]>();
+    for (const o of orderRows) orderIdsByBooking.set(o.booking_id as string, [...(orderIdsByBooking.get(o.booking_id as string) ?? []), o.id as string]);
+    const earningIdsByBooking = new Map<string, string[]>();
+    for (const e of earningRows) earningIdsByBooking.set(e.booking_id as string, [...(earningIdsByBooking.get(e.booking_id as string) ?? []), e.id as string]);
+
     for (const b of bookingsMade) {
-      expect((await cAdmin.from('payment_refunds').select('id').eq('booking_id', b)).data ?? [], `refund on ${b}`).toHaveLength(0);
-      const orderIds = ((await cAdmin.from('payment_orders').select('id').eq('booking_id', b)).data ?? []).map((o) => o.id as string);
+      expect(refundRows.filter((r) => r.booking_id === b), `refund on ${b}`).toHaveLength(0);
+      const orderIds = orderIdsByBooking.get(b) ?? [];
       if (orderIds.length) {
-        expect((await cAdmin.from('payment_disputes').select('id').in('payment_order_id', orderIds)).data ?? [], `dispute on ${b}`).toHaveLength(0);
+        expect(disputeRows.filter((d) => orderIds.includes(d.payment_order_id as string)), `dispute on ${b}`).toHaveLength(0);
       }
       // No transfer was ever REVERSED by evidence (holds never reverse money).
-      const eids = ((await cAdmin.from('companion_earnings').select('id').eq('booking_id', b)).data ?? []).map((e) => e.id as string);
+      const eids = earningIdsByBooking.get(b) ?? [];
       if (eids.length) {
-        const attempts = (await cAdmin.from('companion_transfer_attempts').select('state').in('earning_id', eids)).data ?? [];
+        const attempts = attemptRows.filter((a) => eids.includes(a.earning_id as string));
         expect(attempts.some((a) => a.state === 'reversed'), `reversal on ${b}`).toBe(false);
       }
     }
-  });
+  }, 60_000);
 });
