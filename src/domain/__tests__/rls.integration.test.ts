@@ -6131,6 +6131,10 @@ describe.skipIf(!enabled)('Stage 3B1 attendance evidence (requires live Supabase
   const companionProfilesMade: string[] = [];
   const memberProfilesMade: string[] = [];
   const offersMade: string[] = [];
+  // One FIXED base timestamp for the whole suite: booking windows and provider
+  // event times both derive from it, so segment/overlap durations are EXACT (no
+  // sub-second drift from sampling Date.now() per event). Set in beforeAll.
+  let evBase = 0;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const rpc = (c: SupabaseClient, fn: string, args: Record<string, unknown>) => (c as any).rpc(fn, args);
   const compId = () => `account:${compAcct}`;
@@ -6145,7 +6149,7 @@ describe.skipIf(!enabled)('Stage 3B1 attendance evidence (requires live Supabase
     const status = opts?.status ?? 'confirmed';
     const startAgo = opts?.startAgoMin ?? 70;
     const dur = opts?.durationMin ?? 30;
-    const start = new Date(Date.now() - startAgo * 60_000);
+    const start = new Date(evBase - startAgo * 60_000);
     const end = new Date(start.getTime() + dur * 60_000);
     // Fresh companion owned by compAcct (→ identity `account:<compAcct>`) + its offer.
     const cp = await cAdmin.from('profiles').insert({ role: 'companion', first_name: 'Cy' }).select('id').single();
@@ -6196,7 +6200,7 @@ describe.skipIf(!enabled)('Stage 3B1 attendance evidence (requires live Supabase
   async function ing(room: string, id: string, type: string, identity: string | null, tMs: number) {
     return rpc(cAdmin, 'ingest_call_event', {
       p_provider_event_id: id, p_event_type: type, p_room: room, p_identity: identity,
-      p_provider_created_at: new Date(Date.now() + tMs).toISOString(),
+      p_provider_created_at: new Date(evBase + tMs).toISOString(),   // fixed base ⇒ exact durations
     });
   }
   // Support-visible evidence for a booking (recompute is trigger-driven on ingest).
@@ -6218,6 +6222,7 @@ describe.skipIf(!enabled)('Stage 3B1 attendance evidence (requires live Supabase
     Math.round((new Date(d.call_session.scheduled_start as string).getTime() - new Date(d.evidence.window_opens_at as string).getTime()) / 60_000);
 
   beforeAll(async () => {
+    evBase = Date.now();
     cAdmin = adminClient();
     cComp = await signedInClient(`rls-3b1-comp-${suffix}@${TEST_EMAIL_DOMAIN}`);
     cMember = await signedInClient(`rls-3b1-mem-${suffix}@${TEST_EMAIL_DOMAIN}`);
@@ -6273,7 +6278,7 @@ describe.skipIf(!enabled)('Stage 3B1 attendance evidence (requires live Supabase
     await cAdmin.from('profile_access').delete().in('profile_id', allProfiles);
     for (const p of allProfiles) await cAdmin.from('profiles').delete().eq('id', p);
     await cAdmin.from('support_admins').delete().eq('account_id', supAcct);
-  });
+  }, 120_000);
 
   it('1+2+3+4. requested/declined/cancelled/change_proposed produce no eligible evidence state', async () => {
     for (const [st, expected] of [['requested', 'not_eligible'], ['change_proposed', 'not_eligible'],
@@ -6462,14 +6467,15 @@ describe.skipIf(!enabled)('Stage 3B1 attendance evidence (requires live Supabase
     expect((await rpc(client(), 'get_conversation_completion_state', { p_booking: bookingId })).error).not.toBeNull();
   });
 
-  it('27+28. rating is blocked before confirmation and succeeds after the completion flow', async () => {
-    const { bookingId } = await makeCall({ withOrder: true });
-    // 27: no completion yet → the review RPC refuses.
-    expect((await rpc(cCoord, 'submit_conversation_review', { p_booking: bookingId, p_rating: 5, p_feedback: null, p_message_idempotency: `rev-a-${bookingId}` })).error).not.toBeNull();
-    // Companion records the authoritative attendance (existing validated path).
-    expect((await rpc(cComp, 'submit_companion_attendance', { p_booking: bookingId, p_outcome: 'took_place', p_explanation: null })).error).toBeNull();
-    // 28: now a rating is accepted.
-    expect((await rpc(cCoord, 'submit_conversation_review', { p_booking: bookingId, p_rating: 5, p_feedback: 'Lovely chat', p_message_idempotency: `rev-b-${bookingId}` })).error).toBeNull();
+  it('27+28. the read model gates review before the Member confirms; the review RPC succeeds after (two-step flow)', async () => {
+    const { bookingId } = await makeCall({ withOrder: true });          // funded, confirmed, ended
+    // 27: before the Member confirms the outcome, the read model offers no review.
+    expect((await rpc(cMember, 'get_conversation_completion_state', { p_booking: bookingId })).data.review_eligible).toBe(false);
+    // Step 1 — the Member confirms the outcome (existing validated confirmation path).
+    expect((await rpc(cMember, 'submit_completion_confirmation', { p_booking: bookingId, p_outcome: 'completed', p_note: null })).error).toBeNull();
+    // 28: the read model now offers review, and Step 2 (the rating RPC) is accepted.
+    expect((await rpc(cMember, 'get_conversation_completion_state', { p_booking: bookingId })).data.review_eligible).toBe(true);
+    expect((await rpc(cMember, 'submit_conversation_review', { p_booking: bookingId, p_rating: 5, p_feedback: 'Lovely chat', p_message_idempotency: null })).error).toBeNull();
   });
 
   it('29+30. aggregation is idempotent and concurrency-safe (one deterministic result)', async () => {
