@@ -6269,6 +6269,7 @@ describe.skipIf(!enabled)('Stage 3B1 attendance evidence (requires live Supabase
       await cAdmin.from('completion_confirmations').delete().eq('booking_id', b);
       await cAdmin.from('conversation_issues').delete().eq('booking_id', b);
       await cAdmin.from('companion_earnings').delete().eq('booking_id', b);
+      await cAdmin.from('ratings').delete().eq('source_booking_id', b);   // FK → bookings (no cascade)
       await cAdmin.from('guest_call_invitations').delete().eq('booking_id', b);
       await cAdmin.from('payment_orders').delete().eq('booking_id', b);
       await cAdmin.from('bookings').delete().eq('id', b);
@@ -6624,6 +6625,25 @@ describe.skipIf(!enabled)('Stage 3B1 attendance evidence (requires live Supabase
     const a = (await evidenceOf(bookingId))!;
     expect(a.window_opens_at).toBe(b.window_opens_at);             // frozen — NOT re-snapshotted
     expect(a.companion_connected_seconds).toBe(b.companion_connected_seconds);   // events NOT reinterpreted
+  });
+
+  it('R1. submit_rating is blocked before completion and succeeds after both sides confirm', async () => {
+    // A fresh confirmed, funded, ended booking (Member has owner access).
+    const { bookingId } = await makeCall({ withOrder: true });
+    // 1. Before completion the booking is still 'confirmed', so a rating is refused
+    //    (submit_rating gates on booking.status = 'completed').
+    const early = await rpc(cMember, 'submit_rating', { p_booking: bookingId, p_score: 5, p_public_comment: null, p_private_feedback: null });
+    expect(early.error, 'expected a pre-completion rejection').not.toBeNull();
+    expect(JSON.stringify(early.error)).toMatch(/booking_not_completed|not_eligible/);
+    expect((await cAdmin.from('ratings').select('reviewer_profile_id').eq('source_booking_id', bookingId)).data ?? []).toHaveLength(0);
+    // 2. BOTH sides confirm 'completed' → the booking reconciles to 'completed'
+    //    (the completion model requires member AND companion confirmation).
+    expect((await rpc(cMember, 'submit_completion_confirmation', { p_booking: bookingId, p_outcome: 'completed', p_note: null })).error, 'member confirmation').toBeNull();
+    expect((await rpc(cComp, 'submit_completion_confirmation', { p_booking: bookingId, p_outcome: 'completed', p_note: null })).error, 'companion confirmation').toBeNull();
+    expect((await cAdmin.from('bookings').select('status').eq('id', bookingId).single()).data!.status).toBe('completed');
+    // 3. Now the rating is accepted, and exactly one pair rating is recorded.
+    expect((await rpc(cMember, 'submit_rating', { p_booking: bookingId, p_score: 5, p_public_comment: null, p_private_feedback: null })).error, 'post-completion rating').toBeNull();
+    expect((await cAdmin.from('ratings').select('score').eq('source_booking_id', bookingId)).data ?? []).toHaveLength(1);
   });
 
   it('36. no global worker is invoked — only scoped ingest/recompute/read RPCs were called', async () => {
