@@ -6124,24 +6124,53 @@ describe.skipIf(!enabled)('Stage 3B1 attendance evidence (requires live Supabase
   let companionProfile: string; let memberProfile: string; let offerId: string;
   const bookingsMade: string[] = [];
   const managedProfiles: string[] = [];
+  // Each makeCall provisions a FRESH companion + member profile so no two fixture
+  // bookings collide on the per-companion / per-member no-overlap exclusion
+  // constraints. They stay owned by the shared accounts, so the server-derived
+  // `account:<uuid>` participant identities are unchanged.
+  const companionProfilesMade: string[] = [];
+  const memberProfilesMade: string[] = [];
+  const offersMade: string[] = [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const rpc = (c: SupabaseClient, fn: string, args: Record<string, unknown>) => (c as any).rpc(fn, args);
   const compId = () => `account:${compAcct}`;
   const memId = () => `account:${memberAcct}`;
 
-  // Create a booking and (for confirmed) its call session. Default window is in
+  // Create a booking on a FRESH companion (+ fresh member unless a managed one is
+  // supplied) and, for a confirmed booking, its call session. Default window is in
   // the PAST and closed (start −70m → end −40m → closes −10m) so aggregation is
   // 'complete' rather than 'pending_call_window'.
   async function makeCall(opts?: { status?: string; startAgoMin?: number; durationMin?: number; withOrder?: boolean; member?: string }):
-    Promise<{ bookingId: string; sessionId?: string; roomName?: string }> {
+    Promise<{ bookingId: string; sessionId?: string; roomName?: string; companion: string; member: string }> {
     const status = opts?.status ?? 'confirmed';
     const startAgo = opts?.startAgoMin ?? 70;
     const dur = opts?.durationMin ?? 30;
     const start = new Date(Date.now() - startAgo * 60_000);
     const end = new Date(start.getTime() + dur * 60_000);
+    // Fresh companion owned by compAcct (→ identity `account:<compAcct>`) + its offer.
+    const cp = await cAdmin.from('profiles').insert({ role: 'companion', first_name: 'Cy' }).select('id').single();
+    if (cp.error) throw new Error(`3b1 companion: ${cp.error.message}`);
+    const companion = requireUuid(cp.data!.id, '3b1 companion'); companionProfilesMade.push(companion);
+    if ((await cAdmin.from('profile_access').insert({ account_id: compAcct, profile_id: companion, access_role: 'owner', can_edit: true, can_book: true })).error) throw new Error('3b1 companion access');
+    const of = await cAdmin.from('conversation_offers').insert({
+      companion_profile_id: companion, offer_type: 'single', duration_minutes: 30, price_minor: 1000, supported_methods: ['in_app'],
+    }).select('id').single();
+    if (of.error) throw new Error(`3b1 offer: ${of.error.message}`);
+    const offer = requireUuid(of.data!.id, '3b1 offer'); offersMade.push(offer);
+    // Member: a supplied managed profile (no owner), or a fresh one owned by memberAcct.
+    let member = opts?.member;
+    if (!member) {
+      const mp = await cAdmin.from('profiles').insert({ role: 'member', first_name: 'Mo' }).select('id').single();
+      if (mp.error) throw new Error(`3b1 member: ${mp.error.message}`);
+      member = requireUuid(mp.data!.id, '3b1 member'); memberProfilesMade.push(member);
+      if ((await cAdmin.from('profile_access').insert([
+        { account_id: memberAcct, profile_id: member, access_role: 'owner', can_edit: true, can_book: true },
+        { account_id: coordAcct, profile_id: member, access_role: 'coordinator', can_edit: true, can_book: true },
+      ])).error) throw new Error('3b1 member access');
+    }
     const bk = await cAdmin.from('bookings').insert({
-      member_profile_id: opts?.member ?? memberProfile, companion_profile_id: companionProfile,
-      booked_by_account_id: coordAcct, offer_id: offerId,
+      member_profile_id: member, companion_profile_id: companion,
+      booked_by_account_id: coordAcct, offer_id: offer,
       starts_at: start.toISOString(), ends_at: end.toISOString(), communication_method: 'in_app',
       status, duration_minutes: dur, price_minor: 1000, platform_fee_rate: 0, platform_fee_minor: 0, companion_amount_minor: 1000,
     }).select('id').single();
@@ -6151,17 +6180,17 @@ describe.skipIf(!enabled)('Stage 3B1 attendance evidence (requires live Supabase
     if (opts?.withOrder) {
       const ord = await cAdmin.from('payment_orders').insert({
         booking_id: bookingId, provider: 'stripe_test', coordinator_account_id: coordAcct,
-        member_profile_id: opts?.member ?? memberProfile, companion_profile_id: companionProfile,
+        member_profile_id: member, companion_profile_id: companion,
         order_type: 'one_off', status: 'succeeded', subtotal_minor: 1000, discount_minor: 0,
         service_fee_minor: 0, credit_applied_minor: 0, card_amount_minor: 1000, total_minor: 1000,
         commission_rate_pct: 5, commission_minor: 50, idempotency_key: `3b1-ord-${bookingId}`,
       }).select('id').single();
       if (ord.error) throw new Error(`3b1 order: ${ord.error.message}`);
     }
-    if (status !== 'confirmed') return { bookingId };
+    if (status !== 'confirmed') return { bookingId, companion, member };
     const prov = await rpc(cAdmin, 'ensure_call_session', { p_booking: bookingId });
     if (prov.error) throw new Error(`3b1 ensure_call_session: ${JSON.stringify(prov.error)}`);
-    return { bookingId, sessionId: requireUuid(prov.data.call_session_id, '3b1 session'), roomName: prov.data.room_name as string };
+    return { bookingId, sessionId: requireUuid(prov.data.call_session_id, '3b1 session'), roomName: prov.data.room_name as string, companion, member };
   }
   // Ingest one provider event (service role). t = ms offset from now.
   async function ing(room: string, id: string, type: string, identity: string | null, tMs: number) {
@@ -6239,8 +6268,10 @@ describe.skipIf(!enabled)('Stage 3B1 attendance evidence (requires live Supabase
       await cAdmin.from('payment_orders').delete().eq('booking_id', b);
       await cAdmin.from('bookings').delete().eq('id', b);
     }
-    await cAdmin.from('profile_access').delete().in('profile_id', [memberProfile, companionProfile, ...managedProfiles].filter(Boolean));
-    for (const p of [companionProfile, memberProfile, ...managedProfiles].filter(Boolean)) await cAdmin.from('profiles').delete().eq('id', p);
+    for (const o of [...offersMade, offerId].filter(Boolean)) await cAdmin.from('conversation_offers').delete().eq('id', o);
+    const allProfiles = [memberProfile, companionProfile, ...companionProfilesMade, ...memberProfilesMade, ...managedProfiles].filter(Boolean);
+    await cAdmin.from('profile_access').delete().in('profile_id', allProfiles);
+    for (const p of allProfiles) await cAdmin.from('profiles').delete().eq('id', p);
     await cAdmin.from('support_admins').delete().eq('account_id', supAcct);
   });
 
