@@ -19,6 +19,7 @@ import { buildCallGrant, participantIdentity, TOKEN_TTL_SECONDS } from '../../..
 
 const ROOT = join(__dirname, '..', '..', '..');
 const M = readFileSync(join(ROOT, 'supabase', 'migrations', '0064_livekit_audio_call_foundations.sql'), 'utf-8');
+const ALIGN = readFileSync(join(ROOT, 'supabase', 'migrations', '0065_livekit_audio_hosted_alignment.sql'), 'utf-8');
 const TOKEN_FN = readFileSync(join(ROOT, 'supabase', 'functions', 'livekit-token', 'index.ts'), 'utf-8');
 const HOOK_FN = readFileSync(join(ROOT, 'supabase', 'functions', 'livekit-webhook', 'index.ts'), 'utf-8');
 const SHARED = readFileSync(join(ROOT, 'supabase', 'functions', '_shared', 'callToken.ts'), 'utf-8');
@@ -117,6 +118,30 @@ describe('0064 eligibility + ingestion are gated, deterministic and ordering-saf
     expect(M).toContain('grant execute on function public.call_join_eligibility(uuid) to authenticated');
     expect(M).toContain('grant execute on function public.call_state_for_booking(uuid) to authenticated');
     expect(fn('public.support_call_diagnostics')).toContain('app_private.is_support_admin()');
+  });
+});
+
+describe('0065 exposes the service RPCs through PostgREST (public), service-role only', () => {
+  it('adds public wrappers for the three service entrypoints, revoked from authenticated/anon', () => {
+    for (const sig of ['public.ensure_call_session(uuid)',
+                       'public.ingest_call_event(text, text, text, text, timestamptz)',
+                       'public.record_call_token_audit(uuid, uuid, uuid, text, timestamptz)']) {
+      expect(ALIGN).toContain(`create or replace function ${sig.replace(/\(.*/, '')}`);
+      expect(ALIGN).toContain(`revoke all on function ${sig} from public, anon, authenticated`);
+      expect(ALIGN).toContain(`grant execute on function ${sig} to service_role`);
+      expect(ALIGN).not.toMatch(new RegExp(`grant execute on function ${sig.replace(/[()]/g, '\\$&')}[^;]*to (authenticated|anon)`));
+    }
+    // Wrappers delegate to the immutable app_private implementations (single source of truth).
+    expect(ALIGN).toContain('return app_private.ensure_call_session(p_booking)');
+    expect(ALIGN).toContain('return app_private.ingest_call_event(');
+    expect(ALIGN).toContain('perform app_private.record_call_token_audit(');
+    // Re-asserts the audited bodies so hosted drift cannot leave them uncorrected.
+    expect(ALIGN).toContain("if v_cfg.id is null then");                 // A: fail-closed config
+    expect(ALIGN).toContain('where room_name = p_room for update');       // B: session lock
+    expect(ALIGN).toContain("when v_session.state in ('ended', 'failed') then currently_connected"); // C: terminal guard
+    expect(ALIGN).toContain("select pg_notify('pgrst', 'reload schema')");
+    // Wrappers accept ONLY the booking/event args — no room/identity/role injection.
+    expect(ALIGN).not.toMatch(/create or replace function public\.ensure_call_session\([^)]*room/i);
   });
 });
 

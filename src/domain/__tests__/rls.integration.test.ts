@@ -5585,6 +5585,7 @@ describe.skipIf(!enabled)('3A LiveKit audio foundations (requires live Supabase)
   let cMember: SupabaseClient; let cComp: SupabaseClient; let cCoord: SupabaseClient; let cOther: SupabaseClient; let cSup: SupabaseClient;
   let memberAcct: string; let compAcct: string; let coordAcct: string; let supAcct: string;
   let memberProfile: string; let companionProfile: string; let offerId: string; let bookingId: string;
+  let sessionId: string; let roomName: string; // provisioned once in beforeAll
   const memberIdentity = () => `account:${memberAcct}`;
   const compIdentity = () => `account:${compAcct}`;
 
@@ -5639,6 +5640,16 @@ describe.skipIf(!enabled)('3A LiveKit audio foundations (requires live Supabase)
     }).select('id').single();
     if (bk.error) throw new Error(`booking: ${bk.error.message}`);
     bookingId = requireUuid(bk.data!.id, '3a booking');
+
+    // Provision the call session HERE (service role), so a provisioning failure
+    // aborts setup loudly rather than cascading into misleading null-session
+    // TypeErrors in dependent tests. Retain the validated ids for reuse.
+    const prov = await rpc(cAdmin, 'ensure_call_session', { p_booking: bookingId });
+    if (prov.error) throw new Error(`ensure_call_session: ${prov.error.message ?? JSON.stringify(prov.error)}`);
+    if (!prov.data) throw new Error('ensure_call_session returned no data');
+    sessionId = requireUuid(prov.data.call_session_id, '3a call session');
+    roomName = prov.data.room_name as string;
+    if (!roomName?.startsWith('call_')) throw new Error(`unexpected room name: ${roomName}`);
   }, 120_000);
 
   afterAll(async () => {
@@ -5702,14 +5713,16 @@ describe.skipIf(!enabled)('3A LiveKit audio foundations (requires live Supabase)
   });
 
   it('8+9+10+11. ensure_call_session is idempotent: one session, two expected participants, no coordinator', async () => {
+    // Re-calling returns the SAME session provisioned in beforeAll (never duplicated).
     const r1 = await rpc(cAdmin, 'ensure_call_session', { p_booking: bookingId });
     expect(r1.error).toBeNull();
+    expect(r1.data.call_session_id).toBe(sessionId);
     const r2 = await rpc(cAdmin, 'ensure_call_session', { p_booking: bookingId });
-    expect(r2.data.call_session_id).toBe(r1.data.call_session_id); // stable, never duplicated
-    expect((r1.data.room_name as string).startsWith('call_')).toBe(true);
+    expect(r2.data.call_session_id).toBe(sessionId);
+    expect(roomName.startsWith('call_')).toBe(true);
     const sessions = (await cAdmin.from('call_sessions').select('id').eq('booking_id', bookingId)).data ?? [];
     expect(sessions).toHaveLength(1);
-    const parts = (await cAdmin.from('call_participants').select('account_id, booking_role').eq('call_session_id', r1.data.call_session_id)).data ?? [];
+    const parts = (await cAdmin.from('call_participants').select('account_id, booking_role').eq('call_session_id', sessionId)).data ?? [];
     expect(parts).toHaveLength(2);
     expect(parts.map((p) => p.booking_role).sort()).toEqual(['companion', 'member']);
     expect(parts.some((p) => p.account_id === coordAcct)).toBe(false); // Coordinator never a participant
@@ -5725,7 +5738,13 @@ describe.skipIf(!enabled)('3A LiveKit audio foundations (requires live Supabase)
     const st = await rpc(cMember, 'call_state_for_booking', { p_booking: bookingId });
     expect(st.error).toBeNull();
     expect(st.data.your_role).toBe('member');
-    expect(JSON.stringify(st.data)).not.toMatch(/room_name|provider_identity|call_/);
+    // Key-aware: internal room/provider fields must be absent. `call_state` is a
+    // PERMITTED key and must not trip a naive substring check for "call_".
+    for (const forbidden of ['room_name', 'room', 'provider_identity', 'provider_event_id', 'call_session_id']) {
+      expect(st.data).not.toHaveProperty(forbidden);
+    }
+    expect(st.data).toHaveProperty('call_state');   // permitted
+    expect(st.data).toHaveProperty('scheduled_start');
   });
 
   it('15. support diagnostics are support-only and expose connection metadata', async () => {
@@ -5737,8 +5756,7 @@ describe.skipIf(!enabled)('3A LiveKit audio foundations (requires live Supabase)
   });
 
   it('16+17. webhook ingestion is idempotent and ordering-safe; unknown rooms are ignored', async () => {
-    const sess = (await cAdmin.from('call_sessions').select('id, room_name').eq('booking_id', bookingId).single()).data!;
-    const room = sess.room_name as string;
+    const room = roomName; // provisioned in beforeAll
     const t0 = new Date(Date.now() - 5 * 60_000).toISOString();
     const t1 = new Date(Date.now() - 4 * 60_000).toISOString();
     // Member joins.
@@ -5747,12 +5765,12 @@ describe.skipIf(!enabled)('3A LiveKit audio foundations (requires live Supabase)
     // Duplicate event id → no double count.
     const dup = await rpc(cAdmin, 'ingest_call_event', { p_provider_event_id: `ev-join-${suffix}`, p_event_type: 'participant_joined', p_room: room, p_identity: memberIdentity(), p_provider_created_at: t1 });
     expect(dup.data.result).toBe('duplicate_ignored');
-    let part = (await cAdmin.from('call_participants').select('join_count, currently_connected').eq('call_session_id', sess.id).eq('booking_role', 'member').single()).data!;
+    let part = (await cAdmin.from('call_participants').select('join_count, currently_connected').eq('call_session_id', sessionId).eq('booking_role', 'member').single()).data!;
     expect(part.join_count).toBe(1);
     expect(part.currently_connected).toBe(true);
     // An OLDER 'left' (t0 < t1) must NOT flip the newer connected state.
     await rpc(cAdmin, 'ingest_call_event', { p_provider_event_id: `ev-oldleft-${suffix}`, p_event_type: 'participant_left', p_room: room, p_identity: memberIdentity(), p_provider_created_at: t0 });
-    part = (await cAdmin.from('call_participants').select('join_count, currently_connected').eq('call_session_id', sess.id).eq('booking_role', 'member').single()).data!;
+    part = (await cAdmin.from('call_participants').select('join_count, currently_connected').eq('call_session_id', sessionId).eq('booking_role', 'member').single()).data!;
     expect(part.currently_connected).toBe(true);
     // Unknown room → safe ignore.
     expect((await rpc(cAdmin, 'ingest_call_event', { p_provider_event_id: `ev-unk-${suffix}`, p_event_type: 'participant_joined', p_room: `call_${'9'.repeat(32)}`, p_identity: memberIdentity(), p_provider_created_at: t1 })).data.result).toBe('ignored_unknown_room');
@@ -5761,34 +5779,32 @@ describe.skipIf(!enabled)('3A LiveKit audio foundations (requires live Supabase)
   });
 
   it('12. rescheduling updates the session snapshot in place — one session, same two participants, no Coordinator', async () => {
-    const sess = (await cAdmin.from('call_sessions').select('id').eq('booking_id', bookingId).single()).data!;
     // Move the accepted interval (still inside a joinable window).
     const newStart = new Date(Date.now() - 3 * 60_000); const newEnd = new Date(newStart.getTime() + 30 * 60_000);
     await cAdmin.from('bookings').update({ starts_at: newStart.toISOString(), ends_at: newEnd.toISOString() }).eq('id', bookingId);
     const r = await rpc(cAdmin, 'ensure_call_session', { p_booking: bookingId });
-    expect(r.data.call_session_id).toBe(sess.id); // NOT a second session
-    const s2 = (await cAdmin.from('call_sessions').select('scheduled_start, scheduled_end, state').eq('id', sess.id).single()).data!;
+    expect(r.data.call_session_id).toBe(sessionId); // NOT a second session
+    const s2 = (await cAdmin.from('call_sessions').select('scheduled_start, scheduled_end, state').eq('id', sessionId).single()).data!;
     if (s2.state === 'pending') {
       expect(new Date(s2.scheduled_start as string).getTime()).toBe(newStart.getTime()); // snapshot re-synced
     }
     const sessions = (await cAdmin.from('call_sessions').select('id').eq('booking_id', bookingId)).data ?? [];
     expect(sessions).toHaveLength(1);
-    const parts = (await cAdmin.from('call_participants').select('account_id, booking_role').eq('call_session_id', sess.id)).data ?? [];
+    const parts = (await cAdmin.from('call_participants').select('account_id, booking_role').eq('call_session_id', sessionId)).data ?? [];
     expect(parts).toHaveLength(2);
     expect(parts.some((p) => p.account_id === coordAcct)).toBe(false);
   });
 
   it('18. concurrent duplicate deliveries increment exactly once (session lock + unique event id)', async () => {
-    const sess = (await cAdmin.from('call_sessions').select('id, room_name').eq('booking_id', bookingId).single()).data!;
-    const room = sess.room_name as string; const evId = `ev-conc-${suffix}`; const t = new Date().toISOString();
-    const before = (await cAdmin.from('call_participants').select('join_count').eq('call_session_id', sess.id).eq('booking_role', 'companion').single()).data!.join_count;
+    const evId = `ev-conc-${suffix}`; const t = new Date().toISOString();
+    const before = (await cAdmin.from('call_participants').select('join_count').eq('call_session_id', sessionId).eq('booking_role', 'companion').single()).data!.join_count;
     const [a, b] = await Promise.all([
-      rpc(cAdmin, 'ingest_call_event', { p_provider_event_id: evId, p_event_type: 'participant_joined', p_room: room, p_identity: compIdentity(), p_provider_created_at: t }),
-      rpc(cAdmin, 'ingest_call_event', { p_provider_event_id: evId, p_event_type: 'participant_joined', p_room: room, p_identity: compIdentity(), p_provider_created_at: t }),
+      rpc(cAdmin, 'ingest_call_event', { p_provider_event_id: evId, p_event_type: 'participant_joined', p_room: roomName, p_identity: compIdentity(), p_provider_created_at: t }),
+      rpc(cAdmin, 'ingest_call_event', { p_provider_event_id: evId, p_event_type: 'participant_joined', p_room: roomName, p_identity: compIdentity(), p_provider_created_at: t }),
     ]);
     const results = [a.data.result, b.data.result].sort();
     expect(results).toEqual(['duplicate_ignored', 'participant_joined']); // exactly one applied
-    const after = (await cAdmin.from('call_participants').select('join_count').eq('call_session_id', sess.id).eq('booking_role', 'companion').single()).data!.join_count;
+    const after = (await cAdmin.from('call_participants').select('join_count').eq('call_session_id', sessionId).eq('booking_role', 'companion').single()).data!.join_count;
     expect(after).toBe(before + 1); // never double-counted
   });
 
