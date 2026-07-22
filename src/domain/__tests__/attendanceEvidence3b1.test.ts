@@ -118,13 +118,31 @@ describe('aggregation — deterministic, window-bounded, overlap-aware', () => {
     expect(r).toContain('for update');
     expect(M).toContain('on conflict (booking_id) do update set');
   });
-  it('bounds the window from the SESSION snapshot via call_config (reschedule-aware) and FREEZES it once finalised', () => {
+  it('snapshots call_config ONLY at first creation or a legitimate reschedule, and FREEZES the window otherwise', () => {
     expect(r).toContain('v_s.scheduled_start - make_interval(mins => coalesce(v_cfg.join_opens_before_start_minutes');
     expect(r).toContain('v_s.scheduled_end + make_interval(mins => coalesce(v_cfg.join_closes_after_end_minutes');
-    // Historical stability: a finalised row reuses its STORED window (a later
-    // global call_config change never rewrites an old call).
-    expect(r).toContain('if v_ex.booking_id is not null and v_ex.finalised then');
+    // First creation snapshots current config; an existing row is frozen unless a
+    // legitimate PRE-window / PRE-evidence reschedule replaces it.
+    expect(r).toContain('if v_ex.booking_id is null then');
+    expect(r).toContain('v_frozen := v_ex.finalised or now() >= v_ex.window_opens_at or v_has_evidence;');
+    expect(r).toContain('if p_resnapshot and not v_frozen then');
+    // Ordinary recompute ALWAYS reuses the stored window (never re-reads config).
     expect(r).toContain('v_opens := v_ex.window_opens_at; v_closes := v_ex.window_closes_at;');
+    // The freeze latch keys off a RELEVANT mapped provider event.
+    expect(r).toContain("e.event_type in ('participant_joined', 'participant_left', 'participant_connection_aborted')");
+    expect(r).toContain('into v_has_evidence');
+  });
+  it('re-snapshotting is reserved for the reschedule trigger; ordinary/read/event paths never re-read config', () => {
+    // Only the session-reschedule trigger passes the resnapshot flag; it is gated
+    // on a genuine scheduled_start/end change.
+    const ts = fn('app_private.trg_evidence_from_session');
+    expect(ts).toContain('old.scheduled_start is distinct from new.scheduled_start');
+    expect(ts).toContain('perform app_private.recompute_attendance_evidence(new.booking_id, v_resnapshot)');
+    // Event + participant triggers call recompute with NO resnapshot argument.
+    expect(fn('app_private.trg_evidence_from_event')).toMatch(/recompute_attendance_evidence\(v_booking\);/);
+    expect(fn('app_private.trg_evidence_from_participant')).toMatch(/recompute_attendance_evidence\(v_booking\);/);
+    // The read model refreshes without ever re-snapshotting (single-arg call).
+    expect(fn('public.get_conversation_completion_state')).toMatch(/perform app_private\.recompute_attendance_evidence\(p_booking\);/);
   });
   it('uses a FIXED as-of — no open segment grows with now(); a missing leave is bounded', () => {
     // Finalised ⇔ room finished OR window closed; the as-of never depends on now()

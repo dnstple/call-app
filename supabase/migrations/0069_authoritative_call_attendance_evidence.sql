@@ -114,7 +114,12 @@ alter table public.call_attendance_evidence force row level security;
 --    or snapshot window + a FIXED as-of. Idempotent and concurrency-safe (locks
 --    the session row, exactly like ingest_call_event). EVIDENCE ONLY.
 -- ============================================================
-create or replace function app_private.recompute_attendance_evidence(p_booking uuid)
+-- p_resnapshot = the caller is a LEGITIMATE reschedule (scheduled_start/end
+-- changed) and may replace the stored window — but ONLY while the window has not
+-- opened, no relevant event exists and the call is not finalised. Every other
+-- caller (default false) always reuses the stored window and never re-reads
+-- call_config, so a later GLOBAL config change can never rewrite an existing call.
+create or replace function app_private.recompute_attendance_evidence(p_booking uuid, p_resnapshot boolean default false)
 returns void language plpgsql security definer set search_path = '' as $$
 declare
   c_version constant integer := 2;                 -- bump when the algorithm changes
@@ -122,6 +127,7 @@ declare
   v_s public.call_sessions;
   v_cfg public.call_config;
   v_ex public.call_attendance_evidence;            -- existing row (for the freeze rule)
+  v_has_evidence boolean; v_frozen boolean;        -- window-snapshot freeze latch
   v_opens timestamptz; v_closes timestamptz;
   v_finalised boolean; v_asof timestamptz;
   v_evt record;
@@ -148,14 +154,41 @@ begin
   select * into v_cfg from public.call_config where id;
   select * into v_ex from public.call_attendance_evidence where booking_id = p_booking;
 
-  -- WINDOW: once a call is finalised its window is FROZEN (historical stability;
-  -- a later call_config change or stray reschedule cannot rewrite it). Otherwise
-  -- derive it from the (reschedule-aligned) session snapshot + current config.
-  if v_ex.booking_id is not null and v_ex.finalised then
-    v_opens := v_ex.window_opens_at; v_closes := v_ex.window_closes_at;
-  else
+  -- Has a RELEVANT, mapped provider event already been recorded for this session?
+  -- (participant join/leave/abort resolved to a known side.) Determined purely
+  -- from the immutable ledger.
+  select exists (
+    select 1 from public.call_provider_events e
+    join public.call_participants cp
+      on cp.call_session_id = v_s.id and cp.provider_identity = e.participant_identity
+    where e.call_session_id = v_s.id
+      and e.event_type in ('participant_joined', 'participant_left', 'participant_connection_aborted')
+  ) into v_has_evidence;
+
+  -- WINDOW SNAPSHOT + FREEZE. call_config is read ONLY when a window is first
+  -- created OR replaced by a legitimate pre-evidence reschedule — NEVER on an
+  -- ordinary recompute. The window is PERMANENTLY frozen once ANY of: the call is
+  -- finalised, the (stored) window has opened, or the first relevant event exists.
+  -- Effect: a later global call_config change touches only sessions created after
+  -- the change; it can never rewrite an existing call's boundaries, durations,
+  -- overlap or classification.
+  if v_ex.booking_id is null then
+    -- First creation: snapshot the CURRENT config (the ONLY unconditional read).
     v_opens := v_s.scheduled_start - make_interval(mins => coalesce(v_cfg.join_opens_before_start_minutes, 10));
     v_closes := v_s.scheduled_end + make_interval(mins => coalesce(v_cfg.join_closes_after_end_minutes, 30));
+  else
+    v_frozen := v_ex.finalised or now() >= v_ex.window_opens_at or v_has_evidence;
+    if p_resnapshot and not v_frozen then
+      -- A LEGITIMATE reschedule BEFORE the window opens and BEFORE any evidence:
+      -- re-snapshot from the new schedule + current config.
+      v_opens := v_s.scheduled_start - make_interval(mins => coalesce(v_cfg.join_opens_before_start_minutes, 10));
+      v_closes := v_s.scheduled_end + make_interval(mins => coalesce(v_cfg.join_closes_after_end_minutes, 30));
+    else
+      -- ORDINARY recompute (and any reschedule attempted after evidence started):
+      -- ALWAYS reuse the STORED window — existing events are never reinterpreted
+      -- under new boundaries, and current call_config is never re-read.
+      v_opens := v_ex.window_opens_at; v_closes := v_ex.window_closes_at;
+    end if;
   end if;
 
   -- FIXED aggregation as-of. Finalised ⇔ the call is over. The as-of NEVER
@@ -334,11 +367,12 @@ begin
     calculated_at = now(), updated_at = now();
 end;
 $$;
-revoke all on function app_private.recompute_attendance_evidence(uuid) from public, anon, authenticated;
-grant execute on function app_private.recompute_attendance_evidence(uuid) to service_role;
+revoke all on function app_private.recompute_attendance_evidence(uuid, boolean) from public, anon, authenticated;
+grant execute on function app_private.recompute_attendance_evidence(uuid, boolean) to service_role;
 
 -- Public service-role wrapper (PostgREST-reachable; for ops/tests to force a
--- deterministic refresh). EVIDENCE ONLY — never a financial call.
+-- deterministic refresh). EVIDENCE ONLY — never a financial call. Ordinary
+-- refresh only (never re-snapshots the window).
 create or replace function public.recompute_attendance_evidence(p_booking uuid)
 returns void language plpgsql security definer set search_path = '' as $$
 begin
@@ -393,8 +427,15 @@ create trigger call_provider_events_evidence_upd
 --     affect evidence.
 create or replace function app_private.trg_evidence_from_session()
 returns trigger language plpgsql security definer set search_path = '' as $$
+declare v_resnapshot boolean := false;
 begin
-  perform app_private.recompute_attendance_evidence(new.booking_id);
+  -- Only a genuine reschedule (scheduled_start/end changed) may re-snapshot the
+  -- window — and recompute still enforces the pre-window / no-evidence guard.
+  if tg_op = 'UPDATE' then
+    v_resnapshot := old.scheduled_start is distinct from new.scheduled_start
+                    or old.scheduled_end is distinct from new.scheduled_end;
+  end if;
+  perform app_private.recompute_attendance_evidence(new.booking_id, v_resnapshot);
   return new;
 end;
 $$;

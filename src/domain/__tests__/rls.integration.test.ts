@@ -6175,6 +6175,18 @@ describe.skipIf(!enabled)('Stage 3B1 attendance evidence (requires live Supabase
     const d = await rpc(cSup, 'support_attendance_diagnostics', { p_booking: bookingId });
     return (d.data?.evidence as Record<string, unknown> | null) ?? null;
   }
+  // Full support diagnostic (evidence + session) for window/config assertions.
+  async function diagOf(bookingId: string): Promise<{ evidence: Record<string, unknown>; call_session: Record<string, unknown> }> {
+    return (await rpc(cSup, 'support_attendance_diagnostics', { p_booking: bookingId })).data;
+  }
+  const readCfg = async (): Promise<{ o: number; c: number }> => {
+    const d = (await cAdmin.from('call_config').select('join_opens_before_start_minutes, join_closes_after_end_minutes').eq('id', true).single()).data!;
+    return { o: d.join_opens_before_start_minutes as number, c: d.join_closes_after_end_minutes as number };
+  };
+  const setCfg = async (o: number, c: number) =>
+    cAdmin.from('call_config').update({ join_opens_before_start_minutes: o, join_closes_after_end_minutes: c }).eq('id', true);
+  const openMins = (d: { evidence: Record<string, unknown>; call_session: Record<string, unknown> }): number =>
+    Math.round((new Date(d.call_session.scheduled_start as string).getTime() - new Date(d.evidence.window_opens_at as string).getTime()) / 60_000);
 
   beforeAll(async () => {
     cAdmin = adminClient();
@@ -6507,6 +6519,74 @@ describe.skipIf(!enabled)('Stage 3B1 attendance evidence (requires live Supabase
     for (const secret of ['room_name', 'token', 'private_feedback', 'stripe', 'card', 'bank', 'code_hash', 'token_hash']) {
       expect(blob.toLowerCase()).not.toContain(secret);
     }
+  });
+
+  it('CFG-A. a new session snapshots the CURRENT call_config window', async () => {
+    const cfg = await readCfg();
+    const { bookingId } = await makeCall();
+    expect(openMins(await diagOf(bookingId))).toBe(cfg.o);         // window opens `o` min before start
+  });
+
+  it('CFG-B. changing call_config affects only sessions created AFTER the change', async () => {
+    const cfg = await readCfg();
+    try {
+      const a = await makeCall();                                   // snapshot at current config
+      await setCfg(cfg.o + 15, cfg.c + 15);
+      const b = await makeCall();                                   // snapshot at the NEW config
+      expect(openMins(await diagOf(a.bookingId))).toBe(cfg.o);      // old session unchanged
+      expect(openMins(await diagOf(b.bookingId))).toBe(cfg.o + 15); // new session uses new config
+      // Recomputing the OLD session does not inherit the new config (frozen).
+      await rpc(cAdmin, 'recompute_attendance_evidence', { p_booking: a.bookingId });
+      expect(openMins(await diagOf(a.bookingId))).toBe(cfg.o);
+    } finally { await setCfg(cfg.o, cfg.c); }
+  });
+
+  it('CFG-C. a config change before the window opens does not alter an existing row (no reschedule)', async () => {
+    const cfg = await readCfg();
+    try {
+      const { bookingId } = await makeCall({ startAgoMin: -120 });  // future → pending, no events
+      const before = (await evidenceOf(bookingId))!.window_opens_at;
+      await setCfg(cfg.o + 20, cfg.c + 20);
+      await rpc(cAdmin, 'recompute_attendance_evidence', { p_booking: bookingId });   // ordinary recompute
+      expect((await evidenceOf(bookingId))!.window_opens_at).toBe(before);            // unchanged
+    } finally { await setCfg(cfg.o, cfg.c); }
+  });
+
+  it('CFG-D. a config change AFTER the first provider event does not alter a pending call', async () => {
+    const cfg = await readCfg();
+    try {
+      const { bookingId, roomName } = await makeCall({ startAgoMin: 20, durationMin: 30 });   // window OPEN now
+      await ing(roomName!, `c-j-${bookingId}`, 'participant_joined', compId(), -18 * 60_000);
+      await ing(roomName!, `c-l-${bookingId}`, 'participant_left', compId(), -15 * 60_000);   // 180 s closed
+      await ing(roomName!, `m-j-${bookingId}`, 'participant_joined', memId(), -17 * 60_000);
+      await ing(roomName!, `m-l-${bookingId}`, 'participant_left', memId(), -15 * 60_000);     // overlap 120 s
+      const b = (await evidenceOf(bookingId))!;
+      expect(b.finalised).toBe(false);                             // pending, but evidence has started
+      expect(b.evidence_quality).toBe('pending_call_window');
+      await setCfg(cfg.o + 70, cfg.c + 90);                        // widen the GLOBAL window
+      await rpc(cAdmin, 'recompute_attendance_evidence', { p_booking: bookingId });
+      const a = (await evidenceOf(bookingId))!;
+      expect(a.window_opens_at).toBe(b.window_opens_at);           // window frozen
+      expect(a.window_closes_at).toBe(b.window_closes_at);
+      expect(a.companion_connected_seconds).toBe(b.companion_connected_seconds);   // seconds frozen
+      expect(a.overlap_seconds).toBe(b.overlap_seconds);           // overlap frozen
+      expect(a.evidence_classification).toBe(b.evidence_classification);           // classification frozen
+    } finally { await setCfg(cfg.o, cfg.c); }
+  });
+
+  it('CFG-F. a reschedule AFTER evidence exists retains the frozen window and never reinterprets events', async () => {
+    const { bookingId, roomName } = await makeCall({ startAgoMin: 20, durationMin: 30 });
+    await ing(roomName!, `c-j-${bookingId}`, 'participant_joined', compId(), -18 * 60_000);
+    await ing(roomName!, `c-l-${bookingId}`, 'participant_left', compId(), -15 * 60_000);     // 180 s
+    const b = (await evidenceOf(bookingId))!;
+    expect(b.companion_connected_seconds).toBe(180);
+    // Move the session snapshot far away (a reschedule attempt after evidence).
+    const newStart = new Date(Date.now() - 300 * 60_000).toISOString();
+    const newEnd = new Date(Date.now() - 270 * 60_000).toISOString();
+    await cAdmin.from('call_sessions').update({ scheduled_start: newStart, scheduled_end: newEnd }).eq('booking_id', bookingId);
+    const a = (await evidenceOf(bookingId))!;
+    expect(a.window_opens_at).toBe(b.window_opens_at);             // frozen — NOT re-snapshotted
+    expect(a.companion_connected_seconds).toBe(b.companion_connected_seconds);   // events NOT reinterpreted
   });
 
   it('36. no global worker is invoked — only scoped ingest/recompute/read RPCs were called', async () => {
