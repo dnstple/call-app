@@ -5810,28 +5810,40 @@ describe.skipIf(!enabled)('3A LiveKit audio foundations (requires live Supabase)
 
   it('19. a managed (guest) Member occupies the ONE Member slot and drives presence', async () => {
     // A managed member has NO owner account: a profile with only a Coordinator.
-    const mm = (await cAdmin.from('profiles').insert({ role: 'member', first_name: 'Mara' }).select('id').single()).data!;
-    const managedMemberProfile = requireUuid(mm.id, 'managed member profile');
-    const start = new Date(Date.now() - 2 * 60_000); const end = new Date(start.getTime() + 30 * 60_000);
+    const mmRes = await cAdmin.from('profiles').insert({ role: 'member', first_name: 'Mara' }).select('id').single();
+    expect(mmRes.error, `managed member profile failed: ${JSON.stringify(mmRes.error)}`).toBeNull();
+    const managedMemberProfile = requireUuid(mmRes.data?.id, 'managed member profile');
+    // DISTINCT, non-overlapping interval for the SAME Companion — the main
+    // fixture booking already occupies ~now for companionProfile, and the
+    // companion no-overlap exclusion constraint would reject an overlapping
+    // confirmed booking. test 19 provisions via the service-role RPC
+    // (confirmed-only; no join-window check), so a far-future deterministic
+    // interval is fine and avoids wall-clock-second flakiness.
+    const start = new Date(Date.now() + 180 * 60_000); const end = new Date(start.getTime() + 30 * 60_000);
     const created: { table: string; id: string }[] = [];
     try {
-      await cAdmin.from('profile_access').insert({ account_id: coordAcct, profile_id: managedMemberProfile, access_role: 'coordinator', can_edit: true, can_book: true });
-      const bk = (await cAdmin.from('bookings').insert({
+      const paRes = await cAdmin.from('profile_access').insert({ account_id: coordAcct, profile_id: managedMemberProfile, access_role: 'coordinator', can_edit: true, can_book: true });
+      expect(paRes.error, `managed profile_access failed: ${JSON.stringify(paRes.error)}`).toBeNull();
+      const bookingResult = await cAdmin.from('bookings').insert({
         member_profile_id: managedMemberProfile, companion_profile_id: companionProfile, booked_by_account_id: coordAcct,
         offer_id: offerId, starts_at: start.toISOString(), ends_at: end.toISOString(), communication_method: 'in_app',
         status: 'confirmed', duration_minutes: 30, price_minor: 1000, platform_fee_rate: 0, platform_fee_minor: 0, companion_amount_minor: 1000,
-      }).select('id').single()).data!;
-      const mBooking = requireUuid(bk.id, 'managed booking'); created.push({ table: 'bookings', id: mBooking });
-      const inv = (await cAdmin.from('guest_call_invitations').insert({
+      }).select('id').single();
+      expect(bookingResult.error, `managed booking fixture failed: ${JSON.stringify(bookingResult.error)}`).toBeNull();
+      expect(bookingResult.data).not.toBeNull();
+      const mBooking = requireUuid(bookingResult.data?.id, 'managed booking'); created.push({ table: 'bookings', id: mBooking });
+      const invRes = await cAdmin.from('guest_call_invitations').insert({
         booking_id: mBooking, token_hash: `hash_${suffix}_gm`, code_hash: 'x',
-        created_by_account_id: coordAcct, expires_at: new Date(Date.now() + 60 * 60_000).toISOString(),
-      }).select('id').single()).data!;
-      const invitationId = requireUuid(inv.id, 'guest invitation');
+        created_by_account_id: coordAcct, expires_at: new Date(Date.now() + 4 * 60 * 60_000).toISOString(),
+      }).select('id').single();
+      expect(invRes.error, `guest invitation fixture failed: ${JSON.stringify(invRes.error)}`).toBeNull();
+      const invitationId = requireUuid(invRes.data?.id, 'guest invitation');
       const guestIdentity = `guest_member-${invitationId}`;
 
       // Provision the guest into the Member slot (server-derived identity).
       const prov = await rpc(cAdmin, 'ensure_guest_member_participant', { p_booking: mBooking, p_invitation: invitationId, p_identity: guestIdentity });
-      expect(prov.error).toBeNull();
+      expect(prov.error, `ensure_guest_member_participant failed: ${JSON.stringify(prov.error)}`).toBeNull();
+      expect(prov.data).not.toBeNull();
       const mSession = requireUuid(prov.data.call_session_id, 'guest session');
       const room = prov.data.room_name as string;
       expect(room.startsWith('call_')).toBe(true);          // NOT a legacy booking- room
