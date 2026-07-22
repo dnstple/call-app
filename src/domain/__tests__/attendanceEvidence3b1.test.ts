@@ -13,6 +13,7 @@ import { describe, expect, it } from 'vitest';
 
 const ROOT = join(__dirname, '..', '..', '..');
 const M = readFileSync(join(ROOT, 'supabase', 'migrations', '0069_authoritative_call_attendance_evidence.sql'), 'utf-8');
+const M70 = readFileSync(join(ROOT, 'supabase', 'migrations', '0070_normalise_completion_read_model_booleans.sql'), 'utf-8');
 const NOTE = readFileSync(join(ROOT, 'src', 'components', 'CallEvidenceNote.tsx'), 'utf-8');
 const DETAIL = readFileSync(join(ROOT, 'src', 'pages', 'BookingDetail.tsx'), 'utf-8');
 
@@ -233,5 +234,45 @@ describe('frontend — calm, neutral, role-correct evidence wording', () => {
     expect(DETAIL).toContain('ended && eligibleForCompletion && (isCompanionSide || isRequesterSide)');
     // The 0067 acceptance gate is preserved verbatim.
     expect(DETAIL).toContain("const eligibleForCompletion = booking.status === 'confirmed'");
+  });
+});
+
+describe('0070 normalises the completion read-model booleans (additive, narrow)', () => {
+  it('redefines ONLY get_conversation_completion_state and makes no data change', () => {
+    expect((M70.match(/create or replace function/g) ?? [])).toHaveLength(1);
+    expect(M70).toContain('create or replace function public.get_conversation_completion_state(p_booking uuid)');
+    // No unrelated function, no data mutation, PostgREST reload present.
+    expect(M70).not.toMatch(/insert\s+into|update\s+public\.\w+\s+set|delete\s+from/i);
+    expect(M70).not.toMatch(/drop\s+table|alter\s+table/i);
+    expect(M70).toContain("select pg_notify('pgrst', 'reload schema')");
+  });
+  it('makes review_eligible a STRICT boolean (coalesce guards the three-valued AND) and adds review_submitted', () => {
+    expect(M70).toContain("'review_eligible', coalesce(v_role = 'member' and v_b.status = 'confirmed' and v_ended and v_mconf = 'completed', false)");
+    expect(M70).toContain("'review_submitted', v_review_done");
+    // The old nullable expression (bare AND chain in jsonb_build_object) is gone.
+    expect(M70).not.toMatch(/'review_eligible', v_role = 'member'[^,]*v_mconf = 'completed'\)/);
+  });
+  it('preserves role derivation, not_found, authorise-then-recompute, payout redaction and grants', () => {
+    const code = stripSql(M70);
+    expect(M70).toContain('app_private.can_edit_profile(v_b.companion_profile_id)');
+    expect(M70).toContain('app_private.can_act_for_member(v_b.member_profile_id)');
+    expect(M70).toContain('app_private.is_support_admin()');
+    expect(M70).toMatch(/else\s*\n\s*raise exception 'not_found: conversation'/);
+    // Recompute happens AFTER the role check (unrelated callers cannot trigger it).
+    expect(M70.indexOf("raise exception 'not_found: conversation'"))
+      .toBeLessThan(M70.indexOf('perform app_private.recompute_attendance_evidence(p_booking)'));
+    expect(M70).toContain("if v_role = 'companion' then");
+    expect(M70).toContain("'payout_status'");
+    expect(code).not.toMatch(/room_name|stripe|transfer_state/i);      // no leakage
+    expect(M70).toContain('revoke all on function public.get_conversation_completion_state(uuid) from public, anon');
+    expect(M70).toContain('grant execute on function public.get_conversation_completion_state(uuid) to authenticated');
+  });
+  it('is financially inert (reads companion_earnings.state only; no earning/transfer/refund mutation)', () => {
+    const code = stripSql(M70).toLowerCase();
+    for (const bad of ['ensure_companion_earning', 'make_earning_payable', 'companion_transfer_attempts',
+                       'payment_refunds', 'payment_disputes', 'credit_ledger', 'stripe']) {
+      expect(code).not.toContain(bad);
+    }
+    expect(stripSql(M70)).not.toMatch(/insert\s+into\s+public\.companion_earnings|update\s+public\.companion_earnings/i);
   });
 });

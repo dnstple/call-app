@@ -6459,7 +6459,14 @@ describe.skipIf(!enabled)('Stage 3B1 attendance evidence (requires live Supabase
     expect(asMember.payout_status).toBeUndefined();                // Member/Coordinator NEVER
     expect(asMember.companion_connected_seconds).toBeUndefined();
     expect(asCoord.payout_status).toBeUndefined();
-    expect(asComp.review_eligible).toBe(false);                    // review is a member-side action
+    // review_eligible / review_submitted are STRICT booleans for every role
+    // (never null), and false here (no confirmation yet).
+    for (const r of [asComp, asMember, asCoord]) {
+      expect(typeof r.review_eligible).toBe('boolean');
+      expect(r.review_eligible).toBe(false);
+      expect(typeof r.review_submitted).toBe('boolean');
+      expect(r.review_submitted).toBe(false);
+    }
   });
 
   it('25+26. an unrelated account and an anonymous caller receive nothing', async () => {
@@ -6468,15 +6475,24 @@ describe.skipIf(!enabled)('Stage 3B1 attendance evidence (requires live Supabase
     expect((await rpc(client(), 'get_conversation_completion_state', { p_booking: bookingId })).error).not.toBeNull();
   });
 
-  it('27+28. the read model gates review before the Member confirms; the review RPC succeeds after (two-step flow)', async () => {
+  it('27+28. the read model gates review with STRICT booleans through the two-step flow', async () => {
     const { bookingId } = await makeCall({ withOrder: true });          // funded, confirmed, ended
-    // 27: before the Member confirms the outcome, the read model offers no review.
-    expect((await rpc(cMember, 'get_conversation_completion_state', { p_booking: bookingId })).data.review_eligible).toBe(false);
+    // 27: before the Member confirms, review is not offered — as a strict boolean.
+    const before = (await rpc(cMember, 'get_conversation_completion_state', { p_booking: bookingId })).data;
+    expect(before.review_eligible).toBe(false);                        // strict false, never null
+    expect(before.review_submitted).toBe(false);
     // Step 1 — the Member confirms the outcome (existing validated confirmation path).
     expect((await rpc(cMember, 'submit_completion_confirmation', { p_booking: bookingId, p_outcome: 'completed', p_note: null })).error).toBeNull();
-    // 28: the read model now offers review, and Step 2 (the rating RPC) is accepted.
-    expect((await rpc(cMember, 'get_conversation_completion_state', { p_booking: bookingId })).data.review_eligible).toBe(true);
+    const afterConfirm = (await rpc(cMember, 'get_conversation_completion_state', { p_booking: bookingId })).data;
+    expect(afterConfirm.review_eligible).toBe(true);                   // now eligible
+    expect(afterConfirm.review_submitted).toBe(false);                 // not yet submitted
+    // 28: Step 2 (the review RPC) is accepted.
     expect((await rpc(cMember, 'submit_conversation_review', { p_booking: bookingId, p_rating: 5, p_feedback: 'Lovely chat', p_message_idempotency: null })).error).toBeNull();
+    const afterReview = (await rpc(cMember, 'get_conversation_completion_state', { p_booking: bookingId })).data;
+    expect(afterReview.review_submitted).toBe(true);                   // a review now exists
+    // Documented post-submission value: review_eligible STAYS true — the Member's
+    // confirmation still stands, so an edit/re-review remains permitted.
+    expect(afterReview.review_eligible).toBe(true);
   });
 
   it('29+30. aggregation is idempotent and concurrency-safe (one deterministic result)', async () => {
