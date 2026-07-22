@@ -80,16 +80,24 @@ describe('0064 eligibility + ingestion are gated, deterministic and ordering-saf
     expect(e).toContain("v_b.status <> 'confirmed'");
     expect(e).toContain("'too_early'");
     expect(e).toContain("'join_window_closed'");
+    // Fails CLOSED if the config row is missing (no permissive always-open window).
+    expect(e).toContain("if v_cfg.id is null then");
+    expect(e).toMatch(/v_cfg\.id is null then[\s\S]*?'configuration_missing'/);
   });
-  it('ingestion is idempotent by provider_event_id and ordering-safe by provider time', () => {
+  it('ingestion is idempotent, session-locked and ordering-safe', () => {
     const i = fn('app_private.ingest_call_event');
     expect(i).toContain('on conflict (provider_event_id) do nothing');
     expect(i).toContain("return jsonb_build_object('result', 'duplicate_ignored'");
+    // The session row is LOCKED FOR UPDATE so concurrent events apply serially.
+    expect(i).toContain('where room_name = p_room for update');
     // unknown room + unexpected identity are safe ignores.
     expect(i).toContain("'ignored_unknown_room'");
     expect(i).toContain("'ignored_unexpected_identity'");
     // Late older events cannot reverse a newer connection state.
     expect(i).toContain('v_evt_time >= coalesce(last_event_at, v_evt_time)');
+    // A late join cannot reactivate a terminal (ended/failed) session.
+    expect(i).toContain("when v_session.state in ('ended', 'failed') then currently_connected");
+    expect(i).toContain("if v_session.state not in ('ended', 'failed') then");
     // both_connected_at set once; abort counted; camera/screen flagged, not stored.
     expect(i).toContain('both_connected_at = coalesce(both_connected_at, v_evt_time)');
     expect(i).toContain('connection_abort_count = connection_abort_count + 1');

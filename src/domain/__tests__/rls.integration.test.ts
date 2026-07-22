@@ -5760,7 +5760,39 @@ describe.skipIf(!enabled)('3A LiveKit audio foundations (requires live Supabase)
     expect((await rpc(cAdmin, 'ingest_call_event', { p_provider_event_id: `ev-bad-${suffix}`, p_event_type: 'participant_joined', p_room: room, p_identity: 'account:00000000-0000-0000-0000-000000000000', p_provider_created_at: t1 })).data.result).toBe('ignored_unexpected_identity');
   });
 
-  it('18. no call event changes the booking status or creates any money row', async () => {
+  it('12. rescheduling updates the session snapshot in place — one session, same two participants, no Coordinator', async () => {
+    const sess = (await cAdmin.from('call_sessions').select('id').eq('booking_id', bookingId).single()).data!;
+    // Move the accepted interval (still inside a joinable window).
+    const newStart = new Date(Date.now() - 3 * 60_000); const newEnd = new Date(newStart.getTime() + 30 * 60_000);
+    await cAdmin.from('bookings').update({ starts_at: newStart.toISOString(), ends_at: newEnd.toISOString() }).eq('id', bookingId);
+    const r = await rpc(cAdmin, 'ensure_call_session', { p_booking: bookingId });
+    expect(r.data.call_session_id).toBe(sess.id); // NOT a second session
+    const s2 = (await cAdmin.from('call_sessions').select('scheduled_start, scheduled_end, state').eq('id', sess.id).single()).data!;
+    if (s2.state === 'pending') {
+      expect(new Date(s2.scheduled_start as string).getTime()).toBe(newStart.getTime()); // snapshot re-synced
+    }
+    const sessions = (await cAdmin.from('call_sessions').select('id').eq('booking_id', bookingId)).data ?? [];
+    expect(sessions).toHaveLength(1);
+    const parts = (await cAdmin.from('call_participants').select('account_id, booking_role').eq('call_session_id', sess.id)).data ?? [];
+    expect(parts).toHaveLength(2);
+    expect(parts.some((p) => p.account_id === coordAcct)).toBe(false);
+  });
+
+  it('18. concurrent duplicate deliveries increment exactly once (session lock + unique event id)', async () => {
+    const sess = (await cAdmin.from('call_sessions').select('id, room_name').eq('booking_id', bookingId).single()).data!;
+    const room = sess.room_name as string; const evId = `ev-conc-${suffix}`; const t = new Date().toISOString();
+    const before = (await cAdmin.from('call_participants').select('join_count').eq('call_session_id', sess.id).eq('booking_role', 'companion').single()).data!.join_count;
+    const [a, b] = await Promise.all([
+      rpc(cAdmin, 'ingest_call_event', { p_provider_event_id: evId, p_event_type: 'participant_joined', p_room: room, p_identity: compIdentity(), p_provider_created_at: t }),
+      rpc(cAdmin, 'ingest_call_event', { p_provider_event_id: evId, p_event_type: 'participant_joined', p_room: room, p_identity: compIdentity(), p_provider_created_at: t }),
+    ]);
+    const results = [a.data.result, b.data.result].sort();
+    expect(results).toEqual(['duplicate_ignored', 'participant_joined']); // exactly one applied
+    const after = (await cAdmin.from('call_participants').select('join_count').eq('call_session_id', sess.id).eq('booking_role', 'companion').single()).data!.join_count;
+    expect(after).toBe(before + 1); // never double-counted
+  });
+
+  it('20. no call event changes the booking status or creates any money row', async () => {
     const status = (await cAdmin.from('bookings').select('status').eq('id', bookingId).single()).data!.status;
     expect(status).toBe('confirmed'); // ingestion never completes the booking
     expect((await cAdmin.from('companion_earnings').select('id').eq('booking_id', bookingId)).data ?? []).toHaveLength(0);

@@ -178,6 +178,12 @@ begin
   end if;
 
   select * into v_cfg from public.call_config where id;
+  -- Fail CLOSED if the single configuration row is somehow absent: never fall
+  -- through to a permissive (always-open) window.
+  if v_cfg.id is null then
+    return jsonb_build_object('eligible', false, 'reason', 'configuration_missing',
+      'your_role', v_role, 'scheduled_start', v_b.starts_at, 'scheduled_end', v_b.ends_at);
+  end if;
   v_opens := v_b.starts_at - make_interval(mins => v_cfg.join_opens_before_start_minutes);
   v_closes := v_b.ends_at + make_interval(mins => v_cfg.join_closes_after_end_minutes);
   select id into v_session from public.call_sessions where booking_id = v_b.id;
@@ -303,9 +309,12 @@ begin
     return jsonb_build_object('result', 'duplicate_ignored', 'event_id', p_provider_event_id);
   end if;
 
-  -- Locate the session by EXACT opaque room name. Unknown rooms are a safe
-  -- ignore — never an authorisation to fabricate a session.
-  select * into v_session from public.call_sessions where room_name = p_room;
+  -- Locate the session by EXACT opaque room name and LOCK it FOR UPDATE, so all
+  -- events for one session apply serially. This makes the aggregate reads below
+  -- (both_connected, currently_connected) consistent under concurrent deliveries
+  -- rather than racing on uncommitted rows. Unknown rooms are a safe ignore —
+  -- never an authorisation to fabricate a session.
+  select * into v_session from public.call_sessions where room_name = p_room for update;
   if v_session.id is null then
     update public.call_provider_events
       set processed_at = now(), result = 'ignored_unknown_room'
@@ -337,12 +346,16 @@ begin
     v_result := 'room_activated';
 
   elsif p_event_type = 'participant_joined' then
+    -- A late join after a terminal room_finished/failure must NOT reactivate the
+    -- call's live state (the session is locked above, so state is current).
     update public.call_participants set
       first_joined_at = coalesce(first_joined_at, v_evt_time),
       last_joined_at = greatest(coalesce(last_joined_at, v_evt_time), v_evt_time),
       join_count = join_count + 1,                         -- once per unique event (idempotency-gated)
-      -- Only the NEWEST participant event flips live state (late events cannot reverse).
-      currently_connected = case when v_evt_time >= coalesce(last_event_at, v_evt_time) then true else currently_connected end,
+      -- Only the NEWEST participant event flips live state, and never on a terminal session.
+      currently_connected = case
+        when v_session.state in ('ended', 'failed') then currently_connected
+        when v_evt_time >= coalesce(last_event_at, v_evt_time) then true else currently_connected end,
       last_event_at = greatest(coalesce(last_event_at, v_evt_time), v_evt_time),
       updated_at = now()
       where id = v_part.id;
@@ -352,12 +365,15 @@ begin
           last_provider_event_at = greatest(coalesce(last_provider_event_at, v_evt_time), v_evt_time),
           updated_at = now()
       where id = v_session.id;
-    -- both_connected_at set ONCE when both expected participants are live.
-    select count(*) = 2 and bool_and(currently_connected) into v_both
-      from public.call_participants where call_session_id = v_session.id;
-    if v_both then
-      update public.call_sessions set both_connected_at = coalesce(both_connected_at, v_evt_time), updated_at = now()
-        where id = v_session.id;
+    -- both_connected_at set ONCE when both expected participants are live — never
+    -- on a terminal session.
+    if v_session.state not in ('ended', 'failed') then
+      select count(*) = 2 and bool_and(currently_connected) into v_both
+        from public.call_participants where call_session_id = v_session.id;
+      if v_both then
+        update public.call_sessions set both_connected_at = coalesce(both_connected_at, v_evt_time), updated_at = now()
+          where id = v_session.id;
+      end if;
     end if;
     v_result := 'participant_joined';
 
