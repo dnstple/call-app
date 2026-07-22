@@ -10,7 +10,6 @@ import ProfileDetail from './pages/ProfileDetail';
 import MyProfile from './pages/MyProfile';
 import Conversations from './pages/Conversations';
 import BookingDetail from './pages/BookingDetail';
-const CallRoom = lazy(() => import('./pages/CallRoom'));
 const CallPage = lazy(() => import('./pages/CallPage'));
 const PlanMemberProfile = lazy(() => import('./pages/PlanMemberProfile'));
 const MessagesPage = lazy(() => import('./pages/MessagesPage'));
@@ -149,6 +148,11 @@ function PlanMemberRedirect() {
   const { planId } = useParams();
   return <Navigate to={`/conversations/plans/${planId}/member`} replace />;
 }
+/** Legacy 2F1 call room is retired: send old /calls links to the Stage 3A flow. */
+function CallRedirect() {
+  const { bookingId } = useParams();
+  return <Navigate to={`/conversations/${bookingId}/call`} replace />;
+}
 
 function AppRoutes() {
   return (
@@ -209,8 +213,8 @@ function AppRoutes() {
                 <Route path="/conversations/:bookingId" element={<BookingDetail />} />
                 {/* Stage 3A — secure audio call for the two booked participants. */}
                 <Route path="/conversations/:bookingId/call" element={<CallPage />} />
-                {/* Documented boundary for in-app calling (not built yet). */}
-                <Route path="/calls/:bookingId" element={<CallRoom />} />
+                {/* Legacy 2F1 call room retired — redirect to the Stage 3A flow. */}
+                <Route path="/calls/:bookingId" element={<CallRedirect />} />
                 <Route path="/messages" element={<MessagesPage />} />
                 <Route path="/messages/:conversationId" element={<MessagesPage />} />
                 {/* Plans are unified into Conversations; old links keep working. */}

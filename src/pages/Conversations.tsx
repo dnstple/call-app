@@ -144,7 +144,7 @@ export function AgendaRow({ booking, viewerRole, needsAction, highlight, softene
           className="btn btn-primary btn-small"
           role="link"
           aria-label="Join the call"
-          onClick={(e) => { e.stopPropagation(); navigate(`/calls/${booking.id}`); }}
+          onClick={(e) => { e.stopPropagation(); navigate(`/conversations/${booking.id}/call`); }}
         >
           Join
         </span>

@@ -93,13 +93,19 @@ async function handleGuestJoin(body: Record<string, unknown>): Promise<Response>
   const serverUrl = Deno.env.get('LIVEKIT_URL');
   if (!apiKey || !apiSecret || !serverUrl) return json({ state: 'invalid' }, 200);
 
+  // Join the SAME opaque call-session room as the authenticated Companion, so a
+  // managed (guest) Member and the Companion share one room. Falls back to the
+  // legacy booking- room only if the session cannot be provisioned.
+  const { data: sessionRes } = await admin.rpc('ensure_call_session', { p_booking: booking.id });
+  const callRoom = (sessionRes as { room_name?: string } | null)?.room_name ?? `booking-${booking.id}`;
+
   const token = new AccessToken(apiKey, apiSecret, {
     identity: `guest_member-${r.invitation_id}`,
     name: 'Guest',
     ttl: GUEST_TTL_SECONDS,
   });
   token.addGrant({
-    room: `booking-${booking.id}`,
+    room: callRoom,
     roomJoin: true,
     canPublish: true,
     canSubscribe: true,
@@ -110,7 +116,7 @@ async function handleGuestJoin(body: Record<string, unknown>): Promise<Response>
     state: 'joinable',
     serverUrl,
     token: await token.toJwt(),
-    room: `booking-${booking.id}`,
+    room: callRoom,
     viewerSide: 'guest_member',
   }, 200);
 }

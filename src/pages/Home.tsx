@@ -264,8 +264,8 @@ export default function Home() {
               · {hero.duration_minutes} minutes · <Countdown to={hero.starts_at} />
             </p>
             <div className="row wrap" style={{ gap: 8 }}>
-              <Link to={`/calls/${hero.id}`} className="btn btn-primary btn-small">
-                <Phone size={16} aria-hidden="true" /> {me.role === 'companion' ? 'Join when open' : 'Open call room'}
+              <Link to={`/conversations/${hero.id}/call`} className="btn btn-primary btn-small">
+                <Phone size={16} aria-hidden="true" /> Join the audio call
               </Link>
               <Link to={`/conversations/${hero.id}`} className="btn btn-secondary btn-small">
                 Manage conversation

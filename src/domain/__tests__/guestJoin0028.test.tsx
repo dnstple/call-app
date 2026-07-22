@@ -213,7 +213,12 @@ describe('0028 server contract', () => {
     expect(guestBranch).toContain('p_token: invitationToken');
     expect(guestBranch).not.toContain('accessCode');
     expect(guestBranch).not.toContain('p_code');
-    expect(guestBranch).toContain('room: `booking-${booking.id}`');
+    // Stage 3A: the guest joins the SAME opaque call-session room as the
+    // Companion (via ensure_call_session), so a managed Member and Companion
+    // share one room — falling back to the legacy booking- room only if the
+    // session cannot be provisioned.
+    expect(guestBranch).toContain("rpc('ensure_call_session', { p_booking: booking.id })");
+    expect(guestBranch).toContain('room: callRoom');
     expect(guestBranch).toContain('guest_member-');
     // The narrow grant is unchanged.
     expect(guestBranch).toContain('canPublishData: false');
