@@ -5173,3 +5173,196 @@ describe.skipIf(!enabled)('2G6E-B dispute deadline alerts (requires live Supabas
     expect(after.data.escalation_active).toBe(false); // no longer actionable
   });
 });
+
+/* ============================================================
+ * 2G6E-C — financial reconciliation (live, fixture-scoped). Findings are DETECTED
+ * against synthetic mismatched rows; no money is moved and no global transfer/
+ * refund worker is invoked. Runs (immutable) are never deleted; only fixture
+ * findings/orders/refunds/webhooks are cleaned. Historical runs are retained.
+ * ============================================================ */
+describe.skipIf(!enabled)('2G6E-C financial reconciliation (requires live Supabase)', () => {
+  let cAdmin: SupabaseClient; let cfsup: SupabaseClient; let cfc: SupabaseClient;
+  let cfsupId: string; let cfcId: string;
+  const orders: string[] = []; const refunds: string[] = []; const events: string[] = [];
+
+  const reconcile = () => cAdmin.rpc('run_financial_reconciliation', { p_limit: 5000 });
+  const findingByKey = async (key: string) =>
+    (await cAdmin.from('financial_reconciliation_findings').select('*').eq('finding_key', key).maybeSingle()).data;
+
+  async function mkOrder(label: string, withPi: boolean): Promise<string> {
+    const ins = await cAdmin.from('payment_orders').insert({
+      provider: 'stripe_test', coordinator_account_id: cfcId, order_type: 'one_off', status: 'succeeded',
+      subtotal_minor: 1000, discount_minor: 0, service_fee_minor: 0, credit_applied_minor: 0,
+      card_amount_minor: 1000, total_minor: 1000, commission_rate_pct: 0, commission_minor: 0,
+      stripe_payment_intent_id: withPi ? `pi_frec_${label}_${suffix}` : null,
+      idempotency_key: `frec-o-${label}-${suffix}`,
+    }).select('id').single();
+    if (ins.error) throw new Error(`mkOrder ${label}: ${ins.error.message}`);
+    orders.push(ins.data!.id as string);
+    return ins.data!.id as string;
+  }
+
+  beforeAll(async () => {
+    cAdmin = adminClient();
+    cfsup = await signedInClient(`rls-cfsup-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    cfc = await signedInClient(`rls-cfc-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    cfsupId = (await cfsup.auth.getUser()).data.user!.id;
+    cfcId = (await cfc.auth.getUser()).data.user!.id;
+    if ((await cfsup.rpc('ensure_current_account')).error) throw new Error('ensure cfsup');
+    if ((await cfc.rpc('ensure_current_account')).error) throw new Error('ensure cfc');
+    if ((await cAdmin.from('support_admins').upsert({ account_id: cfsupId }, { onConflict: 'account_id', ignoreDuplicates: true })).error) throw new Error('support');
+  }, 120_000);
+
+  afterAll(async () => {
+    // Remove ONLY fixture findings (by our entities) + their audit/notifications;
+    // NEVER delete historical runs. Then refunds → orders → webhooks → support.
+    const fids: string[] = [];
+    if (orders.length || refunds.length) {
+      const filt: string[] = [];
+      if (orders.length) filt.push(`order_id.in.(${orders.join(',')})`);
+      if (refunds.length) filt.push(`refund_id.in.(${refunds.join(',')})`);
+      const rows = (await cAdmin.from('financial_reconciliation_findings').select('id').or(filt.join(','))).data ?? [];
+      fids.push(...rows.map((r) => r.id as string));
+    }
+    for (const ev of events) {
+      const wf = (await cAdmin.from('financial_reconciliation_findings').select('id').eq('finding_key', `webhook_processed_no_result:${ev}`)).data ?? [];
+      fids.push(...wf.map((r) => r.id as string));
+    }
+    if (fids.length) {
+      await cAdmin.from('financial_reconciliation_audit').delete().in('finding_id', fids);
+      await cAdmin.from('notifications').delete().in('finding_id', fids);
+      await cAdmin.from('financial_reconciliation_findings').delete().in('id', fids);
+    }
+    if (refunds.length) await cAdmin.from('payment_refunds').delete().in('id', refunds);
+    if (orders.length) await cAdmin.from('payment_orders').delete().in('id', orders);
+    if (events.length) await cAdmin.from('stripe_webhook_events').delete().in('id', events);
+    await cAdmin.from('support_admins').delete().eq('account_id', cfsupId);
+  });
+
+  it('a consistent order produces no missing-PI finding; a mismatched one produces exactly one', async () => {
+    const good = await mkOrder('good', true);   // succeeded WITH a PaymentIntent → consistent
+    const bad = await mkOrder('bad', false);    // succeeded, card-funded, NO PaymentIntent → finding
+    const res = await reconcile();
+    expect(res.error).toBeNull();
+    expect(res.data).toBeTruthy();
+    expect(await findingByKey(`order_succeeded_missing_pi:${good}`)).toBeNull();
+    const f = await findingByKey(`order_succeeded_missing_pi:${bad}`);
+    expect(f).toBeTruthy();
+    expect(f.severity).toBe('warning');
+    expect(f.status).toBe('open');
+    expect(f.occurrence_count).toBe(1);
+  });
+
+  it('re-running refreshes the finding (occurrence++) rather than duplicating it', async () => {
+    const bad = await mkOrder('dup', false);
+    expect((await reconcile()).error).toBeNull();
+    const first = await findingByKey(`order_succeeded_missing_pi:${bad}`);
+    expect(first.occurrence_count).toBe(1);
+    expect((await reconcile()).error).toBeNull();
+    const rows = (await cAdmin.from('financial_reconciliation_findings').select('id, occurrence_count').eq('finding_key', `order_succeeded_missing_pi:${bad}`)).data ?? [];
+    expect(rows).toHaveLength(1); // deterministic dedupe — never duplicated
+    expect(rows[0].occurrence_count).toBeGreaterThan(1);
+  });
+
+  it('concurrent reconciliation creates exactly one deterministic finding', async () => {
+    const bad = await mkOrder('conc', false);
+    const [r1, r2] = await Promise.all([reconcile(), reconcile()]);
+    expect(r1.error).toBeNull();
+    expect(r2.error).toBeNull();
+    const rows = (await cAdmin.from('financial_reconciliation_findings').select('id').eq('finding_key', `order_succeeded_missing_pi:${bad}`)).data ?? [];
+    expect(rows).toHaveLength(1);
+  });
+
+  it('a corrected mismatch clears the finding but retains its history', async () => {
+    const bad = await mkOrder('clear', false);
+    expect((await reconcile()).error).toBeNull();
+    expect((await findingByKey(`order_succeeded_missing_pi:${bad}`)).status).toBe('open');
+    // Correct the underlying row, then reconcile.
+    await cAdmin.from('payment_orders').update({ stripe_payment_intent_id: `pi_fixed_${suffix}` }).eq('id', bad);
+    expect((await reconcile()).error).toBeNull();
+    const f = await findingByKey(`order_succeeded_missing_pi:${bad}`);
+    expect(f.status).toBe('cleared');
+    expect(f.cleared_at).not.toBeNull();
+    // History retained: created + cleared audit events survive.
+    const au = (await cAdmin.from('financial_reconciliation_audit').select('action_type').eq('finding_id', f.id)).data ?? [];
+    expect(au.some((a) => a.action_type === 'created')).toBe(true);
+    expect(au.some((a) => a.action_type === 'cleared')).toBe(true);
+  });
+
+  it('a critical missing-refund-id finding notifies support (recipient-deduped) and is not duplicated on re-run', async () => {
+    const o = await mkOrder('refund', true);
+    const rf = await cAdmin.from('payment_refunds').insert({
+      payment_order_id: o, payer_account_id: cfcId, remedy_minor: 500, credit_restore_minor: 0, card_refund_minor: 500,
+      state: 'succeeded', stripe_refund_id: null, idempotency_key: `frec-r-${suffix}`,
+    }).select('id').single();
+    expect(rf.error).toBeNull();
+    refunds.push(rf.data!.id as string);
+    expect((await reconcile()).error).toBeNull();
+    const f = await findingByKey(`refund_missing_provider_id:${rf.data!.id}`);
+    expect(f).toBeTruthy();
+    expect(f.severity).toBe('critical');
+    // Support pool member got exactly one notification for this finding.
+    const notifCount = async () => ((await cAdmin.from('notifications').select('id').eq('finding_id', f.id).eq('user_id', cfsupId)).data ?? []).length;
+    expect(await notifCount()).toBe(1);
+    expect((await reconcile()).error).toBeNull();
+    expect(await notifCount()).toBe(1); // deduped per recipient on repeated runs
+  });
+
+  it('support can read, acknowledge, investigate and resolve a finding; recheck moves no money', async () => {
+    const bad = await mkOrder('ops', false);
+    const before = (await cAdmin.from('payment_orders').select('card_amount_minor, total_minor').eq('id', bad).single()).data!;
+    expect((await reconcile()).error).toBeNull();
+    const f = await findingByKey(`order_succeeded_missing_pi:${bad}`);
+    // Support-only detail.
+    const det = await cfsup.rpc('support_reconciliation_detail', { p_finding: f.id });
+    expect(det.error).toBeNull();
+    expect(det.data.finding.id).toBe(f.id);
+    // Assign + acknowledge + investigate + resolve (reason required).
+    expect((await cfsup.rpc('support_assign_finding', { p_finding: f.id })).error).toBeNull();
+    expect((await cfsup.rpc('support_update_finding_status', { p_finding: f.id, p_status: 'acknowledged', p_reason: null })).error).toBeNull();
+    expect((await cfsup.rpc('support_update_finding_status', { p_finding: f.id, p_status: 'investigating', p_reason: null })).error).toBeNull();
+    expect((await cfsup.rpc('support_update_finding_status', { p_finding: f.id, p_status: 'resolved', p_reason: '' })).error).not.toBeNull(); // reason required
+    expect((await cfsup.rpc('support_update_finding_status', { p_finding: f.id, p_status: 'resolved', p_reason: 'known test row' })).error).toBeNull();
+    const resolved = (await cAdmin.from('financial_reconciliation_findings').select('status, resolved_by').eq('id', f.id).single()).data!;
+    expect(resolved.status).toBe('resolved');
+    expect(resolved.resolved_by).toBe(cfsupId);
+    // Recheck re-runs detection but changes NO financial amount / provider state.
+    expect((await cfsup.rpc('support_recheck_finding', { p_finding: f.id })).error).toBeNull();
+    const after = (await cAdmin.from('payment_orders').select('card_amount_minor, total_minor').eq('id', bad).single()).data!;
+    expect(after.card_amount_minor).toBe(before.card_amount_minor);
+    expect(after.total_minor).toBe(before.total_minor);
+  });
+
+  it('a processed webhook with no result is detected and clears when the result is set', async () => {
+    const ev = `evt_frec_${suffix}`;
+    events.push(ev);
+    expect((await cAdmin.from('stripe_webhook_events').insert({
+      id: ev, event_type: 'charge.updated', payload: {}, status: 'processed', result: null,
+    })).error).toBeNull();
+    expect((await reconcile()).error).toBeNull();
+    expect((await findingByKey(`webhook_processed_no_result:${ev}`)).status).toBe('open');
+    await cAdmin.from('stripe_webhook_events').update({ result: 'reconciled' }).eq('id', ev);
+    expect((await reconcile()).error).toBeNull();
+    expect((await findingByKey(`webhook_processed_no_result:${ev}`)).status).toBe('cleared');
+  });
+
+  it('normal users and anon cannot read/mutate findings, run reconciliation, or write the tables', async () => {
+    const bad = await mkOrder('sec', false);
+    expect((await reconcile()).error).toBeNull();
+    const f = await findingByKey(`order_succeeded_missing_pi:${bad}`);
+    // Support-gated readers/actions refuse a normal user + anon.
+    expect((await cfc.rpc('support_reconciliation_queue')).error).not.toBeNull();
+    expect((await cfc.rpc('support_reconciliation_detail', { p_finding: f.id })).error).not.toBeNull();
+    expect((await cfc.rpc('support_update_finding_status', { p_finding: f.id, p_status: 'resolved', p_reason: 'x' })).error).not.toBeNull();
+    expect((await cfc.rpc('support_recheck_finding', { p_finding: f.id })).error).not.toBeNull();
+    expect((await client().rpc('support_reconciliation_queue')).error).not.toBeNull();
+    // The processor is service-role only / app_private → not callable by a client.
+    expect((await cfc.rpc('run_financial_reconciliation', { p_limit: 10 })).error).not.toBeNull();
+    expect((await cfc.rpc('process_financial_reconciliation', { p_limit: 10 })).error).not.toBeNull();
+    // Direct table reads/writes denied (RLS, no policy).
+    expect((await cfc.from('financial_reconciliation_findings').select('id')).data ?? []).toHaveLength(0);
+    expect((await cfc.from('financial_reconciliation_findings').insert({
+      finding_key: `forge-${suffix}`, finding_type: 'x', severity: 'info', primary_entity_type: 'x', primary_entity_id: bad,
+    })).error).not.toBeNull();
+  });
+});

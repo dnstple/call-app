@@ -21,6 +21,8 @@ const InternalIssues = lazy(() => import('./pages/InternalIssues'));
 const InternalIssueDetail = lazy(() => import('./pages/InternalIssueDetail'));
 const InternalDisputes = lazy(() => import('./pages/InternalDisputes'));
 const InternalDisputeDetail = lazy(() => import('./pages/InternalDisputeDetail'));
+const InternalReconciliation = lazy(() => import('./pages/InternalReconciliation'));
+const InternalReconciliationDetail = lazy(() => import('./pages/InternalReconciliationDetail'));
 import Settings from './pages/Settings';
 import AvailabilityRates from './pages/AvailabilityRates';
 import SignupWizard from './signup/SignupWizard';
@@ -221,6 +223,9 @@ function AppRoutes() {
                 {/* 2G6E-A internal dispute operations — DB-role protected. */}
                 <Route path="/internal/disputes" element={<SupportOnly><InternalDisputes /></SupportOnly>} />
                 <Route path="/internal/disputes/:disputeId" element={<SupportOnly><InternalDisputeDetail /></SupportOnly>} />
+                {/* 2G6E-C internal financial reconciliation — DB-role protected. */}
+                <Route path="/internal/finance/reconciliation" element={<SupportOnly><InternalReconciliation /></SupportOnly>} />
+                <Route path="/internal/finance/reconciliation/:findingId" element={<SupportOnly><InternalReconciliationDetail /></SupportOnly>} />
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/availability" element={<AvailabilityRates />} />
                 <Route
