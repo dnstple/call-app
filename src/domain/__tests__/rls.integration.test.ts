@@ -6443,16 +6443,57 @@ describe.skipIf(!enabled)('Stage 3B1 attendance evidence (requires live Supabase
     expect(rows[0].companion_connected_seconds).toBe(first);      // unchanged
   });
 
-  it('31. rescheduling uses the updated booking/session window', async () => {
-    const { bookingId, sessionId } = await makeCall();
-    const newStart = new Date(Date.now() - 200 * 60_000);         // move well back
+  it('31. rescheduling BEFORE finalisation moves the evidence window to the new schedule', async () => {
+    const { bookingId } = await makeCall({ startAgoMin: -120 });   // starts in ~2h → not finalised
+    const newStart = new Date(Date.now() + 300 * 60_000);          // reschedule further out
     const newEnd = new Date(newStart.getTime() + 30 * 60_000);
     await cAdmin.from('bookings').update({ starts_at: newStart.toISOString(), ends_at: newEnd.toISOString() }).eq('id', bookingId);
-    await rpc(cAdmin, 'ensure_call_session', { p_booking: bookingId });   // realign the snapshot
+    await rpc(cAdmin, 'ensure_call_session', { p_booking: bookingId });   // realigns the pending snapshot
     await rpc(cAdmin, 'recompute_attendance_evidence', { p_booking: bookingId });
     const ev = await evidenceOf(bookingId);
-    expect(new Date(ev!.window_opens_at as string).getTime()).toBeLessThan(newStart.getTime() + 1);
-    expect(sessionId).toBeTruthy();
+    expect(ev!.finalised).toBe(false);                             // still pending → window may move
+    const expectedOpens = newStart.getTime() - 10 * 60_000;        // opens 10 min before the NEW start
+    expect(Math.abs(new Date(ev!.window_opens_at as string).getTime() - expectedOpens)).toBeLessThan(60_000);
+  });
+
+  it('D1. DETERMINISM: while the window is still open, an unterminated presence is PENDING and counts zero', async () => {
+    // A live, in-window call: companion joined 1 min ago and has not left. The
+    // open segment must NOT grow with now(); evidence stays pending, seconds = 0.
+    const { bookingId, roomName } = await makeCall({ startAgoMin: 2 });   // window open now
+    await ing(roomName!, `c-j-${bookingId}`, 'participant_joined', compId(), -60_000);   // join, no leave
+    const ev = await evidenceOf(bookingId);
+    expect(ev!.finalised).toBe(false);
+    expect(ev!.evidence_quality).toBe('pending_call_window');
+    expect(ev!.had_open_segment).toBe(true);
+    expect(ev!.companion_connected_seconds).toBe(0);              // open presence never counted while pending
+    const st = await rpc(cComp, 'get_conversation_completion_state', { p_booking: bookingId });
+    expect(st.data.completion_state).toBe('call_window_open');
+    expect(st.data.evidence_processing).toBe(true);
+    expect(st.data.evidence_classification).toBe('pending');
+  });
+
+  it('D2. HISTORICAL STABILITY: a later global call_config change does not rewrite a finalised call', async () => {
+    const { bookingId, roomName } = await makeCall();             // past window → finalises
+    await ing(roomName!, `c-j-${bookingId}`, 'participant_joined', compId(), -65 * 60_000);
+    await ing(roomName!, `c-l-${bookingId}`, 'participant_left', compId(), -55 * 60_000);   // 600 s
+    const before = await evidenceOf(bookingId);
+    expect(before!.finalised).toBe(true);
+    const cfg = (await cAdmin.from('call_config').select('join_opens_before_start_minutes, join_closes_after_end_minutes').eq('id', true).single()).data!;
+    try {
+      // Widen the GLOBAL window dramatically, then recompute the OLD call.
+      await cAdmin.from('call_config').update({ join_opens_before_start_minutes: 120, join_closes_after_end_minutes: 240 }).eq('id', true);
+      await rpc(cAdmin, 'recompute_attendance_evidence', { p_booking: bookingId });
+      const after = await evidenceOf(bookingId);
+      expect(after!.companion_connected_seconds).toBe(before!.companion_connected_seconds);   // frozen
+      expect(after!.window_opens_at).toBe(before!.window_opens_at);                            // frozen
+      expect(after!.window_closes_at).toBe(before!.window_closes_at);
+      expect(after!.evidence_classification).toBe(before!.evidence_classification);
+    } finally {
+      await cAdmin.from('call_config').update({
+        join_opens_before_start_minutes: cfg.join_opens_before_start_minutes,
+        join_closes_after_end_minutes: cfg.join_closes_after_end_minutes,
+      }).eq('id', true);
+    }
   });
 
   it('32+33. support diagnostics are support-only and contain no secrets', async () => {

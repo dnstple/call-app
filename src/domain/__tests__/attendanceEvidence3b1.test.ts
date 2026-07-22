@@ -59,12 +59,28 @@ describe('financial firewall — 0069 moves no money and calls no financial path
     expect(M_CODE).not.toMatch(/insert\s+into\s+public\.(companion_earnings|payment_orders|companion_transfer_attempts|payment_refunds)/i);
     expect(M_CODE).not.toMatch(/update\s+public\.(companion_earnings|payment_orders)\s+set/i);
   });
-  it('the evidence trigger is EVIDENCE-ONLY (recompute, never a financial call)', () => {
-    const t = fn('app_private.trg_sync_attendance_evidence');
-    expect(t).toContain('app_private.recompute_attendance_evidence');
-    expect(t).not.toMatch(/earning|transfer|refund|payable/i);
-    expect(M).toContain('after insert or update on public.call_provider_events');
-    expect(M).toContain('when (new.call_session_id is not null)');
+  it('every evidence trigger is EVIDENCE-ONLY (recompute, never a financial call) and cannot recurse', () => {
+    for (const t of ['app_private.trg_evidence_from_event', 'app_private.trg_evidence_from_session',
+                     'app_private.trg_evidence_from_participant']) {
+      const body = fn(t);
+      expect(body).toContain('app_private.recompute_attendance_evidence');
+      expect(body).not.toMatch(/earning|transfer|refund|payable/i);
+    }
+    // No trigger writes to the tables it fires on → no recompute cycle.
+    expect(M).not.toMatch(/create trigger[\s\S]*?on public\.call_attendance_evidence/i);
+  });
+  it('recomputation entry points cover events, the session snapshot and participant mapping', () => {
+    // Provider events (attach only, evidence-relevant types); session snapshot
+    // (reschedule/room-finished/state — the window-closes-with-no-event case);
+    // participant identity mapping (guest materialisation).
+    expect(M).toContain('after insert on public.call_provider_events');
+    expect(M).toContain('after update on public.call_provider_events');
+    expect(M).toContain('old.call_session_id is distinct from new.call_session_id');
+    expect(M).toContain('after insert on public.call_sessions');
+    expect(M).toContain('after update on public.call_sessions');
+    expect(M).toContain('old.room_finished_at is distinct from new.room_finished_at');
+    expect(M).toContain('after insert on public.call_participants');
+    expect(M).toContain('old.provider_identity is distinct from new.provider_identity');
   });
 });
 
@@ -78,9 +94,13 @@ describe('evidence model — required shape', () => {
       'member_join_count', 'member_ever_connected',
       'overlap_seconds', 'both_connected', 'evidence_version',
       'last_provider_event_id', 'last_provider_event_at', 'calculated_at',
-      'window_opens_at', 'window_closes_at']) {
+      'window_opens_at', 'window_closes_at',
+      'finalised', 'evidence_asof_at', 'had_open_segment']) {
       expect(M).toContain(col);
     }
+    // RLS is enabled AND forced (no policies ⇒ every direct client access denied).
+    expect(M).toContain('alter table public.call_attendance_evidence enable row level security');
+    expect(M).toContain('alter table public.call_attendance_evidence force row level security');
     for (const q of ['complete', 'partial', 'no_provider_events', 'inconsistent_provider_events',
                      'outside_eligible_booking', 'pending_call_window']) {
       expect(M).toContain(`'${q}'`);
@@ -98,11 +118,28 @@ describe('aggregation — deterministic, window-bounded, overlap-aware', () => {
     expect(r).toContain('for update');
     expect(M).toContain('on conflict (booking_id) do update set');
   });
-  it('bounds the window from the SESSION snapshot via call_config (reschedule-aware)', () => {
+  it('bounds the window from the SESSION snapshot via call_config (reschedule-aware) and FREEZES it once finalised', () => {
     expect(r).toContain('v_s.scheduled_start - make_interval(mins => coalesce(v_cfg.join_opens_before_start_minutes');
     expect(r).toContain('v_s.scheduled_end + make_interval(mins => coalesce(v_cfg.join_closes_after_end_minutes');
-    // Missing-leave segments are bounded (never open-ended).
-    expect(r).toContain('v_bound := least(v_closes, coalesce(v_s.room_finished_at, v_closes), now())');
+    // Historical stability: a finalised row reuses its STORED window (a later
+    // global call_config change never rewrites an old call).
+    expect(r).toContain('if v_ex.booking_id is not null and v_ex.finalised then');
+    expect(r).toContain('v_opens := v_ex.window_opens_at; v_closes := v_ex.window_closes_at;');
+  });
+  it('uses a FIXED as-of — no open segment grows with now(); a missing leave is bounded', () => {
+    // Finalised ⇔ room finished OR window closed; the as-of never depends on now()
+    // once finalised.
+    expect(r).toContain("elsif v_s.room_finished_at is not null then");
+    expect(r).toContain('v_finalised := true; v_asof := least(v_s.room_finished_at, v_closes)');
+    expect(r).toContain('elsif now() >= v_closes then');
+    expect(r).toContain('v_finalised := true; v_asof := v_closes');
+    expect(r).toContain('v_finalised := false; v_asof := null');
+    // The missing-leave close uses the FIXED as-of, and ONLY when finalised — a
+    // pending open presence is never counted (cannot grow). The old now()-based
+    // cap is gone.
+    expect(r).toContain('if v_finalised then v_cs := array_append(v_cs, v_c_open); v_ce := array_append(v_ce, v_asof)');
+    expect(r).not.toContain('least(v_closes, coalesce(v_s.room_finished_at, v_closes), now())');
+    expect(r).not.toMatch(/array_append\(v_ce, greatest\(v_c_open, v_bound\)\)/);
   });
   it('orders by provider time (out-of-order safe) and maps identity → logical side', () => {
     expect(r).toContain('order by coalesce(e.provider_created_at, e.received_at), e.received_at, e.provider_event_id');
@@ -124,6 +161,17 @@ describe('completion read model — role-aware and payout-safe', () => {
     expect(g).toContain('app_private.can_act_for_member(v_b.member_profile_id)');
     expect(g).toContain('app_private.is_support_admin()');
     expect(g).toMatch(/else\s*\n\s*raise exception 'not_found: conversation'/);
+  });
+  it('refreshes the evidence cache ONLY after authorising the caller (window-close-with-no-event safety net)', () => {
+    // The recompute call must come AFTER the role check — an unrelated caller can
+    // never trigger a write.
+    const roleIdx = g.indexOf("raise exception 'not_found: conversation'");
+    const recomputeIdx = g.indexOf('perform app_private.recompute_attendance_evidence(p_booking)');
+    expect(recomputeIdx).toBeGreaterThan(roleIdx);
+  });
+  it('names its overlap threshold rather than hiding a bare numeric literal', () => {
+    expect(g).toContain('c_substantial_overlap_seconds constant integer := 60');
+    expect(g).toContain('v_overlap >= c_substantial_overlap_seconds');
   });
   it('exposes payout status to the Companion ONLY, and never Stripe/transfer/room detail', () => {
     expect(g).toContain("if v_role = 'companion' then");

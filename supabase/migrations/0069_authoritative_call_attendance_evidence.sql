@@ -12,21 +12,34 @@
 --     Stage 3A provider ledger (call_provider_events + call_participants +
 --     call_sessions). Raw events are never deleted; the cache is recomputable.
 --   * app_private.recompute_attendance_evidence(booking) — the deterministic,
---     idempotent, concurrency-safe aggregator (window-bounded, overlap-aware).
---   * a NARROW evidence-only trigger on call_provider_events that recomputes the
---     affected session's evidence after ingestion.
---   * public.get_conversation_completion_state(booking) — a role-aware, read-only
---     completion read model (caller role derived server-side; payout data is
---     Companion-only; no Stripe/transfer/provider-room/raw-event leakage).
+--     idempotent, concurrency-safe aggregator (window-bounded, overlap-aware,
+--     with a FIXED aggregation as-of that never lets an open segment grow).
+--   * NARROW evidence-only triggers on call_provider_events, call_sessions and
+--     call_participants — every recomputation entry point, no polling worker.
+--   * public.get_conversation_completion_state(booking) — a role-aware
+--     completion read model (payout data is Companion-only; no Stripe / transfer
+--     / provider-room / raw-event / secret leakage). It refreshes the evidence
+--     cache on read so a window that closes with no further event still finalises.
 --   * public.support_attendance_diagnostics(booking) — support-only diagnostics.
+--
+-- DETERMINISM (see §2 of the audit). Aggregation uses a FIXED as-of boundary:
+--   * while the call is not yet finalised (window still open, no room_finished),
+--     evidence is PENDING and an unterminated (open) presence contributes ZERO
+--     counted seconds — no open segment can grow;
+--   * a call finalises when room_finished_at is set OR the evidence window has
+--     closed; at that moment the as-of boundary and the evidence WINDOW are
+--     FROZEN onto the row, so later recomputes (and later global call_config
+--     changes) never rewrite a historical call's durations or classification;
+--   * a missing leave is bounded to the frozen as-of — never unbounded.
+-- For an identical ledger AND identical finalisation, every SUBSTANTIVE field is
+-- identical across recomputes; only calculated_at / updated_at advance.
 --
 -- FINANCIAL FIREWALL (Stage 3B1 boundary). NOTHING here creates, releases,
 -- reverses or alters an earning; calls ensure_companion_earning /
 -- make_earning_payable; starts a transfer; creates a refund; resolves a dispute;
 -- touches account credit or payment-order money; runs a worker/cron; or calls
--- Stripe/LiveKit. Provider presence is EVIDENCE ONLY — never a user declaration,
--- a booking-status transition, or a financial instruction. How this evidence
--- affects payout eligibility is deferred to Stage 3B2.
+-- Stripe/LiveKit. Provider presence is EVIDENCE ONLY. How this evidence affects
+-- payout eligibility is deferred to Stage 3B2.
 --
 -- NO historical rows are updated. NO booking is completed. NO backfill.
 -- ============================================================
@@ -39,9 +52,15 @@ create table if not exists public.call_attendance_evidence (
   booking_id uuid primary key references public.bookings(id) on delete cascade,
   call_session_id uuid not null references public.call_sessions(id) on delete cascade,
 
-  -- The evidence window actually used (snapshot- + config-derived, reschedule-aware).
+  -- The evidence window actually used. Snapshot- + config-derived while pending;
+  -- FROZEN here at finalisation so later config changes cannot rewrite it.
   window_opens_at timestamptz not null,
   window_closes_at timestamptz not null,
+
+  -- Lifecycle. `finalised` = the call is over (room finished OR window closed);
+  -- `evidence_asof_at` is the FIXED upper bound used for any open segment.
+  finalised boolean not null default false,
+  evidence_asof_at timestamptz,
 
   -- Per logical side (a managed guest is the Member side, never a third role).
   companion_first_joined_at timestamptz,
@@ -62,6 +81,7 @@ create table if not exists public.call_attendance_evidence (
   -- Provider-event consistency signals.
   relevant_event_count integer not null default 0 check (relevant_event_count >= 0),
   had_missing_leave boolean not null default false,
+  had_open_segment boolean not null default false,        -- an unterminated presence (pending or finalised)
   had_inconsistent_events boolean not null default false,
 
   -- Neutral evidence quality + classification (never a financial verdict).
@@ -73,7 +93,7 @@ create table if not exists public.call_attendance_evidence (
      'insufficient_evidence', 'pending')),
 
   -- Recompute provenance.
-  evidence_version integer not null default 1,
+  evidence_version integer not null default 2,
   last_provider_event_id text,
   last_provider_event_at timestamptz,
   calculated_at timestamptz not null default now(),
@@ -83,22 +103,27 @@ create table if not exists public.call_attendance_evidence (
 create index if not exists call_attendance_evidence_session_idx
   on public.call_attendance_evidence (call_session_id);
 alter table public.call_attendance_evidence enable row level security;
--- No RLS policies: this table is reached ONLY through SECURITY DEFINER RPCs that
--- derive the caller's role. Direct client reads/writes are denied by default.
+-- Belt-and-braces: force RLS so even a future table owner / BYPASSRLS mishap is
+-- covered. There are NO policies, so every direct client read/write is denied by
+-- default; the table is reachable ONLY through the SECURITY DEFINER RPCs below,
+-- which derive the caller's role server-side.
+alter table public.call_attendance_evidence force row level security;
 
 -- ============================================================
--- 2. Deterministic aggregator. Pure function of the immutable ledger + the
---    session snapshot: recomputing always yields the same result. Idempotent and
---    concurrency-safe (locks the session row, exactly like ingest_call_event).
+-- 2. Deterministic aggregator. Pure function of the immutable ledger + the FROZEN
+--    or snapshot window + a FIXED as-of. Idempotent and concurrency-safe (locks
+--    the session row, exactly like ingest_call_event). EVIDENCE ONLY.
 -- ============================================================
 create or replace function app_private.recompute_attendance_evidence(p_booking uuid)
 returns void language plpgsql security definer set search_path = '' as $$
 declare
-  c_version constant integer := 1;                 -- bump when the algorithm changes
+  c_version constant integer := 2;                 -- bump when the algorithm changes
   v_b public.bookings;
   v_s public.call_sessions;
   v_cfg public.call_config;
-  v_opens timestamptz; v_closes timestamptz; v_bound timestamptz;
+  v_ex public.call_attendance_evidence;            -- existing row (for the freeze rule)
+  v_opens timestamptz; v_closes timestamptz;
+  v_finalised boolean; v_asof timestamptz;
   v_evt record;
   -- per-side segment accumulators (within-side segments are non-overlapping by
   -- construction: a new segment opens only when the previous one has closed).
@@ -106,7 +131,7 @@ declare
   v_ms timestamptz[] := '{}'; v_me timestamptz[] := '{}';   -- member starts/ends
   v_c_open timestamptz; v_m_open timestamptz;
   v_c_joins int := 0; v_m_joins int := 0;
-  v_rel int := 0; v_inconsistent boolean := false; v_missing_leave boolean := false;
+  v_rel int := 0; v_inconsistent boolean := false; v_missing_leave boolean := false; v_open boolean := false;
   v_c_secs int := 0; v_m_secs int := 0; v_overlap int := 0;
   v_c_first timestamptz; v_c_last timestamptz; v_m_first timestamptz; v_m_last timestamptz;
   v_c_ever boolean; v_m_ever boolean;
@@ -121,14 +146,29 @@ begin
   select * into v_s from public.call_sessions where booking_id = p_booking for update;
   if v_s.id is null then return; end if;
   select * into v_cfg from public.call_config where id;
+  select * into v_ex from public.call_attendance_evidence where booking_id = p_booking;
 
-  -- Config-driven window from the SESSION snapshot (kept reschedule-aligned by
-  -- ensure_call_session). Events outside [opens, closes] are clamped out of the
-  -- counted totals but remain in the immutable ledger.
-  v_opens := v_s.scheduled_start - make_interval(mins => coalesce(v_cfg.join_opens_before_start_minutes, 10));
-  v_closes := v_s.scheduled_end + make_interval(mins => coalesce(v_cfg.join_closes_after_end_minutes, 30));
-  -- Missing-leave segments are bounded (never unbounded/open-ended).
-  v_bound := least(v_closes, coalesce(v_s.room_finished_at, v_closes), now());
+  -- WINDOW: once a call is finalised its window is FROZEN (historical stability;
+  -- a later call_config change or stray reschedule cannot rewrite it). Otherwise
+  -- derive it from the (reschedule-aligned) session snapshot + current config.
+  if v_ex.booking_id is not null and v_ex.finalised then
+    v_opens := v_ex.window_opens_at; v_closes := v_ex.window_closes_at;
+  else
+    v_opens := v_s.scheduled_start - make_interval(mins => coalesce(v_cfg.join_opens_before_start_minutes, 10));
+    v_closes := v_s.scheduled_end + make_interval(mins => coalesce(v_cfg.join_closes_after_end_minutes, 30));
+  end if;
+
+  -- FIXED aggregation as-of. Finalised ⇔ the call is over. The as-of NEVER
+  -- depends on now() once finalised, so recompute is historically stable.
+  if v_ex.booking_id is not null and v_ex.finalised then
+    v_finalised := true; v_asof := v_ex.evidence_asof_at;
+  elsif v_s.room_finished_at is not null then
+    v_finalised := true; v_asof := least(v_s.room_finished_at, v_closes);
+  elsif now() >= v_closes then
+    v_finalised := true; v_asof := v_closes;
+  else
+    v_finalised := false; v_asof := null;                  -- PENDING: open presence is not counted
+  end if;
 
   -- Walk the ledger in a fully deterministic order. Map identity → logical side
   -- via the expected participant rows (guest identity resolves to Member).
@@ -174,12 +214,18 @@ begin
     -- participant_connection_aborted: counted as a relevant event only.
   end loop;
 
-  -- Close any still-open segment at the bounded upper edge (missing leave).
+  -- Handle any still-open (unterminated) presence.
+  --   * FINALISED  → close at the FIXED as-of boundary (bounded, stable, never
+  --                  unbounded) and record a missing leave.
+  --   * PENDING    → do NOT count it — an open segment must never grow. Only the
+  --                  fact of an open presence is recorded.
   if v_c_open is not null then
-    v_cs := array_append(v_cs, v_c_open); v_ce := array_append(v_ce, greatest(v_c_open, v_bound)); v_missing_leave := true;
+    v_open := true;
+    if v_finalised then v_cs := array_append(v_cs, v_c_open); v_ce := array_append(v_ce, v_asof); v_missing_leave := true; end if;
   end if;
   if v_m_open is not null then
-    v_ms := array_append(v_ms, v_m_open); v_me := array_append(v_me, greatest(v_m_open, v_bound)); v_missing_leave := true;
+    v_open := true;
+    if v_finalised then v_ms := array_append(v_ms, v_m_open); v_me := array_append(v_me, v_asof); v_missing_leave := true; end if;
   end if;
 
   -- Companion: clamp each segment to the window, accumulate seconds + edges.
@@ -216,10 +262,10 @@ begin
   v_c_ever := v_c_secs > 0;
   v_m_ever := v_m_secs > 0;
 
-  -- Neutral quality. Never infers absence from silence.
+  -- Neutral quality. Never infers absence from silence; pending until finalised.
   if v_b.status <> 'confirmed' then
     v_quality := 'outside_eligible_booking';
-  elsif now() < v_closes and v_s.room_finished_at is null and v_s.state <> 'ended' then
+  elsif not v_finalised then
     v_quality := 'pending_call_window';
   elsif v_rel = 0 then
     v_quality := 'no_provider_events';
@@ -247,24 +293,25 @@ begin
   end if;
 
   insert into public.call_attendance_evidence as ev (
-    booking_id, call_session_id, window_opens_at, window_closes_at,
+    booking_id, call_session_id, window_opens_at, window_closes_at, finalised, evidence_asof_at,
     companion_first_joined_at, companion_last_left_at, companion_connected_seconds,
     companion_join_count, companion_ever_connected,
     member_first_joined_at, member_last_left_at, member_connected_seconds,
     member_join_count, member_ever_connected,
-    overlap_seconds, both_connected, relevant_event_count, had_missing_leave,
+    overlap_seconds, both_connected, relevant_event_count, had_missing_leave, had_open_segment,
     had_inconsistent_events, evidence_quality, evidence_classification,
     evidence_version, last_provider_event_id, last_provider_event_at, calculated_at, updated_at)
   values (
-    p_booking, v_s.id, v_opens, v_closes,
+    p_booking, v_s.id, v_opens, v_closes, v_finalised, v_asof,
     v_c_first, v_c_last, v_c_secs, v_c_joins, v_c_ever,
     v_m_first, v_m_last, v_m_secs, v_m_joins, v_m_ever,
-    v_overlap, v_overlap > 0, v_rel, v_missing_leave,
+    v_overlap, v_overlap > 0, v_rel, v_missing_leave, v_open,
     v_inconsistent, v_quality, v_class,
     c_version, v_last_id, v_last_at, now(), now())
   on conflict (booking_id) do update set
     call_session_id = excluded.call_session_id,
     window_opens_at = excluded.window_opens_at, window_closes_at = excluded.window_closes_at,
+    finalised = excluded.finalised, evidence_asof_at = excluded.evidence_asof_at,
     companion_first_joined_at = excluded.companion_first_joined_at,
     companion_last_left_at = excluded.companion_last_left_at,
     companion_connected_seconds = excluded.companion_connected_seconds,
@@ -277,7 +324,7 @@ begin
     member_ever_connected = excluded.member_ever_connected,
     overlap_seconds = excluded.overlap_seconds, both_connected = excluded.both_connected,
     relevant_event_count = excluded.relevant_event_count,
-    had_missing_leave = excluded.had_missing_leave,
+    had_missing_leave = excluded.had_missing_leave, had_open_segment = excluded.had_open_segment,
     had_inconsistent_events = excluded.had_inconsistent_events,
     evidence_quality = excluded.evidence_quality,
     evidence_classification = excluded.evidence_classification,
@@ -302,62 +349,124 @@ revoke all on function public.recompute_attendance_evidence(uuid) from public, a
 grant execute on function public.recompute_attendance_evidence(uuid) to service_role;
 
 -- ============================================================
--- 3. Narrow, EVIDENCE-ONLY trigger. After a provider event is attached to its
---    session (call_session_id set by ingest_call_event), recompute that session's
---    evidence within the SAME transaction (the session is already locked, so this
---    is serialised). This trigger NEVER touches money, declarations or booking
---    status, and cannot recurse (it writes only call_attendance_evidence).
+-- 3. NARROW, EVIDENCE-ONLY triggers — every recomputation entry point. Each
+--    writes ONLY call_attendance_evidence, so none can recurse or move money.
 -- ============================================================
-create or replace function app_private.trg_sync_attendance_evidence()
+
+-- 3a. A provider event was attached to its session. Fire ONCE per event, for
+--     evidence-relevant types only — never on the later processed_at/result
+--     bookkeeping update (guarded by the call_session_id transition). Split
+--     INSERT/UPDATE triggers so each WHEN references only the legal row images.
+create or replace function app_private.trg_evidence_from_event()
 returns trigger language plpgsql security definer set search_path = '' as $$
 declare v_booking uuid;
 begin
-  if new.call_session_id is null then return new; end if;
   select booking_id into v_booking from public.call_sessions where id = new.call_session_id;
-  if v_booking is not null then
-    perform app_private.recompute_attendance_evidence(v_booking);
-  end if;
+  if v_booking is not null then perform app_private.recompute_attendance_evidence(v_booking); end if;
   return new;
 end;
 $$;
-revoke all on function app_private.trg_sync_attendance_evidence() from public, anon, authenticated;
-
+revoke all on function app_private.trg_evidence_from_event() from public, anon, authenticated;
 drop trigger if exists call_provider_events_evidence_sync on public.call_provider_events;
-create trigger call_provider_events_evidence_sync
-  after insert or update on public.call_provider_events
+drop trigger if exists call_provider_events_evidence_ins on public.call_provider_events;
+drop trigger if exists call_provider_events_evidence_upd on public.call_provider_events;
+create trigger call_provider_events_evidence_ins
+  after insert on public.call_provider_events
   for each row
-  when (new.call_session_id is not null)
-  execute function app_private.trg_sync_attendance_evidence();
+  when (new.call_session_id is not null
+        and new.event_type in ('participant_joined', 'participant_left', 'participant_connection_aborted',
+                               'room_finished', 'room_started'))
+  execute function app_private.trg_evidence_from_event();
+create trigger call_provider_events_evidence_upd
+  after update on public.call_provider_events
+  for each row
+  when (new.call_session_id is not null
+        and old.call_session_id is distinct from new.call_session_id
+        and new.event_type in ('participant_joined', 'participant_left', 'participant_connection_aborted',
+                               'room_finished', 'room_started'))
+  execute function app_private.trg_evidence_from_event();
+
+-- 3b. The session snapshot changed: reschedule (scheduled_start/end), the call
+--     ending (room_finished_at) or a state change — including the case where the
+--     window closes and the terminal room_finished event lands (updating the
+--     session) with no NEW provider-event row. Fires on the exact columns that
+--     affect evidence.
+create or replace function app_private.trg_evidence_from_session()
+returns trigger language plpgsql security definer set search_path = '' as $$
+begin
+  perform app_private.recompute_attendance_evidence(new.booking_id);
+  return new;
+end;
+$$;
+revoke all on function app_private.trg_evidence_from_session() from public, anon, authenticated;
+drop trigger if exists call_sessions_evidence_sync on public.call_sessions;
+drop trigger if exists call_sessions_evidence_ins on public.call_sessions;
+drop trigger if exists call_sessions_evidence_upd on public.call_sessions;
+create trigger call_sessions_evidence_ins
+  after insert on public.call_sessions
+  for each row
+  execute function app_private.trg_evidence_from_session();
+create trigger call_sessions_evidence_upd
+  after update on public.call_sessions
+  for each row
+  when (old.scheduled_start is distinct from new.scheduled_start
+        or old.scheduled_end is distinct from new.scheduled_end
+        or old.room_finished_at is distinct from new.room_finished_at
+        or old.state is distinct from new.state)
+  execute function app_private.trg_evidence_from_session();
+
+-- 3c. A participant slot was created or its identity mapping changed (e.g. a
+--     verified guest materialised into the Member slot). Re-derive so the ledger
+--     maps to the right side.
+create or replace function app_private.trg_evidence_from_participant()
+returns trigger language plpgsql security definer set search_path = '' as $$
+declare v_booking uuid;
+begin
+  select booking_id into v_booking from public.call_sessions where id = new.call_session_id;
+  if v_booking is not null then perform app_private.recompute_attendance_evidence(v_booking); end if;
+  return new;
+end;
+$$;
+revoke all on function app_private.trg_evidence_from_participant() from public, anon, authenticated;
+drop trigger if exists call_participants_evidence_sync on public.call_participants;
+drop trigger if exists call_participants_evidence_ins on public.call_participants;
+drop trigger if exists call_participants_evidence_upd on public.call_participants;
+create trigger call_participants_evidence_ins
+  after insert on public.call_participants
+  for each row
+  execute function app_private.trg_evidence_from_participant();
+create trigger call_participants_evidence_upd
+  after update on public.call_participants
+  for each row
+  when (old.provider_identity is distinct from new.provider_identity
+        or old.guest_invitation_id is distinct from new.guest_invitation_id
+        or old.account_id is distinct from new.account_id)
+  execute function app_private.trg_evidence_from_participant();
+
+select pg_notify('pgrst', 'reload schema');
 
 -- ============================================================
--- 4. Role-aware, READ-ONLY completion read model. The caller's role is derived
---    server-side. Payout data is Companion-only. This RPC NEVER writes money,
---    never creates a declaration/confirmation, and never transitions a booking.
+-- 4. Role-aware completion read model. The caller's role is derived server-side.
+--    Payout data is Companion-only. This RPC NEVER writes money, never creates a
+--    declaration/confirmation, and never transitions a booking. It DOES refresh
+--    the evidence cache on read (AFTER authorising the caller), so a window that
+--    closes with no further provider event still finalises deterministically.
 --
 --    Completion states are ALL DERIVED here (nothing new is stored): the only
 --    persisted attendance state remains conversation_attendance (Companion
 --    declaration), completion_confirmations (Member confirmation),
---    conversation_issues (issues) and companion_earnings (payout) — 0069 stores
---    only neutral provider EVIDENCE, never a completion verdict.
+--    conversation_issues (issues) and companion_earnings (payout).
 --
 --    Derived completion_state vocabulary + priority (post-end, confirmed):
---      cancelled_or_declined  ← status cancelled/declined
---      not_eligible           ← status requested/change_proposed
---      scheduled              ← confirmed, before the join window opens
---      call_window_open       ← confirmed, within the join window, not ended
---      issue_open             ← an unresolved conversation_issue exists
---      evidence_conflict      ← declaration/confirmation contradicts evidence
---      companion_reported_member_absent ← Companion declared member_no_show
---      finalised              ← Companion took_place + a review recorded
---      member_confirmed       ← Companion took_place + Member confirmed completed
---      companion_reported_took_place ← Companion took_place, awaiting Member
---      awaiting_companion_report ← ended, confirmed, no Companion declaration yet
---    Idempotent: repeated calls are pure reads and return the same result for the
---    same underlying rows. No transition is performed by this function.
+--      cancelled_or_declined / not_eligible / scheduled / call_window_open /
+--      issue_open / evidence_conflict / companion_reported_member_absent /
+--      finalised / member_confirmed / companion_reported_took_place /
+--      awaiting_companion_report.
 -- ============================================================
 create or replace function public.get_conversation_completion_state(p_booking uuid)
-returns jsonb language plpgsql stable security definer set search_path = '' as $$
+returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
+  c_substantial_overlap_seconds constant integer := 60;   -- named policy threshold (§7)
   v_b public.bookings;
   v_role text;
   v_cfg public.call_config;
@@ -393,6 +502,10 @@ begin
     raise exception 'not_found: conversation';           -- unrelated: identical to nonexistent
   end if;
 
+  -- Refresh the evidence cache ONLY after the caller is authorised (an unrelated
+  -- caller can never trigger a recompute). Idempotent + evidence-only.
+  perform app_private.recompute_attendance_evidence(p_booking);
+
   select * into v_cfg from public.call_config where id;
   select * into v_s from public.call_sessions where booking_id = p_booking;
   select * into v_ev from public.call_attendance_evidence where booking_id = p_booking;
@@ -403,9 +516,10 @@ begin
   v_issue_open := exists (select 1 from public.conversation_issues i
                           where i.booking_id = p_booking and i.state <> 'resolved');
 
-  -- Window from the session snapshot (reschedule-aware) or the booking, + config.
-  v_opens := coalesce(v_s.scheduled_start, v_b.starts_at) - make_interval(mins => coalesce(v_cfg.join_opens_before_start_minutes, 10));
-  v_closes := coalesce(v_s.scheduled_end, v_b.ends_at) + make_interval(mins => coalesce(v_cfg.join_closes_after_end_minutes, 30));
+  -- Prefer the FROZEN evidence window when present (historical stability), else
+  -- derive from the session snapshot or booking + config.
+  v_opens := coalesce(v_ev.window_opens_at, coalesce(v_s.scheduled_start, v_b.starts_at) - make_interval(mins => coalesce(v_cfg.join_opens_before_start_minutes, 10)));
+  v_closes := coalesce(v_ev.window_closes_at, coalesce(v_s.scheduled_end, v_b.ends_at) + make_interval(mins => coalesce(v_cfg.join_closes_after_end_minutes, 30)));
   v_ended := v_b.ends_at <= now();
   v_window_open := now() >= v_opens and now() <= v_closes;
 
@@ -415,15 +529,14 @@ begin
   v_m_ever := coalesce(v_ev.member_ever_connected, false);
   v_overlap := coalesce(v_ev.overlap_seconds, 0);
   if v_b.status <> 'confirmed' then
-    v_quality := 'outside_eligible_booking'; v_class := 'insufficient_evidence';
+    v_quality := 'outside_eligible_booking'; v_class := 'insufficient_evidence'; v_processing := false;
   elsif v_ev.booking_id is not null then
-    v_quality := v_ev.evidence_quality; v_class := v_ev.evidence_classification;
+    v_quality := v_ev.evidence_quality; v_class := v_ev.evidence_classification; v_processing := not v_ev.finalised;
   elsif now() < v_closes then
-    v_quality := 'pending_call_window'; v_class := 'pending';
+    v_quality := 'pending_call_window'; v_class := 'pending'; v_processing := true;
   else
-    v_quality := 'no_provider_events'; v_class := 'insufficient_evidence';
+    v_quality := 'no_provider_events'; v_class := 'insufficient_evidence'; v_processing := false;
   end if;
-  v_processing := v_quality = 'pending_call_window';
 
   v_decl := v_a.outcome;                                 -- Companion declaration (nullable)
   v_mconf := v_mc.outcome;                               -- Member confirmation (nullable)
@@ -434,7 +547,7 @@ begin
   if v_class in ('both_connected', 'companion_only', 'member_only', 'neither_observed') then
     if v_decl = 'took_place' and not v_c_ever then v_conflict := true; end if;          -- A
     if v_mconf = 'completed' and v_class = 'neither_observed' then v_conflict := true; end if;  -- C
-    if v_mconf in ('did_not_happen', 'report_concern') and v_overlap >= 60 then v_conflict := true; end if; -- D
+    if v_mconf in ('did_not_happen', 'report_concern') and v_overlap >= c_substantial_overlap_seconds then v_conflict := true; end if; -- D
     if v_decl = 'took_place' and v_mconf = 'did_not_happen' then v_conflict := true; end if;    -- declaration clash
   end if;
   if v_quality = 'inconsistent_provider_events' and (v_decl is not null or v_mconf is not null) then
@@ -514,11 +627,13 @@ grant execute on function public.get_conversation_completion_state(uuid) to auth
 -- 5. Support-only diagnostics. Connection + declaration + confirmation metadata
 --    ONLY. No access tokens, no LiveKit/Stripe secrets, no guest invitation
 --    secret, no message bodies, no private review feedback, no provider room
---    name, no raw provider events, no card/bank detail.
+--    name, no raw provider events, no card/bank detail. Refreshes the cache
+--    on read (support-gated first).
 -- ============================================================
 create or replace function public.support_attendance_diagnostics(p_booking uuid)
-returns jsonb language plpgsql stable security definer set search_path = '' as $$
+returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
+  c_substantial_overlap_seconds constant integer := 60;
   v_b public.bookings; v_s public.call_sessions; v_ev public.call_attendance_evidence;
   v_a public.conversation_attendance; v_mc public.completion_confirmations;
   v_issue_open boolean;
@@ -526,6 +641,7 @@ begin
   if not app_private.is_support_admin() then raise exception 'not_found: diagnostics'; end if;
   select * into v_b from public.bookings where id = p_booking;
   if v_b.id is null then return jsonb_build_object('booking', null); end if;
+  perform app_private.recompute_attendance_evidence(p_booking);   -- support-gated refresh
   select * into v_s from public.call_sessions where booking_id = p_booking;
   select * into v_ev from public.call_attendance_evidence where booking_id = p_booking;
   select * into v_a from public.conversation_attendance where booking_id = p_booking;
@@ -548,6 +664,7 @@ begin
         'connected_seconds', p.connected_seconds, 'currently_connected', p.currently_connected)
         order by p.booking_role) from public.call_participants p where p.call_session_id = v_s.id), '[]'::jsonb) end,
     'evidence', case when v_ev.booking_id is null then null else jsonb_build_object(
+      'finalised', v_ev.finalised, 'evidence_asof_at', v_ev.evidence_asof_at,
       'window_opens_at', v_ev.window_opens_at, 'window_closes_at', v_ev.window_closes_at,
       'companion_connected_seconds', v_ev.companion_connected_seconds, 'companion_ever_connected', v_ev.companion_ever_connected,
       'companion_join_count', v_ev.companion_join_count,
@@ -555,7 +672,7 @@ begin
       'member_join_count', v_ev.member_join_count,
       'overlap_seconds', v_ev.overlap_seconds, 'both_connected', v_ev.both_connected,
       'relevant_event_count', v_ev.relevant_event_count, 'had_missing_leave', v_ev.had_missing_leave,
-      'had_inconsistent_events', v_ev.had_inconsistent_events,
+      'had_open_segment', v_ev.had_open_segment, 'had_inconsistent_events', v_ev.had_inconsistent_events,
       'evidence_quality', v_ev.evidence_quality, 'evidence_classification', v_ev.evidence_classification,
       'evidence_version', v_ev.evidence_version, 'calculated_at', v_ev.calculated_at,
       'last_provider_event_at', v_ev.last_provider_event_at) end,
@@ -569,7 +686,7 @@ begin
       and (
         (v_a.outcome = 'took_place' and not v_ev.companion_ever_connected)
         or (v_mc.outcome = 'completed' and v_ev.evidence_classification = 'neither_observed')
-        or (v_mc.outcome in ('did_not_happen', 'report_concern') and v_ev.overlap_seconds >= 60)
+        or (v_mc.outcome in ('did_not_happen', 'report_concern') and v_ev.overlap_seconds >= c_substantial_overlap_seconds)
         or (v_a.outcome = 'took_place' and v_mc.outcome = 'did_not_happen'))));
 end;
 $$;
