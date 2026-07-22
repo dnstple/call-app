@@ -20,6 +20,15 @@ import { isSupabaseMode } from '../config/dataMode';
 
 const STAR_LABELS = ['1 Poor', '2 Fair', '3 Good', '4 Very good', '5 Excellent'];
 
+/** Never surface raw server codes (e.g. booking_not_completed) to the member. */
+function friendlyReviewError(raw: string): string {
+  if (/not_completed|not.*complete|completion/i.test(raw)) {
+    return 'This conversation isn’t confirmed complete yet, so a star rating can’t be saved. You can still approve it with “Everything was fine”, and add a rating once it’s confirmed.';
+  }
+  if (/issue|under_review/i.test(raw)) return 'This conversation is under review, so it can’t be reviewed right now.';
+  return 'We couldn’t save your review. Please try again.';
+}
+
 interface ReviewState {
   ended: boolean;
   eligible: boolean;
@@ -132,7 +141,7 @@ export function ReviewCard({ bookingId, memberName, companionName, onConfirmed }
       // server sends it ONCE and never resends on edits.
       p_message_idempotency: editing || message.trim() === '' ? null : message.trim(),
     });
-    if (e) setError(String(e.message ?? 'We couldn’t save your review. Please try again.'));
+    if (e) setError(friendlyReviewError(String(e.message ?? '')));
     else onConfirmed?.(); // tell the page to refetch the booking → banner + list stay in sync
     setEditing(false);
     setMessage('');
@@ -140,32 +149,45 @@ export function ReviewCard({ bookingId, memberName, companionName, onConfirmed }
     setBusy(false);
   };
 
+  // A star RATING can only be saved once the conversation is confirmed complete
+  // (the Companion has confirmed attendance). Before then we NEVER call the
+  // rating RPC — the member can still APPROVE the conversation, which is a
+  // separate, always-available action.
+  const canRate = state.attendanceConfirmed || editing;
+
   return (
     <section className="card col" style={{ gap: 12 }} aria-label="Conversation review">
       <h3 style={{ margin: 0 }}>How was {memberName}’s conversation with {companionName}?</h3>
 
-      <div className="row" style={{ gap: 4 }} role="radiogroup" aria-label="Star rating (optional)">
-        {[1, 2, 3, 4, 5].map((n) => (
-          <button
-            key={n}
-            type="button"
-            className="icon-btn"
-            role="radio"
-            aria-checked={stars === n}
-            aria-label={STAR_LABELS[n - 1]}
-            title={STAR_LABELS[n - 1]}
-            onClick={() => setStars(stars === n ? null : n)}
-          >
-            <Star
-              size={24}
-              aria-hidden="true"
-              fill={stars !== null && n <= stars ? 'var(--color-brand)' : 'none'}
-              style={{ color: stars !== null && n <= stars ? 'var(--color-brand-strong)' : 'var(--color-text-muted)' }}
-            />
-          </button>
-        ))}
-        {stars !== null && <span className="muted small">{STAR_LABELS[stars - 1]}</span>}
-      </div>
+      {canRate ? (
+        <div className="row" style={{ gap: 4 }} role="radiogroup" aria-label="Star rating (optional)">
+          {[1, 2, 3, 4, 5].map((n) => (
+            <button
+              key={n}
+              type="button"
+              className="icon-btn"
+              role="radio"
+              aria-checked={stars === n}
+              aria-label={STAR_LABELS[n - 1]}
+              title={STAR_LABELS[n - 1]}
+              onClick={() => setStars(stars === n ? null : n)}
+            >
+              <Star
+                size={24}
+                aria-hidden="true"
+                fill={stars !== null && n <= stars ? 'var(--color-brand)' : 'none'}
+                style={{ color: stars !== null && n <= stars ? 'var(--color-brand-strong)' : 'var(--color-text-muted)' }}
+              />
+            </button>
+          ))}
+          {stars !== null && <span className="muted small">{STAR_LABELS[stars - 1]}</span>}
+        </div>
+      ) : (
+        <p className="muted small" style={{ margin: 0 }}>
+          You can add a star rating once {companionName} has confirmed the conversation took place.
+          For now you can approve it below.
+        </p>
+      )}
 
       <div className="field" style={{ marginBottom: 0 }}>
         <label htmlFor={`rev-fb-${bookingId}`}>Private feedback for us</label>
@@ -204,12 +226,16 @@ export function ReviewCard({ bookingId, memberName, companionName, onConfirmed }
       {error && <p className="small" role="alert" style={{ margin: 0, color: 'var(--color-danger-text)' }}>{error}</p>}
 
       <div className="row wrap" style={{ gap: 8 }}>
-        <button className="btn btn-primary btn-small" disabled={busy} onClick={() => void submit(false)}>
-          {busy ? <Loader2 size={16} aria-hidden="true" /> : null} Submit review
-        </button>
+        {/* The star rating submit only appears once a rating can be saved, so we
+            never call the rating RPC before the conversation is complete. */}
+        {canRate && (
+          <button className="btn btn-primary btn-small" disabled={busy} onClick={() => void submit(false)}>
+            {busy ? <Loader2 size={16} aria-hidden="true" /> : null} Submit review
+          </button>
+        )}
         {!editing && (
-          <button className="btn btn-secondary btn-small" disabled={busy} onClick={() => void submit(true)}>
-            Everything was fine
+          <button className={`btn btn-small ${canRate ? 'btn-secondary' : 'btn-primary'}`} disabled={busy} onClick={() => void submit(true)}>
+            {busy && !canRate ? <Loader2 size={16} aria-hidden="true" /> : null} Everything was fine
           </button>
         )}
         {editing && (

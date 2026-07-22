@@ -20,10 +20,12 @@ import { buildCallGrant, participantIdentity, TOKEN_TTL_SECONDS } from '../../..
 const ROOT = join(__dirname, '..', '..', '..');
 const M = readFileSync(join(ROOT, 'supabase', 'migrations', '0064_livekit_audio_call_foundations.sql'), 'utf-8');
 const ALIGN = readFileSync(join(ROOT, 'supabase', 'migrations', '0065_livekit_audio_hosted_alignment.sql'), 'utf-8');
+const UNIFY = readFileSync(join(ROOT, 'supabase', 'migrations', '0066_unify_guest_call_participant_identity.sql'), 'utf-8');
 const TOKEN_FN = readFileSync(join(ROOT, 'supabase', 'functions', 'livekit-token', 'index.ts'), 'utf-8');
 const HOOK_FN = readFileSync(join(ROOT, 'supabase', 'functions', 'livekit-webhook', 'index.ts'), 'utf-8');
 const SHARED = readFileSync(join(ROOT, 'supabase', 'functions', '_shared', 'callToken.ts'), 'utf-8');
 const PAGE = readFileSync(join(ROOT, 'src', 'pages', 'CallPage.tsx'), 'utf-8');
+const GUEST = readFileSync(join(ROOT, 'src', 'pages', 'GuestJoin.tsx'), 'utf-8');
 const ADAPTER = readFileSync(join(ROOT, 'src', 'calls', 'audioCall.ts'), 'utf-8');
 
 function fn(name: string): string {
@@ -142,6 +144,76 @@ describe('0065 exposes the service RPCs through PostgREST (public), service-role
     expect(ALIGN).toContain("select pg_notify('pgrst', 'reload schema')");
     // Wrappers accept ONLY the booking/event args — no room/identity/role injection.
     expect(ALIGN).not.toMatch(/create or replace function public\.ensure_call_session\([^)]*room/i);
+  });
+});
+
+describe('0066 unifies the managed (guest) Member into the ONE Member slot', () => {
+  function ufn(name: string): string {
+    const s = UNIFY.indexOf(`create or replace function ${name}`);
+    if (s < 0) throw new Error(`0066 fn not found: ${name}`);
+    return UNIFY.slice(s, UNIFY.indexOf('\n$$;', s));
+  }
+  it('lets the Member slot be an account XOR a verified guest invitation (never Companion)', () => {
+    expect(UNIFY).toContain('alter column account_id drop not null');
+    expect(UNIFY).toContain('add column if not exists guest_invitation_id uuid references public.guest_call_invitations(id)');
+    expect(UNIFY).toContain('call_participants_owner_xor_guest');
+    expect(UNIFY).toMatch(/account_id is null and guest_invitation_id is not null and booking_role = 'member'/);
+  });
+  it('the guest slot RPC derives identity server-side, requires no owner, and never overwrites an account', () => {
+    const g = ufn('app_private.ensure_guest_member_participant');
+    // Identity is SERVER-derived from the invitation id — a caller string cannot be injected.
+    expect(g).toContain("v_expected_identity text := 'guest_member-' || p_invitation::text");
+    expect(g).toContain('if p_identity is distinct from v_expected_identity then');
+    expect(g).toContain('identity_mismatch');
+    // Invitation must belong to the booking and be live.
+    expect(g).toContain('where id = p_invitation and booking_id = p_booking');
+    expect(g).toMatch(/revoked_at is not null or .*expires_at < now\(\)/);
+    // Guest may hold the Member slot ONLY when the Member has no owner account.
+    expect(g).toContain('v_member_owner := app_private.profile_owner_account(v_b.member_profile_id)');
+    expect(g).toContain('member_has_owner');
+    // Reuses the SAME logical row on rejoin; never overwrites an account-held slot.
+    expect(g).toContain('on conflict (call_session_id, booking_role) do update');
+    expect(g).toContain('where public.call_participants.account_id is null');
+    expect(g).toContain("values (v_session.id, null, 'member', v_expected_identity, p_invitation)"); // Member slot only
+  });
+  it('exposes the guest RPC to service_role only (public wrapper), never authenticated/anon', () => {
+    for (const sig of ['app_private.ensure_guest_member_participant(uuid, uuid, text)',
+                       'public.ensure_guest_member_participant(uuid, uuid, text)']) {
+      expect(UNIFY).toContain(`revoke all on function ${sig} from public, anon, authenticated`);
+      expect(UNIFY).toContain(`grant execute on function ${sig} to service_role`);
+    }
+    expect(UNIFY).not.toMatch(/grant execute on function (public|app_private)\.ensure_guest_member_participant[^;]*to (authenticated|anon)/);
+    expect(UNIFY).toContain("select pg_notify('pgrst', 'reload schema')");
+  });
+  it('the token guest branch provisions the guest into the Member slot with a server-derived identity', () => {
+    const guestBranch = TOKEN_FN.slice(TOKEN_FN.indexOf('handleGuestJoin'), TOKEN_FN.indexOf('Deno.serve'));
+    expect(guestBranch).toContain("rpc('ensure_guest_member_participant'");
+    expect(guestBranch).toContain('const guestIdentity = `guest_member-${r.invitation_id}`');
+    expect(guestBranch).toContain('identity: guestIdentity');
+    // Ingestion (0064/0065) already row-matches identities — a guest event now hits the Member slot.
+    expect(HOOK_FN).toContain("rpc('ingest_call_event'");
+  });
+  it('the ingestion identity model is row-match (never prefix-based acceptance)', () => {
+    const i = fn('app_private.ingest_call_event');
+    expect(i).toContain('provider_identity = p_identity');
+    expect(i).not.toMatch(/like 'guest_member-%'|starts?with|position\('guest'/i);
+  });
+});
+
+describe('guest frontend (/join/:token) is audio-only — no legacy camera CallRoom', () => {
+  it('uses the Stage 3A audio adapter and exposes no camera/video/screen-share', () => {
+    expect(GUEST).toContain("from '../calls/audioCall'");
+    expect(GUEST).toContain('connectAudioCall');
+    // No camera / video / legacy call-room APIs.
+    expect(GUEST).not.toMatch(/setCameraEnabled\s*\(|attachVideo|attachLocalVideo|createLocalVideoTrack|startScreenShare/);
+    expect(GUEST).not.toMatch(/getUserMedia\([^)]*video/);
+    expect(GUEST).not.toMatch(/from '\.\.\/pages\/CallRoom'|CallRoom/);
+    expect(GUEST).not.toMatch(/\bcamOn\b|videoRef|<video/);
+    expect(GUEST).not.toMatch(/connectCall\b|startPreview\b/); // legacy livekit call surface
+    // Leave screen offers Rejoin + a clear Close (no authenticated nav).
+    expect(GUEST).toContain('Rejoin');
+    expect(GUEST).toContain('Close');
+    expect(GUEST.toLowerCase()).toContain('not recorded');
   });
 });
 

@@ -5808,6 +5808,79 @@ describe.skipIf(!enabled)('3A LiveKit audio foundations (requires live Supabase)
     expect(after).toBe(before + 1); // never double-counted
   });
 
+  it('19. a managed (guest) Member occupies the ONE Member slot and drives presence', async () => {
+    // A managed member has NO owner account: a profile with only a Coordinator.
+    const mm = (await cAdmin.from('profiles').insert({ role: 'member', first_name: 'Mara' }).select('id').single()).data!;
+    const managedMemberProfile = requireUuid(mm.id, 'managed member profile');
+    const start = new Date(Date.now() - 2 * 60_000); const end = new Date(start.getTime() + 30 * 60_000);
+    const created: { table: string; id: string }[] = [];
+    try {
+      await cAdmin.from('profile_access').insert({ account_id: coordAcct, profile_id: managedMemberProfile, access_role: 'coordinator', can_edit: true, can_book: true });
+      const bk = (await cAdmin.from('bookings').insert({
+        member_profile_id: managedMemberProfile, companion_profile_id: companionProfile, booked_by_account_id: coordAcct,
+        offer_id: offerId, starts_at: start.toISOString(), ends_at: end.toISOString(), communication_method: 'in_app',
+        status: 'confirmed', duration_minutes: 30, price_minor: 1000, platform_fee_rate: 0, platform_fee_minor: 0, companion_amount_minor: 1000,
+      }).select('id').single()).data!;
+      const mBooking = requireUuid(bk.id, 'managed booking'); created.push({ table: 'bookings', id: mBooking });
+      const inv = (await cAdmin.from('guest_call_invitations').insert({
+        booking_id: mBooking, token_hash: `hash_${suffix}_gm`, code_hash: 'x',
+        created_by_account_id: coordAcct, expires_at: new Date(Date.now() + 60 * 60_000).toISOString(),
+      }).select('id').single()).data!;
+      const invitationId = requireUuid(inv.id, 'guest invitation');
+      const guestIdentity = `guest_member-${invitationId}`;
+
+      // Provision the guest into the Member slot (server-derived identity).
+      const prov = await rpc(cAdmin, 'ensure_guest_member_participant', { p_booking: mBooking, p_invitation: invitationId, p_identity: guestIdentity });
+      expect(prov.error).toBeNull();
+      const mSession = requireUuid(prov.data.call_session_id, 'guest session');
+      const room = prov.data.room_name as string;
+      expect(room.startsWith('call_')).toBe(true);          // NOT a legacy booking- room
+      created.push({ table: 'call_sessions', id: mSession });
+
+      // Exactly two slots: companion (account) + member (guest invitation, no account).
+      const parts = (await cAdmin.from('call_participants').select('account_id, guest_invitation_id, booking_role, provider_identity').eq('call_session_id', mSession)).data ?? [];
+      expect(parts).toHaveLength(2);
+      const member = parts.find((p) => p.booking_role === 'member')!;
+      expect(member.account_id).toBeNull();
+      expect(member.guest_invitation_id).toBe(invitationId);
+      expect(member.provider_identity).toBe(guestIdentity);
+      const memberRowId = (await cAdmin.from('call_participants').select('id').eq('call_session_id', mSession).eq('booking_role', 'member').single()).data!.id;
+
+      // A guest join event now maps to the Member slot → Member present.
+      const t1 = new Date(Date.now() - 60_000).toISOString();
+      expect((await rpc(cAdmin, 'ingest_call_event', { p_provider_event_id: `ev-gm-join-${suffix}`, p_event_type: 'participant_joined', p_room: room, p_identity: guestIdentity, p_provider_created_at: t1 })).data.result).toBe('participant_joined');
+      expect((await cAdmin.from('call_participants').select('currently_connected').eq('id', memberRowId).single()).data!.currently_connected).toBe(true);
+      // Guest leave clears Member presence.
+      const t2 = new Date().toISOString();
+      await rpc(cAdmin, 'ingest_call_event', { p_provider_event_id: `ev-gm-left-${suffix}`, p_event_type: 'participant_left', p_room: room, p_identity: guestIdentity, p_provider_created_at: t2 });
+      expect((await cAdmin.from('call_participants').select('currently_connected').eq('id', memberRowId).single()).data!.currently_connected).toBe(false);
+
+      // Rejoin reuses the SAME logical slot (row id unchanged).
+      const reprov = await rpc(cAdmin, 'ensure_guest_member_participant', { p_booking: mBooking, p_invitation: invitationId, p_identity: guestIdentity });
+      expect(reprov.data.call_session_id).toBe(mSession);
+      expect((await cAdmin.from('call_participants').select('id').eq('call_session_id', mSession).eq('booking_role', 'member').single()).data!.id).toBe(memberRowId);
+
+      // Coordinator identity and an unrelated identity are rejected (never a third slot).
+      expect((await rpc(cAdmin, 'ingest_call_event', { p_provider_event_id: `ev-gm-coord-${suffix}`, p_event_type: 'participant_joined', p_room: room, p_identity: `account:${coordAcct}`, p_provider_created_at: t1 })).data.result).toBe('ignored_unexpected_identity');
+      expect((await rpc(cAdmin, 'ingest_call_event', { p_provider_event_id: `ev-gm-unrel-${suffix}`, p_event_type: 'participant_joined', p_room: room, p_identity: 'guest_member-00000000-0000-0000-0000-000000000000', p_provider_created_at: t1 })).data.result).toBe('ignored_unexpected_identity');
+      expect((await cAdmin.from('call_participants').select('id').eq('call_session_id', mSession)).data ?? []).toHaveLength(2); // still two
+
+      // A self-managed member (owner account exists) can NOT be taken by a guest.
+      expect((await rpc(cAdmin, 'ensure_guest_member_participant', { p_booking: bookingId, p_invitation: invitationId, p_identity: guestIdentity })).error).not.toBeNull();
+    } finally {
+      const sess = created.find((c) => c.table === 'call_sessions');
+      if (sess) {
+        await cAdmin.from('call_provider_events').delete().eq('call_session_id', sess.id);
+        await cAdmin.from('call_participants').delete().eq('call_session_id', sess.id);
+        await cAdmin.from('call_sessions').delete().eq('id', sess.id);
+      }
+      const bk = created.find((c) => c.table === 'bookings');
+      if (bk) { await cAdmin.from('guest_call_invitations').delete().eq('booking_id', bk.id); await cAdmin.from('bookings').delete().eq('id', bk.id); }
+      await cAdmin.from('profile_access').delete().eq('profile_id', managedMemberProfile);
+      await cAdmin.from('profiles').delete().eq('id', managedMemberProfile);
+    }
+  });
+
   it('20. no call event changes the booking status or creates any money row', async () => {
     const status = (await cAdmin.from('bookings').select('status').eq('id', bookingId).single()).data!.status;
     expect(status).toBe('confirmed'); // ingestion never completes the booking

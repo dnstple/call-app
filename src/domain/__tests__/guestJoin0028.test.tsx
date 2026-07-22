@@ -48,19 +48,19 @@ vi.mock('../../calls/livekit', () => ({
     mock.prepareCalls.push(args);
     return mock.prepareResult;
   },
-  startPreview: async () => {
-    mock.previewCalls += 1;
-    return { hasAudio: true, hasVideo: false, attachVideo: () => undefined, stop: () => undefined };
-  },
-  connectCall: async () => {
+}));
+
+// Stage 3A: the guest flow is audio-only and uses the shared audio adapter.
+vi.mock('../../calls/audioCall', () => ({
+  listMicrophones: async () => [],
+  connectAudioCall: async () => {
     mock.connectCalls += 1;
     return {
       disconnect: async () => undefined,
-      toggleMicrophone: async () => undefined,
-      toggleCamera: async () => undefined,
-      switchDevice: async () => undefined,
-      getConnectionState: () => 'connected',
-      attachLocalVideo: () => undefined,
+      setMuted: async () => undefined,
+      switchMic: async () => undefined,
+      state: () => 'connected',
+      remoteConnected: () => false,
       remoteName: () => null,
     };
   },
@@ -109,12 +109,13 @@ describe('guest page — link is the whole journey', () => {
   it('1+2. a valid link shows details and ONE dominant Join action — no code entry', async () => {
     renderJoin();
     expect(await screen.findByText(/Your conversation with Daniel/)).toBeTruthy();
-    expect(screen.getByText(/30 minutes/)).toBeTruthy();
+    expect(screen.getByText(/minutes · audio call/i)).toBeTruthy();
     expect(screen.getByRole('button', { name: /^Join conversation$/ })).toBeTruthy();
-    // No code UI at all — not even collapsed.
+    // No code UI at all — not even collapsed (a mute-on-entry checkbox is allowed,
+    // but there is no text/number field to type a code into).
     expect(screen.queryByLabelText(/access code/i)).toBeNull();
     expect(screen.queryByText(/access code/i)).toBeNull();
-    expect(document.querySelector('input')).toBeNull();
+    expect(document.querySelector('input[type="text"], input[type="number"], input:not([type])')).toBeNull();
   });
 
   it('14. opening the page never activates media, requests a token or joins', async () => {
@@ -214,12 +215,13 @@ describe('0028 server contract', () => {
     expect(guestBranch).not.toContain('accessCode');
     expect(guestBranch).not.toContain('p_code');
     // Stage 3A: the guest joins the SAME opaque call-session room as the
-    // Companion (via ensure_call_session), so a managed Member and Companion
-    // share one room — falling back to the legacy booking- room only if the
-    // session cannot be provisioned.
-    expect(guestBranch).toContain("rpc('ensure_call_session', { p_booking: booking.id })");
+    // Companion AND the logical Member slot, via ensure_guest_member_participant
+    // with a SERVER-derived identity (never the legacy booking- room).
+    expect(guestBranch).toContain("rpc('ensure_guest_member_participant'");
+    expect(guestBranch).toContain('const guestIdentity = `guest_member-${r.invitation_id}`');
     expect(guestBranch).toContain('room: callRoom');
     expect(guestBranch).toContain('guest_member-');
+    expect(guestBranch).not.toMatch(/room: `booking-\$\{booking\.id\}`/); // legacy room retired
     // The narrow grant is unchanged.
     expect(guestBranch).toContain('canPublishData: false');
   });

@@ -93,14 +93,20 @@ async function handleGuestJoin(body: Record<string, unknown>): Promise<Response>
   const serverUrl = Deno.env.get('LIVEKIT_URL');
   if (!apiKey || !apiSecret || !serverUrl) return json({ state: 'invalid' }, 200);
 
-  // Join the SAME opaque call-session room as the authenticated Companion, so a
-  // managed (guest) Member and the Companion share one room. Falls back to the
-  // legacy booking- room only if the session cannot be provisioned.
-  const { data: sessionRes } = await admin.rpc('ensure_call_session', { p_booking: booking.id });
-  const callRoom = (sessionRes as { room_name?: string } | null)?.room_name ?? `booking-${booking.id}`;
+  // Provision the guest into the SAME call session as the Companion AND as the
+  // logical Member participant slot (server-derived identity). This is what makes
+  // webhook presence/duration work for a managed Member with no account. The
+  // identity is derived server-side; the browser never chooses room/identity/role.
+  const guestIdentity = `guest_member-${r.invitation_id}`;
+  const { data: sessionRes, error: sessionErr } = await admin.rpc('ensure_guest_member_participant', {
+    p_booking: booking.id, p_invitation: r.invitation_id, p_identity: guestIdentity,
+  });
+  if (sessionErr || !sessionRes) return json({ state: 'invalid' }, 200);
+  const callRoom = (sessionRes as { room_name?: string }).room_name;
+  if (!callRoom) return json({ state: 'invalid' }, 200);
 
   const token = new AccessToken(apiKey, apiSecret, {
-    identity: `guest_member-${r.invitation_id}`,
+    identity: guestIdentity,
     name: 'Guest',
     ttl: GUEST_TTL_SECONDS,
   });
