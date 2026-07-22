@@ -42,6 +42,7 @@ import { RatingPanel } from '../components/RatingPanel';
 import { BookingCreditPanel } from '../components/BookingCreditBadge';
 import { GuestInvitationPanel } from '../components/GuestInvitationPanel';
 import { AttendanceCard } from '../components/AttendanceCard';
+import { CallEvidenceNote } from '../components/CallEvidenceNote';
 import { CoordinatorPostConversationCard } from '../components/CoordinatorPostConversationCard';
 import { ProfileAvatar } from '../components/ProfileAvatar';
 import { useProfileAvatars } from '../state/avatars';
@@ -319,6 +320,17 @@ export default function BookingDetail() {
           even if its time has passed. This mirrors the 0067 server invariant.
 
           Member side → the single combined outcome + review card. */}
+
+      {/* Stage 3B1: a neutral, role-correct note about the authoritative call
+          connection record (evidence only — never a completion verdict or any
+          payout wording; the server redacts by role). Shown once the accepted
+          conversation has ended, above the role-specific action card. */}
+      {ended && eligibleForCompletion && (isCompanionSide || isRequesterSide) && (
+        <section className="section-tight">
+          <CallEvidenceNote bookingId={booking.id} />
+        </section>
+      )}
+
       {!isCompanionSide && isRequesterSide && ended && eligibleForCompletion && (
         <section className="section-tight">
           <CoordinatorPostConversationCard

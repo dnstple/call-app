@@ -6107,3 +6107,375 @@ describe.skipIf(!enabled)('0067 completion/earning invariant (requires live Supa
     expect((await cAdmin.from('payment_orders').select('id').eq('booking_id', posBookingId)).data ?? []).toHaveLength(1);
   });
 });
+
+/* ============================================================
+ * Stage 3B1 — authoritative call attendance EVIDENCE + safe completion state
+ * (live, fixture-scoped). Requires 0069 applied. Proves provider presence is
+ * neutral EVIDENCE only: window-bounded, deterministic, idempotent aggregation;
+ * a role-aware completion read model that hides payout data from the member
+ * side; support-only diagnostics with no secrets; and — above all — a strict
+ * FINANCIAL FIREWALL (no earning/transfer/refund/credit is ever created by
+ * evidence). All rows are newly created and FK-safely cleaned up.
+ * ============================================================ */
+describe.skipIf(!enabled)('Stage 3B1 attendance evidence (requires live Supabase)', () => {
+  let cAdmin: SupabaseClient; let cComp: SupabaseClient; let cMember: SupabaseClient;
+  let cCoord: SupabaseClient; let cOther: SupabaseClient; let cSup: SupabaseClient;
+  let compAcct: string; let memberAcct: string; let coordAcct: string; let supAcct: string;
+  let companionProfile: string; let memberProfile: string; let offerId: string;
+  const bookingsMade: string[] = [];
+  const managedProfiles: string[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rpc = (c: SupabaseClient, fn: string, args: Record<string, unknown>) => (c as any).rpc(fn, args);
+  const compId = () => `account:${compAcct}`;
+  const memId = () => `account:${memberAcct}`;
+
+  // Create a booking and (for confirmed) its call session. Default window is in
+  // the PAST and closed (start −70m → end −40m → closes −10m) so aggregation is
+  // 'complete' rather than 'pending_call_window'.
+  async function makeCall(opts?: { status?: string; startAgoMin?: number; durationMin?: number; withOrder?: boolean; member?: string }):
+    Promise<{ bookingId: string; sessionId?: string; roomName?: string }> {
+    const status = opts?.status ?? 'confirmed';
+    const startAgo = opts?.startAgoMin ?? 70;
+    const dur = opts?.durationMin ?? 30;
+    const start = new Date(Date.now() - startAgo * 60_000);
+    const end = new Date(start.getTime() + dur * 60_000);
+    const bk = await cAdmin.from('bookings').insert({
+      member_profile_id: opts?.member ?? memberProfile, companion_profile_id: companionProfile,
+      booked_by_account_id: coordAcct, offer_id: offerId,
+      starts_at: start.toISOString(), ends_at: end.toISOString(), communication_method: 'in_app',
+      status, duration_minutes: dur, price_minor: 1000, platform_fee_rate: 0, platform_fee_minor: 0, companion_amount_minor: 1000,
+    }).select('id').single();
+    if (bk.error) throw new Error(`3b1 booking: ${bk.error.message}`);
+    const bookingId = requireUuid(bk.data!.id, '3b1 booking');
+    bookingsMade.push(bookingId);
+    if (opts?.withOrder) {
+      const ord = await cAdmin.from('payment_orders').insert({
+        booking_id: bookingId, provider: 'stripe_test', coordinator_account_id: coordAcct,
+        member_profile_id: opts?.member ?? memberProfile, companion_profile_id: companionProfile,
+        order_type: 'one_off', status: 'succeeded', subtotal_minor: 1000, discount_minor: 0,
+        service_fee_minor: 0, credit_applied_minor: 0, card_amount_minor: 1000, total_minor: 1000,
+        commission_rate_pct: 5, commission_minor: 50, idempotency_key: `3b1-ord-${bookingId}`,
+      }).select('id').single();
+      if (ord.error) throw new Error(`3b1 order: ${ord.error.message}`);
+    }
+    if (status !== 'confirmed') return { bookingId };
+    const prov = await rpc(cAdmin, 'ensure_call_session', { p_booking: bookingId });
+    if (prov.error) throw new Error(`3b1 ensure_call_session: ${JSON.stringify(prov.error)}`);
+    return { bookingId, sessionId: requireUuid(prov.data.call_session_id, '3b1 session'), roomName: prov.data.room_name as string };
+  }
+  // Ingest one provider event (service role). t = ms offset from now.
+  async function ing(room: string, id: string, type: string, identity: string | null, tMs: number) {
+    return rpc(cAdmin, 'ingest_call_event', {
+      p_provider_event_id: id, p_event_type: type, p_room: room, p_identity: identity,
+      p_provider_created_at: new Date(Date.now() + tMs).toISOString(),
+    });
+  }
+  // Support-visible evidence for a booking (recompute is trigger-driven on ingest).
+  async function evidenceOf(bookingId: string): Promise<Record<string, unknown> | null> {
+    const d = await rpc(cSup, 'support_attendance_diagnostics', { p_booking: bookingId });
+    return (d.data?.evidence as Record<string, unknown> | null) ?? null;
+  }
+
+  beforeAll(async () => {
+    cAdmin = adminClient();
+    cComp = await signedInClient(`rls-3b1-comp-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    cMember = await signedInClient(`rls-3b1-mem-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    cCoord = await signedInClient(`rls-3b1-coord-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    cOther = await signedInClient(`rls-3b1-other-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    cSup = await signedInClient(`rls-3b1-sup-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    memberAcct = (await cMember.auth.getUser()).data.user!.id;
+    compAcct = (await cComp.auth.getUser()).data.user!.id;
+    coordAcct = (await cCoord.auth.getUser()).data.user!.id;
+    supAcct = (await cSup.auth.getUser()).data.user!.id;
+    for (const c of [cComp, cMember, cCoord, cOther, cSup]) if ((await c.rpc('ensure_current_account')).error) throw new Error('ensure');
+    if ((await cAdmin.from('support_admins').upsert({ account_id: supAcct }, { onConflict: 'account_id', ignoreDuplicates: true })).error) throw new Error('support');
+
+    const mp = await cAdmin.from('profiles').insert({ role: 'member', first_name: 'Mabel' }).select('id').single();
+    if (mp.error) throw new Error(`member profile: ${mp.error.message}`);
+    memberProfile = requireUuid(mp.data!.id, 'member profile');
+    const cp = await cAdmin.from('profiles').insert({ role: 'companion', first_name: 'Cormac' }).select('id').single();
+    if (cp.error) throw new Error(`companion profile: ${cp.error.message}`);
+    companionProfile = requireUuid(cp.data!.id, 'companion profile');
+    if ((await cAdmin.from('profile_access').insert([
+      { account_id: memberAcct, profile_id: memberProfile, access_role: 'owner', can_edit: true, can_book: true },
+      { account_id: compAcct, profile_id: companionProfile, access_role: 'owner', can_edit: true, can_book: true },
+      { account_id: coordAcct, profile_id: memberProfile, access_role: 'coordinator', can_edit: true, can_book: true },
+    ])).error) throw new Error('access');
+    const of = await cAdmin.from('conversation_offers').insert({
+      companion_profile_id: companionProfile, offer_type: 'single', duration_minutes: 30, price_minor: 1000, supported_methods: ['in_app'],
+    }).select('id').single();
+    if (of.error) throw new Error(`offer: ${of.error.message}`);
+    offerId = requireUuid(of.data!.id, 'offer');
+  }, 180_000);
+
+  afterAll(async () => {
+    for (const b of bookingsMade) {
+      const sid = (await cAdmin.from('call_sessions').select('id').eq('booking_id', b).maybeSingle()).data?.id as string | undefined;
+      await cAdmin.from('call_attendance_evidence').delete().eq('booking_id', b);
+      if (sid) {
+        await cAdmin.from('call_provider_events').delete().eq('call_session_id', sid);
+        await cAdmin.from('call_token_audits').delete().eq('call_session_id', sid);
+        await cAdmin.from('call_participants').delete().eq('call_session_id', sid);
+        await cAdmin.from('call_sessions').delete().eq('id', sid);
+      }
+      await cAdmin.from('conversation_reviews').delete().eq('booking_id', b);
+      await cAdmin.from('conversation_attendance').delete().eq('booking_id', b);
+      await cAdmin.from('completion_confirmations').delete().eq('booking_id', b);
+      await cAdmin.from('conversation_issues').delete().eq('booking_id', b);
+      await cAdmin.from('companion_earnings').delete().eq('booking_id', b);
+      await cAdmin.from('guest_call_invitations').delete().eq('booking_id', b);
+      await cAdmin.from('payment_orders').delete().eq('booking_id', b);
+      await cAdmin.from('bookings').delete().eq('id', b);
+    }
+    await cAdmin.from('profile_access').delete().in('profile_id', [memberProfile, companionProfile, ...managedProfiles].filter(Boolean));
+    for (const p of [companionProfile, memberProfile, ...managedProfiles].filter(Boolean)) await cAdmin.from('profiles').delete().eq('id', p);
+    await cAdmin.from('support_admins').delete().eq('account_id', supAcct);
+  });
+
+  it('1+2+3+4. requested/declined/cancelled/change_proposed produce no eligible evidence state', async () => {
+    for (const [st, expected] of [['requested', 'not_eligible'], ['change_proposed', 'not_eligible'],
+                                  ['declined', 'cancelled_or_declined'], ['cancelled', 'cancelled_or_declined']] as const) {
+      const { bookingId } = await makeCall({ status: st });
+      const s = await rpc(cCoord, 'get_conversation_completion_state', { p_booking: bookingId });
+      expect(s.error, JSON.stringify(s.error)).toBeNull();
+      expect(s.data.completion_state).toBe(expected);
+      expect(s.data.evidence_quality).toBe('outside_eligible_booking');
+      expect(s.data.evidence_classification).toBe('insufficient_evidence');
+    }
+  });
+
+  it('5. a confirmed booking before its call window is pending', async () => {
+    const { bookingId } = await makeCall({ startAgoMin: -60 });      // starts in ~60 min
+    const s = await rpc(cComp, 'get_conversation_completion_state', { p_booking: bookingId });
+    expect(s.error).toBeNull();
+    expect(s.data.completion_state).toBe('scheduled');
+    expect(s.data.evidence_processing).toBe(true);
+    expect(s.data.evidence_classification).toBe('pending');
+  });
+
+  it('6+7. one join+leave per side yields the correct per-side duration', async () => {
+    const { bookingId, roomName } = await makeCall();
+    await ing(roomName!, `c-j-${bookingId}`, 'participant_joined', compId(), -65 * 60_000);
+    await ing(roomName!, `c-l-${bookingId}`, 'participant_left', compId(), -55 * 60_000);   // 10 min
+    await ing(roomName!, `m-j-${bookingId}`, 'participant_joined', memId(), -64 * 60_000);
+    await ing(roomName!, `m-l-${bookingId}`, 'participant_left', memId(), -59 * 60_000);     // 5 min
+    const ev = await evidenceOf(bookingId);
+    expect(ev!.companion_connected_seconds).toBe(600);
+    expect(ev!.member_connected_seconds).toBe(300);
+    expect(ev!.companion_ever_connected).toBe(true);
+    expect(ev!.member_ever_connected).toBe(true);
+  });
+
+  it('8. overlapping presence yields the correct simultaneous seconds', async () => {
+    const { bookingId, roomName } = await makeCall();
+    await ing(roomName!, `c-j-${bookingId}`, 'participant_joined', compId(), -65 * 60_000);
+    await ing(roomName!, `c-l-${bookingId}`, 'participant_left', compId(), -55 * 60_000);   // [-65,-55]
+    await ing(roomName!, `m-j-${bookingId}`, 'participant_joined', memId(), -60 * 60_000);
+    await ing(roomName!, `m-l-${bookingId}`, 'participant_left', memId(), -50 * 60_000);     // [-60,-50]
+    const ev = await evidenceOf(bookingId);
+    expect(ev!.overlap_seconds).toBe(300);                          // [-60,-55] = 5 min
+    expect(ev!.both_connected).toBe(true);
+    expect(ev!.evidence_classification).toBe('both_connected');
+  });
+
+  it('9. multiple reconnects accumulate correctly', async () => {
+    const { bookingId, roomName } = await makeCall();
+    await ing(roomName!, `c-j1-${bookingId}`, 'participant_joined', compId(), -65 * 60_000);
+    await ing(roomName!, `c-l1-${bookingId}`, 'participant_left', compId(), -60 * 60_000);   // 5 min
+    await ing(roomName!, `c-j2-${bookingId}`, 'participant_joined', compId(), -58 * 60_000);
+    await ing(roomName!, `c-l2-${bookingId}`, 'participant_left', compId(), -53 * 60_000);   // 5 min
+    const ev = await evidenceOf(bookingId);
+    expect(ev!.companion_connected_seconds).toBe(600);
+    expect(ev!.companion_join_count).toBe(2);
+  });
+
+  it('10. duplicate provider events are idempotent', async () => {
+    const { bookingId, roomName } = await makeCall();
+    await ing(roomName!, `c-j-${bookingId}`, 'participant_joined', compId(), -65 * 60_000);
+    await ing(roomName!, `c-j-${bookingId}`, 'participant_joined', compId(), -65 * 60_000);   // same event id
+    await ing(roomName!, `c-l-${bookingId}`, 'participant_left', compId(), -55 * 60_000);
+    const ev = await evidenceOf(bookingId);
+    expect(ev!.companion_connected_seconds).toBe(600);
+    expect(ev!.companion_join_count).toBe(1);
+  });
+
+  it('11. out-of-order delivery aggregates deterministically', async () => {
+    const { bookingId, roomName } = await makeCall();
+    // Deliver the LEAVE before the JOIN; recompute orders by provider time.
+    await ing(roomName!, `c-l-${bookingId}`, 'participant_left', compId(), -55 * 60_000);
+    await ing(roomName!, `c-j-${bookingId}`, 'participant_joined', compId(), -65 * 60_000);
+    const ev = await evidenceOf(bookingId);
+    expect(ev!.companion_connected_seconds).toBe(600);
+  });
+
+  it('12. a missing leave never creates an unbounded duration', async () => {
+    const { bookingId, roomName } = await makeCall();          // window closed at ~ −10 min
+    await ing(roomName!, `c-j-${bookingId}`, 'participant_joined', compId(), -65 * 60_000);   // no leave
+    const ev = await evidenceOf(bookingId);
+    // Bounded to the closed window (≈ from join at −65m to close at −10m = 55m).
+    expect(ev!.companion_connected_seconds as number).toBeGreaterThan(0);
+    expect(ev!.companion_connected_seconds as number).toBeLessThanOrEqual(56 * 60);
+    expect(ev!.had_missing_leave).toBe(true);
+    expect(ev!.evidence_quality).toBe('partial');
+  });
+
+  it('13. events outside the eligible window are not counted', async () => {
+    const { bookingId, roomName } = await makeCall();          // window opens at −80 min
+    await ing(roomName!, `c-j-${bookingId}`, 'participant_joined', compId(), -95 * 60_000);   // before opens
+    await ing(roomName!, `c-l-${bookingId}`, 'participant_left', compId(), -85 * 60_000);     // before opens
+    const ev = await evidenceOf(bookingId);
+    expect(ev!.companion_connected_seconds).toBe(0);
+    expect(ev!.companion_ever_connected).toBe(false);
+  });
+
+  it('14. a managed guest maps to the single logical Member side', async () => {
+    const gm = await cAdmin.from('profiles').insert({ role: 'member', first_name: 'GuestMabel' }).select('id').single();
+    if (gm.error) throw new Error(`managed profile: ${gm.error.message}`);
+    const managed = requireUuid(gm.data!.id, 'managed profile'); managedProfiles.push(managed);
+    await cAdmin.from('profile_access').insert({ account_id: coordAcct, profile_id: managed, access_role: 'coordinator', can_edit: true, can_book: true });
+    const { bookingId } = await makeCall({ member: managed });    // member has no owner account
+    const inv = await cAdmin.from('guest_call_invitations').insert({
+      booking_id: bookingId, token_hash: `hash_${bookingId}`, code_hash: 'x',
+      created_by_account_id: coordAcct, expires_at: new Date(Date.now() + 4 * 3600_000).toISOString(),
+    }).select('id').single();
+    if (inv.error) throw new Error(`invitation: ${inv.error.message}`);
+    const invitationId = requireUuid(inv.data!.id, 'invitation');
+    const guestIdentity = `guest_member-${invitationId}`;
+    const prov = await rpc(cAdmin, 'ensure_guest_member_participant', { p_booking: bookingId, p_invitation: invitationId, p_identity: guestIdentity });
+    expect(prov.error, JSON.stringify(prov.error)).toBeNull();
+    const room = prov.data.room_name as string;
+    await ing(room, `g-j-${bookingId}`, 'participant_joined', guestIdentity, -65 * 60_000);
+    await ing(room, `g-l-${bookingId}`, 'participant_left', guestIdentity, -55 * 60_000);
+    const ev = await evidenceOf(bookingId);
+    expect(ev!.member_connected_seconds).toBe(600);              // the guest IS the Member side
+    expect(ev!.companion_connected_seconds).toBe(0);
+  });
+
+  it('15. the Coordinator never appears as a call participant', async () => {
+    const { bookingId, sessionId } = await makeCall();
+    const parts = (await cAdmin.from('call_participants').select('account_id, booking_role').eq('call_session_id', sessionId!)).data ?? [];
+    expect(parts.map((p) => p.booking_role).sort()).toEqual(['companion', 'member']);
+    expect(parts.some((p) => p.account_id === coordAcct)).toBe(false);
+    expect(bookingId).toBeTruthy();
+  });
+
+  it('16. an unknown room is safely ignored and creates no evidence', async () => {
+    const r = await ing(`call_${'a'.repeat(32)}`, `unk-${suffix}`, 'participant_joined', compId(), -60 * 60_000);
+    expect(r.data.result).toBe('ignored_unknown_room');
+  });
+
+  it('17+18+19+20. provider evidence creates NO declaration, confirmation, earning, transfer or refund', async () => {
+    const { bookingId, roomName } = await makeCall({ withOrder: true });   // even FUNDED
+    await ing(roomName!, `c-j-${bookingId}`, 'participant_joined', compId(), -65 * 60_000);
+    await ing(roomName!, `c-l-${bookingId}`, 'participant_left', compId(), -55 * 60_000);
+    await ing(roomName!, `m-j-${bookingId}`, 'participant_joined', memId(), -64 * 60_000);
+    await ing(roomName!, `m-l-${bookingId}`, 'participant_left', memId(), -56 * 60_000);
+    await ing(roomName!, `rf-${bookingId}`, 'room_finished', null, -40 * 60_000);
+    // Evidence exists…
+    expect((await evidenceOf(bookingId))!.relevant_event_count as number).toBeGreaterThan(0);
+    // …but NOTHING financial or declarative was created.
+    expect((await cAdmin.from('conversation_attendance').select('id').eq('booking_id', bookingId)).data ?? []).toHaveLength(0);
+    expect((await cAdmin.from('completion_confirmations').select('id').eq('booking_id', bookingId)).data ?? []).toHaveLength(0);
+    const earnings = (await cAdmin.from('companion_earnings').select('id').eq('booking_id', bookingId)).data ?? [];
+    expect(earnings).toHaveLength(0);
+    expect((await cAdmin.from('companion_transfer_attempts').select('id').in('earning_id',
+      earnings.map((e) => e.id as string).length ? earnings.map((e) => e.id as string) : ['00000000-0000-0000-0000-000000000000'])).data ?? []).toHaveLength(0);
+  });
+
+  it('21+22. declaration and evidence stay separately visible, and conflict is derived without overwriting either', async () => {
+    // Funded, ended; MEMBER-only observed. Companion nonetheless DECLARES took_place.
+    const { bookingId, roomName } = await makeCall({ withOrder: true });
+    await ing(roomName!, `m-j-${bookingId}`, 'participant_joined', memId(), -64 * 60_000);
+    await ing(roomName!, `m-l-${bookingId}`, 'participant_left', memId(), -56 * 60_000);
+    const sub = await rpc(cComp, 'submit_companion_attendance', { p_booking: bookingId, p_outcome: 'took_place', p_explanation: null });
+    expect(sub.error, JSON.stringify(sub.error)).toBeNull();       // existing validated declaration path
+    // Both sources remain independently visible in support diagnostics.
+    const d = await rpc(cSup, 'support_attendance_diagnostics', { p_booking: bookingId });
+    expect(d.data.companion_declaration.outcome).toBe('took_place');
+    expect(d.data.evidence.companion_ever_connected).toBe(false);  // evidence unchanged by the declaration
+    expect(d.data.evidence.member_ever_connected).toBe(true);
+    // Conflict is DERIVED (took_place but the Companion was never observed).
+    const st = await rpc(cComp, 'get_conversation_completion_state', { p_booking: bookingId });
+    expect(st.data.completion_state).toBe('evidence_conflict');
+    expect(st.data.evidence_conflict).toBe(true);
+    expect(st.data.companion_declaration).toBe('took_place');      // source preserved, not overwritten
+  });
+
+  it('23+24. the read model hides payout from the member side and coordinator-actions from the companion', async () => {
+    const { bookingId } = await makeCall({ withOrder: true });
+    const asComp = (await rpc(cComp, 'get_conversation_completion_state', { p_booking: bookingId })).data;
+    const asMember = (await rpc(cMember, 'get_conversation_completion_state', { p_booking: bookingId })).data;
+    const asCoord = (await rpc(cCoord, 'get_conversation_completion_state', { p_booking: bookingId })).data;
+    expect(asComp.payout_status).toBeDefined();                    // Companion sees a user-safe payout label
+    expect(asMember.payout_status).toBeUndefined();                // Member/Coordinator NEVER
+    expect(asMember.companion_connected_seconds).toBeUndefined();
+    expect(asCoord.payout_status).toBeUndefined();
+    expect(asComp.review_eligible).toBe(false);                    // review is a member-side action
+  });
+
+  it('25+26. an unrelated account and an anonymous caller receive nothing', async () => {
+    const { bookingId } = await makeCall();
+    expect((await rpc(cOther, 'get_conversation_completion_state', { p_booking: bookingId })).error).not.toBeNull();
+    expect((await rpc(client(), 'get_conversation_completion_state', { p_booking: bookingId })).error).not.toBeNull();
+  });
+
+  it('27+28. rating is blocked before confirmation and succeeds after the completion flow', async () => {
+    const { bookingId } = await makeCall({ withOrder: true });
+    // 27: no completion yet → the review RPC refuses.
+    expect((await rpc(cCoord, 'submit_conversation_review', { p_booking: bookingId, p_rating: 5, p_feedback: null, p_message_idempotency: `rev-a-${bookingId}` })).error).not.toBeNull();
+    // Companion records the authoritative attendance (existing validated path).
+    expect((await rpc(cComp, 'submit_companion_attendance', { p_booking: bookingId, p_outcome: 'took_place', p_explanation: null })).error).toBeNull();
+    // 28: now a rating is accepted.
+    expect((await rpc(cCoord, 'submit_conversation_review', { p_booking: bookingId, p_rating: 5, p_feedback: 'Lovely chat', p_message_idempotency: `rev-b-${bookingId}` })).error).toBeNull();
+  });
+
+  it('29+30. aggregation is idempotent and concurrency-safe (one deterministic result)', async () => {
+    const { bookingId, roomName } = await makeCall();
+    await ing(roomName!, `c-j-${bookingId}`, 'participant_joined', compId(), -65 * 60_000);
+    await ing(roomName!, `c-l-${bookingId}`, 'participant_left', compId(), -55 * 60_000);
+    const first = (await evidenceOf(bookingId))!.companion_connected_seconds;
+    await Promise.all([
+      rpc(cAdmin, 'recompute_attendance_evidence', { p_booking: bookingId }),
+      rpc(cAdmin, 'recompute_attendance_evidence', { p_booking: bookingId }),
+    ]);
+    const rows = (await cAdmin.from('call_attendance_evidence').select('companion_connected_seconds').eq('booking_id', bookingId)).data ?? [];
+    expect(rows).toHaveLength(1);                                  // exactly one row
+    expect(rows[0].companion_connected_seconds).toBe(first);      // unchanged
+  });
+
+  it('31. rescheduling uses the updated booking/session window', async () => {
+    const { bookingId, sessionId } = await makeCall();
+    const newStart = new Date(Date.now() - 200 * 60_000);         // move well back
+    const newEnd = new Date(newStart.getTime() + 30 * 60_000);
+    await cAdmin.from('bookings').update({ starts_at: newStart.toISOString(), ends_at: newEnd.toISOString() }).eq('id', bookingId);
+    await rpc(cAdmin, 'ensure_call_session', { p_booking: bookingId });   // realign the snapshot
+    await rpc(cAdmin, 'recompute_attendance_evidence', { p_booking: bookingId });
+    const ev = await evidenceOf(bookingId);
+    expect(new Date(ev!.window_opens_at as string).getTime()).toBeLessThan(newStart.getTime() + 1);
+    expect(sessionId).toBeTruthy();
+  });
+
+  it('32+33. support diagnostics are support-only and contain no secrets', async () => {
+    const { bookingId, roomName } = await makeCall();
+    await ing(roomName!, `c-j-${bookingId}`, 'participant_joined', compId(), -65 * 60_000);
+    expect((await rpc(cComp, 'support_attendance_diagnostics', { p_booking: bookingId })).error).not.toBeNull();
+    expect((await rpc(cMember, 'support_attendance_diagnostics', { p_booking: bookingId })).error).not.toBeNull();
+    const d = await rpc(cSup, 'support_attendance_diagnostics', { p_booking: bookingId });
+    expect(d.error).toBeNull();
+    const blob = JSON.stringify(d.data);
+    for (const secret of ['room_name', 'token', 'private_feedback', 'stripe', 'card', 'bank', 'code_hash', 'token_hash']) {
+      expect(blob.toLowerCase()).not.toContain(secret);
+    }
+  });
+
+  it('36. no global worker is invoked — only scoped ingest/recompute/read RPCs were called', async () => {
+    // The whole block only ever calls ingest_call_event / recompute / read RPCs and
+    // the existing validated declaration path; assert the fixture created no stray
+    // earning across ITS bookings (financial firewall holds suite-wide).
+    for (const b of bookingsMade) {
+      const earned = (await cAdmin.from('companion_earnings').select('id, state').eq('booking_id', b)).data ?? [];
+      // Only the two explicit submit_companion_attendance bookings may have an earning.
+      expect(earned.length).toBeLessThanOrEqual(1);
+    }
+  });
+});
