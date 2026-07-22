@@ -6480,6 +6480,13 @@ describe.skipIf(!enabled)('Stage 3B1 attendance evidence (requires live Supabase
     const state = async (c: SupabaseClient) => (await rpc(c, 'get_conversation_completion_state', { p_booking: bookingId })).data;
     const status = async () => (await cAdmin.from('bookings').select('status').eq('id', bookingId).single()).data!.status;
 
+    // Setup: the Companion records took_place attendance while the booking is still
+    // 'confirmed', creating the earning NOW. ensure_companion_earning returns an
+    // EXISTING earning before its status='confirmed' guard, so the later review can
+    // succeed once the booking reaches 'completed' (a NEW earning could not be made
+    // at 'completed'). This is the existing validated declaration path.
+    expect((await rpc(cComp, 'submit_companion_attendance', { p_booking: bookingId, p_outcome: 'took_place', p_explanation: null })).error, 'companion attendance').toBeNull();
+
     // A. Before any confirmation → not eligible, not submitted (strict booleans).
     const a = await state(cMember);
     expect(a.review_eligible).toBe(false);
