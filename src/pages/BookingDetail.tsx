@@ -187,6 +187,10 @@ export default function BookingDetail() {
   }
 
   const ended = new Date(booking.ends_at).getTime() <= Date.now();
+  // Only an ACCEPTED (confirmed) booking enters the completion/attendance/earning
+  // workflow — matches the 0067 server invariant. A requested/declined/cancelled
+  // booking has no completion, review or payout, regardless of elapsed time.
+  const eligibleForCompletion = booking.status === 'confirmed';
   // Once a conversation has ended, reschedule/cancel no longer make sense —
   // the completion panel takes over.
   const active = ['requested', 'confirmed', 'change_proposed'].includes(booking.status) && !ended;
@@ -309,12 +313,13 @@ export default function BookingDetail() {
       </section>
 
       {/* Funded, ended conversations get EXACTLY ONE post-conversation card
-          per role. Each card self-hides unless the server confirms the
-          booking is funded & eligible, so the legacy CompletionPanel /
-          RatingPanel below are additionally gated on `funded === false`.
+          per role. The completion workflow only applies to an ACCEPTED
+          (confirmed) booking: a request that was never accepted (requested), or
+          a declined/cancelled booking, has nothing to confirm, review or earn —
+          even if its time has passed. This mirrors the 0067 server invariant.
 
           Member side → the single combined outcome + review card. */}
-      {!isCompanionSide && isRequesterSide && ended && (
+      {!isCompanionSide && isRequesterSide && ended && eligibleForCompletion && (
         <section className="section-tight">
           <CoordinatorPostConversationCard
             bookingId={booking.id}
@@ -325,12 +330,26 @@ export default function BookingDetail() {
         </section>
       )}
 
-      {/* Companion side → ONLY the 2G4B attendance card (no status gate, so a
-          funded booking the old flow moved confirmed → completed still shows
-          it; the card self-hides unless ended & funded). */}
-      {isCompanionSide && ended && (
+      {/* Companion side → ONLY the 2G4B attendance card (accepted + ended; the
+          card additionally self-hides unless funded). */}
+      {isCompanionSide && ended && eligibleForCompletion && (
         <section className="section-tight">
           <AttendanceCard bookingId={booking.id} memberName={booking.member_first_name} onConfirmed={() => void load()} />
+        </section>
+      )}
+
+      {/* An accepted booking that never happened is out of scope for the
+          completion workflow; an unaccepted/ended request shows a neutral note
+          rather than a broken confirm/review action. */}
+      {ended && !eligibleForCompletion && (isCompanionSide || isRequesterSide) && (
+        <section className="section-tight">
+          <div className="card card-muted" style={{ margin: 0 }}>
+            <span className="muted small">
+              {booking.status === 'requested'
+                ? 'This request was not accepted, so there is nothing to confirm or review.'
+                : 'This conversation did not go ahead, so there is nothing to confirm or review.'}
+            </span>
+          </div>
         </section>
       )}
 

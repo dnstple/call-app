@@ -74,18 +74,10 @@ describe('0036 review + rating contract', () => {
 describe('ReviewCard UI contract', () => {
   it('server-authoritative visibility; coordinator side only in the detail page', () => {
     expect(CARD).toContain('if (!isSupabaseMode() || state === null || !state.ended || !state.eligible) return null;');
-    // The card is reachable for ANY ended member-side conversation — no
-    // client status gate — so a funded booking the old flow moved to
-    // `completed` still surfaces the 2G4C review. The card self-hides
-    // unless the server says it is funded & eligible.
-    expect(DETAIL).toContain('{!isCompanionSide && isRequesterSide && ended && (');
-    // The member-side card gate carries no status constraint, so a funded
-    // booking the old flow moved to `completed` still surfaces the review.
-    const reviewGate = DETAIL.slice(
-      DETAIL.indexOf('{!isCompanionSide && isRequesterSide && ended && ('),
-      DETAIL.indexOf('<CoordinatorPostConversationCard'),
-    );
-    expect(reviewGate).not.toContain('booking.status');
+    // 0067: the completion/review card renders ONLY for an ACCEPTED (confirmed)
+    // ended booking. A request that was never accepted has nothing to review.
+    expect(DETAIL).toContain('{!isCompanionSide && isRequesterSide && ended && eligibleForCompletion && (');
+    expect(DETAIL).toContain("const eligibleForCompletion = booking.status === 'confirmed'");
     expect(CARD).toContain("rpc('get_review_state'");
   });
 
@@ -199,14 +191,11 @@ describe('one post-conversation card per role (no duplicate completion UIs)', ()
     expect(DETAIL).toContain('isCompanionSide');
   });
 
-  it('Companion side renders ONLY the attendance card (no confirmed-status gate)', () => {
-    expect(DETAIL).toContain('{isCompanionSide && ended && (');
-    const attGate = DETAIL.slice(
-      DETAIL.indexOf('{isCompanionSide && ended && ('),
-      DETAIL.indexOf('<AttendanceCard'),
-    );
-    expect(attGate).not.toContain('booking.status');
-    // The attendance card self-hides unless the server says ended & funded.
+  it('Companion side renders ONLY the attendance card, gated on an accepted booking (0067)', () => {
+    expect(DETAIL).toContain('{isCompanionSide && ended && eligibleForCompletion && (');
+    // 0067: attendance only applies to an ACCEPTED (confirmed) ended booking.
+    expect(DETAIL).toContain("const eligibleForCompletion = booking.status === 'confirmed'");
+    // The attendance card additionally self-hides unless the server says ended & funded.
     expect(ATT).toContain('!state.ended || !state.funded) return null');
   });
 

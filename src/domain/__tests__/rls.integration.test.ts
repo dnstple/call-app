@@ -5900,3 +5900,116 @@ describe.skipIf(!enabled)('3A LiveKit audio foundations (requires live Supabase)
     expect((await cAdmin.from('payment_orders').select('id').eq('booking_id', bookingId)).data ?? []).toHaveLength(0);
   });
 });
+
+/* ============================================================
+ * 0067 — completion & earning invariant (live, fixture-scoped). Requires 0067
+ * applied. Proves only an ACCEPTED (confirmed) booking may attend/earn; a
+ * requested/declined/cancelled booking fails closed; a confirmed booking earns
+ * exactly once (idempotent); payout state is Companion-only. No global worker.
+ * ============================================================ */
+describe.skipIf(!enabled)('0067 completion/earning invariant (requires live Supabase)', () => {
+  let cAdmin: SupabaseClient; let cComp: SupabaseClient; let cCoord: SupabaseClient;
+  let compAcct: string; let coordAcct: string;
+  let companionProfile: string; let memberProfile: string; let offerId: string; let bookingId: string; let orderId: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rpc = (c: SupabaseClient, fn: string, args: Record<string, unknown>) => (c as any).rpc(fn, args);
+
+  beforeAll(async () => {
+    cAdmin = adminClient();
+    cComp = await signedInClient(`rls-inv-comp-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    cCoord = await signedInClient(`rls-inv-coord-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    compAcct = (await cComp.auth.getUser()).data.user!.id;
+    coordAcct = (await cCoord.auth.getUser()).data.user!.id;
+    for (const c of [cComp, cCoord]) if ((await c.rpc('ensure_current_account')).error) throw new Error('ensure');
+
+    const cp = await cAdmin.from('profiles').insert({ role: 'companion', first_name: 'InvComp' }).select('id').single();
+    if (cp.error) throw new Error(`companion profile: ${cp.error.message}`);
+    companionProfile = requireUuid(cp.data!.id, 'companion profile');
+    const mp = await cAdmin.from('profiles').insert({ role: 'member', first_name: 'InvMem' }).select('id').single();
+    if (mp.error) throw new Error(`member profile: ${mp.error.message}`);
+    memberProfile = requireUuid(mp.data!.id, 'member profile');
+    const acc = await cAdmin.from('profile_access').insert([
+      { account_id: compAcct, profile_id: companionProfile, access_role: 'owner', can_edit: true, can_book: true },
+      { account_id: coordAcct, profile_id: memberProfile, access_role: 'coordinator', can_edit: true, can_book: true },
+    ]);
+    if (acc.error) throw new Error(`access: ${acc.error.message}`);
+    const of = await cAdmin.from('conversation_offers').insert({
+      companion_profile_id: companionProfile, offer_type: 'single', duration_minutes: 30, price_minor: 1000, supported_methods: ['in_app'],
+    }).select('id').single();
+    if (of.error) throw new Error(`offer: ${of.error.message}`);
+    offerId = requireUuid(of.data!.id, 'offer');
+
+    // A funded, ended booking that starts REQUESTED (never accepted).
+    const start = new Date(Date.now() - 13.5 * 60 * 60_000); const end = new Date(start.getTime() + 30 * 60_000);
+    const bk = await cAdmin.from('bookings').insert({
+      member_profile_id: memberProfile, companion_profile_id: companionProfile, booked_by_account_id: coordAcct,
+      offer_id: offerId, starts_at: start.toISOString(), ends_at: end.toISOString(), communication_method: 'in_app',
+      status: 'requested', duration_minutes: 30, price_minor: 1000, platform_fee_rate: 0, platform_fee_minor: 0, companion_amount_minor: 1000,
+    }).select('id').single();
+    if (bk.error) throw new Error(`booking: ${bk.error.message}`);
+    bookingId = requireUuid(bk.data!.id, 'booking');
+    const ord = await cAdmin.from('payment_orders').insert({
+      booking_id: bookingId, provider: 'stripe_test', coordinator_account_id: coordAcct,
+      member_profile_id: memberProfile, companion_profile_id: companionProfile, order_type: 'one_off', status: 'succeeded',
+      subtotal_minor: 1000, discount_minor: 0, service_fee_minor: 0, credit_applied_minor: 0, card_amount_minor: 1000,
+      total_minor: 1000, commission_rate_pct: 5, commission_minor: 50,
+      stripe_payment_intent_id: `pi_inv_${suffix}`, idempotency_key: `inv-o-${suffix}`,
+    }).select('id').single();
+    if (ord.error) throw new Error(`order: ${ord.error.message}`);
+    orderId = requireUuid(ord.data!.id, 'order');
+  }, 120_000);
+
+  afterAll(async () => {
+    await cAdmin.from('conversation_issues').delete().eq('booking_id', bookingId);
+    await cAdmin.from('conversation_attendance').delete().eq('booking_id', bookingId);
+    await cAdmin.from('companion_transfer_attempts').delete().in('earning_id',
+      ((await cAdmin.from('companion_earnings').select('id').eq('booking_id', bookingId)).data ?? []).map((r) => r.id as string));
+    await cAdmin.from('companion_earnings').delete().eq('booking_id', bookingId);
+    if (orderId) await cAdmin.from('payment_orders').delete().eq('id', orderId);
+    if (bookingId) await cAdmin.from('bookings').delete().eq('id', bookingId);
+    if (offerId) await cAdmin.from('conversation_offers').delete().eq('id', offerId);
+    await cAdmin.from('profile_access').delete().in('profile_id', [companionProfile, memberProfile].filter(Boolean));
+    if (companionProfile) await cAdmin.from('profiles').delete().eq('id', companionProfile);
+    if (memberProfile) await cAdmin.from('profiles').delete().eq('id', memberProfile);
+  });
+
+  it('1+6. a REQUESTED booking cannot submit took_place attendance and creates no earning', async () => {
+    const r = await rpc(cComp, 'submit_companion_attendance', { p_booking: bookingId, p_outcome: 'took_place', p_explanation: null });
+    expect(r.error).not.toBeNull();                                   // not_eligible (not confirmed)
+    expect((await cAdmin.from('conversation_attendance').select('id').eq('booking_id', bookingId)).data ?? []).toHaveLength(0);
+    expect((await cAdmin.from('companion_earnings').select('id').eq('booking_id', bookingId)).data ?? []).toHaveLength(0);
+  });
+
+  it('2+3. a DECLINED and a CANCELLED booking also refuse attendance (no earning)', async () => {
+    for (const st of ['declined', 'cancelled']) {
+      await cAdmin.from('bookings').update({ status: st }).eq('id', bookingId);
+      expect((await rpc(cComp, 'submit_companion_attendance', { p_booking: bookingId, p_outcome: 'took_place', p_explanation: null })).error).not.toBeNull();
+      expect((await cAdmin.from('companion_earnings').select('id').eq('booking_id', bookingId)).data ?? []).toHaveLength(0);
+    }
+  });
+
+  it('8+9. a CONFIRMED booking earns exactly once and repeat submission is idempotent', async () => {
+    await cAdmin.from('bookings').update({ status: 'confirmed' }).eq('id', bookingId);
+    const r1 = await rpc(cComp, 'submit_companion_attendance', { p_booking: bookingId, p_outcome: 'took_place', p_explanation: null });
+    expect(r1.error).toBeNull();
+    const earnings = (await cAdmin.from('companion_earnings').select('id, state').eq('booking_id', bookingId)).data ?? [];
+    expect(earnings).toHaveLength(1);                                 // exactly one earning
+    // Ended >12h ago with no issue → payable.
+    expect(['payable', 'pending_completion']).toContain(earnings[0].state);
+    const r2 = await rpc(cComp, 'submit_companion_attendance', { p_booking: bookingId, p_outcome: 'took_place', p_explanation: null });
+    expect(r2.error).toBeNull();
+    expect(r2.data.repeat).toBe(true);                               // idempotent
+    expect((await cAdmin.from('companion_earnings').select('id').eq('booking_id', bookingId)).data ?? []).toHaveLength(1);
+  });
+
+  it('10+11. payout state is Companion-only — the Coordinator cannot read completion state', async () => {
+    expect((await rpc(cComp, 'get_companion_completion_state', { p_booking: bookingId })).error).toBeNull();
+    expect((await rpc(cCoord, 'get_companion_completion_state', { p_booking: bookingId })).error).not.toBeNull();
+  });
+
+  it('16. no global worker / financial worker is invoked by these tests', async () => {
+    // The suite only calls submit_companion_attendance + read RPCs; assert no
+    // extra bookings/orders were touched beyond this fixture.
+    expect((await cAdmin.from('payment_orders').select('id').eq('booking_id', bookingId)).data ?? []).toHaveLength(1);
+  });
+});
