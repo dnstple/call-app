@@ -6703,7 +6703,8 @@ describe.skipIf(!enabled)('Stage 3B1 attendance evidence (requires live Supabase
     const a = (await evidenceOf(bookingId))!;
     expect(a.window_opens_at).toBe(b.window_opens_at);             // frozen — NOT re-snapshotted
     expect(a.companion_connected_seconds).toBe(b.companion_connected_seconds);   // events NOT reinterpreted
-  });
+    // Live fixture + multiple ingest/recompute round-trips — exceeds the 5s default.
+  }, 60_000);
 
   it('R1. submit_rating is blocked before completion and succeeds after both sides confirm', async () => {
     // A fresh confirmed, funded, ended booking (Member has owner access).
@@ -7792,5 +7793,6 @@ describe.skipIf(!enabled)('Stage 3C1 financial operations control plane (require
       expect((await rpc(cOps, 'support_preview_operation_run', { p_run_id: rq.data.run_id })).error, op).toBeNull();
     }
     expect(await snap(), 'preview left every financial row byte-identical').toEqual(before);
-  });
+    // Multiple live fixtures + six preview operations + before/after snapshots — exceeds the 5s default.
+  }, 60_000);
 });
