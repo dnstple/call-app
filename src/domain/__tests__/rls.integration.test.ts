@@ -3287,10 +3287,6 @@ describe.skipIf(!enabled)('2G5B recurring billing engine (requires live Supabase
  * method. Only then does process_plan_renewals create exactly one period.
  * ============================================================ */
 describe.skipIf(!enabled)('2G5B plan lifecycle (requires live Supabase)', () => {
-  // Stage 3C1: this block drives the now-kill-switched plan_renewal worker, so it
-  // enables that control for its duration and resets it after (service role bypasses RLS).
-  beforeAll(async () => { await adminClient().from('financial_operation_controls').update({ state: 'enabled' }).in('control_name', ['plan_renewal']); }, 30_000);
-  afterAll(async () => { await adminClient().from('financial_operation_controls').update({ state: 'disabled' }).in('control_name', ['plan_renewal']); }, 30_000);
   let lc: SupabaseClient;     // coordinator + member (payer)
   let lcmp: SupabaseClient;   // companion
   let lother: SupabaseClient; // unrelated coordinator
@@ -3406,7 +3402,7 @@ describe.skipIf(!enabled)('2G5B plan lifecycle (requires live Supabase)', () => 
     expect((await lc.rpc('activate_plan_billing', { p_plan: plan2 })).data.repeat).toBe(true);
   });
 
-  it('only now does process_plan_renewals bill it — exactly one period, no duplicate', async () => {
+  it.skip('only now does process_plan_renewals bill it — exactly one period, no duplicate', async () => {
     expect((await lAdmin.rpc('process_plan_renewals')).error).toBeNull();
     const first = await lAdmin.from('plan_billing_periods').select('id, period_start').eq('plan_id', plan2);
     expect(first.data).toHaveLength(1);
@@ -3761,10 +3757,13 @@ describe.skipIf(!enabled)('2G6A recurring-plan earnings (requires live Supabase)
  * reversed, zero-value and un-ready earnings are never claimed; worker RPCs are
  * service-role only and the ledger is unforgeable.
  * ============================================================ */
-describe.skipIf(!enabled)('2G6B companion transfers (requires live Supabase)', () => {
-  // Stage 3C1: drives the kill-switched transfer_claim worker — enable for this block.
-  beforeAll(async () => { await adminClient().from('financial_operation_controls').update({ state: 'enabled' }).in('control_name', ['transfer_claim']); }, 30_000);
-  afterAll(async () => { await adminClient().from('financial_operation_controls').update({ state: 'disabled' }).in('control_name', ['transfer_claim']); }, 30_000);
+// Stage 3C1 isolation: this legacy block drives claim_plan_transfers live. After
+// 0073 that raw worker is INERT in hosted_test (kill-switch enforced), so the
+// worker business-logic assertions here are covered instead by the source-contract
+// suite planTransfers2g6b + the Stage 3C1 direct-worker enforcement tests, and this
+// live block is skipped until the Stage 3C2 scoped implementation lands. It does NOT
+// enable any control.
+describe.skip('2G6B companion transfers (requires live Supabase)', () => {
   let tc: SupabaseClient;    // coordinator + member
   let tcmp: SupabaseClient;  // companion
   let tsup: SupabaseClient;  // support admin
@@ -3967,10 +3966,10 @@ describe.skipIf(!enabled)('2G6B companion transfers (requires live Supabase)', (
  * so unrelated hosted rows are never touched. No Stripe call is made; the worker
  * finalisation RPC is exercised directly with synthetic refund ids.
  * ============================================================ */
-describe.skipIf(!enabled)('2G6C payment refunds (requires live Supabase)', () => {
-  // Stage 3C1: drives the kill-switched refund_claim worker — enable for this block.
-  beforeAll(async () => { await adminClient().from('financial_operation_controls').update({ state: 'enabled' }).in('control_name', ['refund_claim']); }, 30_000);
-  afterAll(async () => { await adminClient().from('financial_operation_controls').update({ state: 'disabled' }).in('control_name', ['refund_claim']); }, 30_000);
+// Stage 3C1 isolation: drives claim_payment_refunds live → now INERT in hosted_test.
+// Worker logic covered by the source-contract suite refunds2g6c + the 3C1 enforcement
+// tests; skipped until the Stage 3C2 scoped implementation. Enables no control.
+describe.skip('2G6C payment refunds (requires live Supabase)', () => {
   let rc: SupabaseClient;    // payer (coordinator)
   let rsup: SupabaseClient;  // support admin
   let rAdmin: SupabaseClient;
@@ -4132,10 +4131,9 @@ describe.skipIf(!enabled)('2G6C payment refunds (requires live Supabase)', () =>
  * never for requested/permanent/cancelled — and credit-only immediate success
  * records exactly one. Fixture-scoped; synthetic Stripe ids only.
  * ============================================================ */
-describe.skipIf(!enabled)('2G6C adjustment-on-success (requires live Supabase)', () => {
-  // Stage 3C1: drives the kill-switched refund_claim worker — enable for this block.
-  beforeAll(async () => { await adminClient().from('financial_operation_controls').update({ state: 'enabled' }).in('control_name', ['refund_claim']); }, 30_000);
-  afterAll(async () => { await adminClient().from('financial_operation_controls').update({ state: 'disabled' }).in('control_name', ['refund_claim']); }, 30_000);
+// Stage 3C1 isolation: drives claim_payment_refunds live → now INERT in hosted_test.
+// Covered by refunds2g6c contract suite + 3C1 enforcement; skipped until Stage 3C2.
+describe.skip('2G6C adjustment-on-success (requires live Supabase)', () => {
   let ac: SupabaseClient;   // coordinator + member
   let acmp: SupabaseClient; // companion
   let asup: SupabaseClient; // support admin
@@ -4258,10 +4256,10 @@ function requireUuid(value: unknown, label: string): string {
   return value;
 }
 
-describe.skipIf(!enabled)('2G6D disputes (requires live Supabase)', () => {
-  // Stage 3C1: drives the kill-switched transfer_claim + refund_claim workers — enable for this block.
-  beforeAll(async () => { await adminClient().from('financial_operation_controls').update({ state: 'enabled' }).in('control_name', ['transfer_claim', 'refund_claim']); }, 30_000);
-  afterAll(async () => { await adminClient().from('financial_operation_controls').update({ state: 'disabled' }).in('control_name', ['transfer_claim', 'refund_claim']); }, 30_000);
+// Stage 3C1 isolation: drives claim_plan_transfers + claim_payment_refunds live →
+// now INERT in hosted_test. Dispute logic is covered by the disputes2g6d /
+// disputeSupportOps2g6e contract suites + 3C1 enforcement; skipped until Stage 3C2.
+describe.skip('2G6D disputes (requires live Supabase)', () => {
   let dc: SupabaseClient; let dcmp: SupabaseClient; let dsup: SupabaseClient; let dAdmin: SupabaseClient;
   let orderId: string; let e1: string; let e2: string; let payerId: string; let supId3: string;
   let charge1: number; let charge2: number;
@@ -5227,10 +5225,10 @@ describe.skipIf(!enabled)('2G6E-B dispute deadline alerts (requires live Supabas
  * refund worker is invoked. Runs (immutable) are never deleted; only fixture
  * findings/orders/refunds/webhooks are cleaned. Historical runs are retained.
  * ============================================================ */
-describe.skipIf(!enabled)('2G6E-C financial reconciliation (requires live Supabase)', () => {
-  // Stage 3C1: drives the kill-switched financial_reconciliation worker — enable for this block.
-  beforeAll(async () => { await adminClient().from('financial_operation_controls').update({ state: 'enabled' }).in('control_name', ['financial_reconciliation']); }, 30_000);
-  afterAll(async () => { await adminClient().from('financial_operation_controls').update({ state: 'disabled' }).in('control_name', ['financial_reconciliation']); }, 30_000);
+// Stage 3C1 isolation: drives run_financial_reconciliation_for_entities live → now
+// INERT in hosted_test (scoped run required, Stage 3C2). Reconciliation logic is
+// covered by the financialReconciliation2g6ec contract suite + 3C1 enforcement.
+describe.skip('2G6E-C financial reconciliation (requires live Supabase)', () => {
   let cAdmin: SupabaseClient; let cfsup: SupabaseClient; let cfsup2: SupabaseClient; let cfc: SupabaseClient;
   let cfsupId: string; let cfsup2Id: string; let cfcId: string;
   let companionProfileId: string; let memberProfileId: string; let offerId: string;
@@ -6731,10 +6729,12 @@ describe.skipIf(!enabled)('Stage 3B1 attendance evidence (requires live Supabase
  * FK-safely cleaned up.
  * ============================================================ */
 describe.skipIf(!enabled)('Stage 3B2 evidence payout holds (requires live Supabase)', () => {
-  // Stage 3C1: this block exercises claim_plan_transfers (now kill-switched) to prove
-  // held earnings are excluded — enable transfer_claim for its duration.
-  beforeAll(async () => { await adminClient().from('financial_operation_controls').update({ state: 'enabled' }).in('control_name', ['transfer_claim']); }, 30_000);
-  afterAll(async () => { await adminClient().from('financial_operation_controls').update({ state: 'disabled' }).in('control_name', ['transfer_claim']); }, 30_000);
+  // Stage 3C1 isolation: three cases here (7, 8, RACE-A) drove claim_plan_transfers
+  // live to prove held earnings are excluded from a transfer claim. That raw worker
+  // is now INERT in hosted_test, so those live-claim cases are individually skipped
+  // (claim-exclusion logic is covered by the claim_plan_transfers source-contract
+  // and the 3C1 enforcement tests). No control is enabled here. Every OTHER 3B2
+  // case (hold creation, read model, support workflow, auto-clear) is unaffected.
   let cAdmin: SupabaseClient; let cComp: SupabaseClient; let cMember: SupabaseClient;
   let cCoord: SupabaseClient; let cSup: SupabaseClient; let cSup2: SupabaseClient; let cOther: SupabaseClient;
   let compAcct: string; let memberAcct: string; let coordAcct: string; let supAcct: string; let sup2Acct: string;
@@ -6962,7 +6962,7 @@ describe.skipIf(!enabled)('Stage 3B2 evidence payout holds (requires live Supaba
   });
 
   // ---- defence in depth #2: a hold excludes a payable earning from transfer claims ----
-  it('7. a hold on an already-PAYABLE earning excludes it from claim_plan_transfers (control is claimed)', async () => {
+  it.skip('7. a hold on an already-PAYABLE earning excludes it from claim_plan_transfers (control is claimed)', async () => {
     // HELD: make it payable FIRST (no events), then finalise conflicting evidence → post-payable hold.
     const held = await makeCall({ startAgoMin: LONG, withOrder: true });
     expect((await rpc(cComp, 'submit_companion_attendance', { p_booking: held.bookingId, p_outcome: 'took_place', p_explanation: null })).error).toBeNull();
@@ -6984,7 +6984,7 @@ describe.skipIf(!enabled)('Stage 3B2 evidence payout holds (requires live Supaba
     expect((await earningState(held.bookingId))?.transfer_state).toBe('not_ready');   // untouched
   });
 
-  it('8. post_transfer_review: a conflict discovered AFTER the transfer left is flagged (not blocking), transfer never reversed', async () => {
+  it.skip('8. post_transfer_review: a conflict discovered AFTER the transfer left is flagged (not blocking), transfer never reversed', async () => {
     const bk = await makeCall({ startAgoMin: LONG, withOrder: true });
     expect((await rpc(cComp, 'submit_companion_attendance', { p_booking: bk.bookingId, p_outcome: 'took_place', p_explanation: null })).error).toBeNull();
     const claim = await rpc(cAdmin, 'claim_plan_transfers', { p_limit: 50 });
@@ -7129,7 +7129,7 @@ describe.skipIf(!enabled)('Stage 3B2 evidence payout holds (requires live Supaba
   });
 
   // ---- explicit races ----
-  it('RACE-A. evaluator vs transfer-claim: an active hold is never claimed unreviewed', async () => {
+  it.skip('RACE-A. evaluator vs transfer-claim: an active hold is never claimed unreviewed', async () => {
     // Payable earning, no hold yet; conflicting evidence lands AT THE SAME TIME as a claim.
     const bk = await makeCall({ startAgoMin: LONG, withOrder: true });
     expect((await rpc(cComp, 'submit_companion_attendance', { p_booking: bk.bookingId, p_outcome: 'took_place', p_explanation: null })).error).toBeNull();
@@ -7355,11 +7355,13 @@ describe.skipIf(!enabled)('Stage 3C1 financial operations control plane (require
     expect((await rpc(cOps, 'support_set_financial_control', { p_control: 'earning_release', p_expected_state: 'dry_run_only', p_new_state: 'disabled', p_reason: 'reset' })).error).toBeNull();
   });
 
-  it('production_live enable requires the confirmation phrase (no accidental single flip)', async () => {
-    controlsTouched.add('production_live_operations');
-    expect(JSON.stringify((await rpc(cOps, 'support_set_financial_control', { p_control: 'production_live_operations', p_expected_state: 'disabled', p_new_state: 'enabled', p_reason: 'go live' })).error)).toMatch(/confirmation_required/);
-    expect((await rpc(cOps, 'support_set_financial_control', { p_control: 'production_live_operations', p_expected_state: 'disabled', p_new_state: 'enabled', p_reason: 'go live', p_confirmation: 'ENABLE-PRODUCTION-LIVE' })).error).toBeNull();
-    await cAdmin.from('financial_operation_controls').update({ state: 'disabled' }).eq('control_name', 'production_live_operations');
+  it('the production master cannot be armed to enabled in hosted_test and needs its own phrase for any non-disabled state', async () => {
+    // Arming the master to 'enabled' is rejected outright outside production_live.
+    expect(JSON.stringify((await rpc(cOps, 'support_set_financial_control', { p_control: 'production_live_operations', p_expected_state: 'disabled', p_new_state: 'enabled', p_reason: 'go live' })).error)).toMatch(/enabled_requires_production_live/);
+    // Any non-disabled master change needs the dedicated master phrase.
+    expect(JSON.stringify((await rpc(cOps, 'support_set_financial_control', { p_control: 'production_live_operations', p_expected_state: 'disabled', p_new_state: 'scoped_execution', p_reason: 'arm' })).error)).toMatch(/master_confirmation_required/);
+    // The master stays disabled — no test arms a global worker.
+    expect((await cAdmin.from('financial_operation_controls').select('state').eq('control_name', 'production_live_operations').single()).data!.state).toBe('disabled');
   });
 
   // ---- previews (11–20, 43) ----
@@ -7513,15 +7515,30 @@ describe.skipIf(!enabled)('Stage 3C1 financial operations control plane (require
     await rpc(cOps, 'support_set_financial_control', { p_control: 'earning_release', p_expected_state: 'scoped_execution', p_new_state: 'disabled', p_reason: 'reset' });
   });
 
-  it('35. a non-earning execution is deferred to a later stage even when its control is enabled', async () => {
+  it('35. transfer/refund/renewal/reconciliation execution remains stage_not_enabled (scoped impl is Stage 3C2)', async () => {
     controlsTouched.add('transfer_claim');
-    await rpc(cOps, 'support_set_financial_control', { p_control: 'transfer_claim', p_expected_state: 'disabled', p_new_state: 'enabled', p_reason: 'attempt' });
+    // 'scoped_execution' is the strongest state settable outside production_live
+    // ('enabled' is rejected). Even so, the wrapper defers every non-earning op.
+    await rpc(cOps, 'support_set_financial_control', { p_control: 'transfer_claim', p_expected_state: 'disabled', p_new_state: 'scoped_execution', p_reason: 'attempt' });
     const g = await makeEarning();
     const req = track(await request(cOps, { p_operation_type: 'transfer_claim', p_execution_mode: 'execute_scoped', p_scope_type: 'record_ids', p_scoped_ids: [g.earningId], p_batch_limit: null, p_reason: 'x' }));
     await rpc(cOps, 'support_preview_operation_run', { p_run_id: req.data.run_id });
     await rpc(cOps, 'support_confirm_operation_run', { p_run_id: req.data.run_id, p_confirmation_token: req.data.confirmation_token });
     expect(JSON.stringify((await rpc(cOps, 'support_execute_operation_run', { p_run_id: req.data.run_id, p_confirmation_token: req.data.confirmation_token })).error)).toMatch(/stage_not_enabled/);
-    await rpc(cOps, 'support_set_financial_control', { p_control: 'transfer_claim', p_expected_state: 'enabled', p_new_state: 'disabled', p_reason: 'reset' });
+    await rpc(cOps, 'support_set_financial_control', { p_control: 'transfer_claim', p_expected_state: 'scoped_execution', p_new_state: 'disabled', p_reason: 'reset' });
+  });
+
+  it('ENV. enabling any control is rejected outside production_live; the env + master RPCs are phrase-gated', async () => {
+    // Point 6: enabled is rejected in hosted_test. Point 1: no test ever enables a control.
+    expect(JSON.stringify((await rpc(cOps, 'support_set_financial_control', { p_control: 'earning_release', p_expected_state: 'disabled', p_new_state: 'enabled', p_reason: 'x' })).error)).toMatch(/enabled_requires_production_live/);
+    expect((await cAdmin.from('financial_operation_controls').select('state').eq('control_name', 'earning_release').single()).data!.state, 'control unchanged').toBe('disabled');
+    // Arming the master needs its own phrase; a plain attempt is refused.
+    expect(JSON.stringify((await rpc(cOps, 'support_set_financial_control', { p_control: 'production_live_operations', p_expected_state: 'disabled', p_new_state: 'scoped_execution', p_reason: 'x' })).error)).toMatch(/master_confirmation_required/);
+    // The environment transition itself is support-only, reasoned and phrase-gated for production_live.
+    expect((await rpc(cUser, 'support_set_financial_environment', { p_expected_environment: 'hosted_test', p_new_environment: 'development', p_reason: 'x' })).error).not.toBeNull();
+    expect(JSON.stringify((await rpc(cOps, 'support_set_financial_environment', { p_expected_environment: 'hosted_test', p_new_environment: 'production_live', p_reason: 'go' })).error)).toMatch(/confirmation_required/);
+    // Environment is unchanged (still hosted_test) — no test moves to production_live.
+    expect((await cAdmin.from('financial_operations_config').select('environment').eq('id', true).single()).data!.environment).toBe('hosted_test');
   });
 
   // ---- firewall (37–42) ----
@@ -7574,94 +7591,120 @@ describe.skipIf(!enabled)('Stage 3C1 financial operations control plane (require
     expect(['confirmed', 'cancelled']).toContain(st);
   });
 
-  // ---- DIRECT-WORKER BYPASS regression: a raw service-role call cannot bypass
-  //      the kill switch. cAdmin uses the service_role key; each worker refuses
-  //      to claim or mutate while its control is disabled/dry_run_only, and only
-  //      does work once the control is 'enabled'. Fixture-scoped rows only. ----
-  const setControl = async (name: string, state: string) => {
+  // ---- DIRECT-WORKER BYPASS regression. NO test ever sets a raw-worker control to
+  //      'enabled' (the RPC forbids it outside production_live, and even a forced
+  //      table state would be inert without the transaction-local approved-run
+  //      context + production_live). These prove every raw global worker is INERT in
+  //      hosted_test under EVERY reachable control state (disabled / dry_run_only /
+  //      scoped_execution), whether called as a direct service-role RPC or via the
+  //      15-minute cron-equivalent orchestrator. Positive execution exists ONLY for
+  //      fixture-scoped earning_release through an approved run (test 34+36). ----
+  const setControl = async (name: string, state: 'disabled' | 'dry_run_only' | 'scoped_execution') => {
     controlsTouched.add(name);
-    await cAdmin.from('financial_operation_controls').update({ state, reason: '3c1 bypass test', expires_at: null }).eq('control_name', name);
+    // Routed through the sanctioned RPC; 'enabled' is intentionally NOT an option.
+    const cur = (await cAdmin.from('financial_operation_controls').select('state').eq('control_name', name).single()).data!.state as string;
+    if (cur !== state) await rpc(cOps, 'support_set_financial_control', { p_control: name, p_expected_state: cur, p_new_state: state, p_reason: '3c1 enforcement test' });
   };
+  const REACHABLE = ['disabled', 'dry_run_only', 'scoped_execution'] as const;
 
-  it('BYPASS earning_release: release_eligible_earnings is inert while disabled and works only when enabled', async () => {
+  it('BYPASS earning_release: release_eligible_earnings is INERT under every reachable control state (direct RPC + cron path)', async () => {
     const f = await makeEarning();                                  // pending earning, took_place attendance
-    // Age the booking past the 12h release window so the raw worker WOULD release it.
     await cAdmin.from('bookings').update({ ends_at: new Date(Date.now() - 13 * 3600_000).toISOString() }).eq('id', f.bookingId);
-    await setControl('earning_release', 'disabled');
-    expect((await cAdmin.rpc('release_eligible_earnings')).error).toBeNull();
-    expect((await cAdmin.from('companion_earnings').select('state').eq('id', f.earningId).single()).data!.state, 'disabled ⇒ no release').toBe('pending_completion');
-    await setControl('earning_release', 'dry_run_only');
-    await cAdmin.rpc('release_eligible_earnings');
-    expect((await cAdmin.from('companion_earnings').select('state').eq('id', f.earningId).single()).data!.state, 'dry_run_only ⇒ no release').toBe('pending_completion');
-    await setControl('earning_release', 'enabled');
-    expect((await cAdmin.rpc('release_eligible_earnings')).error).toBeNull();
-    expect((await cAdmin.from('companion_earnings').select('state').eq('id', f.earningId).single()).data!.state, 'enabled ⇒ released').toBe('payable');
+    for (const state of REACHABLE) {
+      await setControl('earning_release', state);
+      expect((await cAdmin.rpc('release_eligible_earnings')).error).toBeNull();        // direct service-role call
+      await cAdmin.rpc('process_post_conversation_tasks');                              // 15-min cron-equivalent
+      expect((await cAdmin.from('companion_earnings').select('state').eq('id', f.earningId).single()).data!.state, `${state} ⇒ inert`).toBe('pending_completion');
+    }
     await setControl('earning_release', 'disabled');
   });
 
-  it('BYPASS transfer_claim: claim_plan_transfers claims nothing while disabled; claims only when enabled', async () => {
+  it('BYPASS transfer_claim: claim_plan_transfers claims NOTHING under any reachable control state', async () => {
     const f = await makeEarning();
     await cAdmin.from('companion_earnings').update({ state: 'payable', transfer_state: 'not_ready', payable_at: new Date().toISOString() }).eq('id', f.earningId);
-    await setControl('transfer_claim', 'disabled');
-    expect((await cAdmin.rpc('claim_plan_transfers', { p_limit: 50 })).error).toBeNull();
-    expect((await cAdmin.from('companion_earnings').select('transfer_state').eq('id', f.earningId).single()).data!.transfer_state, 'disabled ⇒ unclaimed').toBe('not_ready');
-    expect((await cAdmin.from('companion_transfer_attempts').select('id').eq('earning_id', f.earningId)).data ?? []).toHaveLength(0);
-    await setControl('transfer_claim', 'enabled');
-    const claim = await cAdmin.rpc('claim_plan_transfers', { p_limit: 50 });
-    expect((claim.data ?? []).map((r: { booking_id: string }) => r.booking_id)).toContain(f.bookingId);
-    expect((await cAdmin.from('companion_earnings').select('transfer_state').eq('id', f.earningId).single()).data!.transfer_state).toBe('processing');
+    for (const state of REACHABLE) {
+      await setControl('transfer_claim', state);
+      expect((await cAdmin.rpc('claim_plan_transfers', { p_limit: 50 })).error).toBeNull();
+      await cAdmin.rpc('recover_stale_transfers', { p_minutes: 0 });
+      expect((await cAdmin.from('companion_earnings').select('transfer_state').eq('id', f.earningId).single()).data!.transfer_state, `${state} ⇒ unclaimed`).toBe('not_ready');
+      expect((await cAdmin.from('companion_transfer_attempts').select('id').eq('earning_id', f.earningId)).data ?? [], state).toHaveLength(0);
+    }
     await setControl('transfer_claim', 'disabled');
   });
 
-  it('BYPASS refund_claim: claim_payment_refunds is inert while disabled; claims only when enabled', async () => {
+  it('BYPASS refund_claim: claim_payment_refunds is INERT under any reachable control state', async () => {
     const f = await makeEarning();
     const rf = await cAdmin.from('payment_refunds').insert({
       payment_order_id: f.orderId, booking_id: f.bookingId, payer_account_id: coordAcct, remedy_minor: 500,
       card_refund_minor: 500, currency: 'GBP', state: 'requested', stripe_payment_intent_id: `pi_3c1_${f.bookingId}`,
       idempotency_key: `3c1-rfb-${f.bookingId}` }).select('id').single();
     const refundId = requireUuid(rf.data!.id, '3c1 refund bypass');
-    await setControl('refund_claim', 'disabled');
-    expect((await cAdmin.rpc('claim_payment_refunds', { p_limit: 50, p_ids: [refundId] })).error).toBeNull();
-    expect((await cAdmin.from('payment_refunds').select('state').eq('id', refundId).single()).data!.state, 'disabled ⇒ not claimed').toBe('requested');
-    await setControl('refund_claim', 'enabled');
-    await cAdmin.rpc('claim_payment_refunds', { p_limit: 50, p_ids: [refundId] });
-    expect((await cAdmin.from('payment_refunds').select('state').eq('id', refundId).single()).data!.state, 'enabled ⇒ processing').toBe('processing');
+    for (const state of REACHABLE) {
+      await setControl('refund_claim', state);
+      expect((await cAdmin.rpc('claim_payment_refunds', { p_limit: 50, p_ids: [refundId] })).error).toBeNull();
+      await cAdmin.rpc('recover_stale_refunds', { p_minutes: 0 });
+      expect((await cAdmin.from('payment_refunds').select('state').eq('id', refundId).single()).data!.state, `${state} ⇒ not claimed`).toBe('requested');
+    }
     await setControl('refund_claim', 'disabled');
   });
 
-  it('BYPASS plan_renewal + financial_reconciliation: raw workers skip while disabled', async () => {
-    await setControl('plan_renewal', 'disabled');
-    expect((await cAdmin.rpc('process_plan_renewals')).data.skipped, 'disabled ⇒ skipped').toBe(true);
-    await setControl('plan_renewal', 'enabled');
-    expect((await cAdmin.rpc('process_plan_renewals')).data.skipped ?? false, 'enabled ⇒ runs').toBe(false);
-    await setControl('plan_renewal', 'disabled');
+  it('BYPASS plan_renewal + reconciliation + dispute alerts: raw workers SKIP under any reachable control state', async () => {
     const f = await makeEarning();
-    await setControl('financial_reconciliation', 'disabled');
-    expect((await cAdmin.rpc('run_financial_reconciliation_for_entities', { p_entity_ids: [f.earningId] })).data.skipped, 'disabled ⇒ skipped').toBe(true);
-    await setControl('financial_reconciliation', 'enabled');
-    const ran = await cAdmin.rpc('run_financial_reconciliation_for_entities', { p_entity_ids: [f.earningId] });
-    expect(ran.data.skipped ?? false, 'enabled ⇒ runs').toBe(false);
-    expect(ran.data.scanned).toBeDefined();
+    for (const state of REACHABLE) {
+      await setControl('plan_renewal', state);
+      expect((await cAdmin.rpc('process_plan_renewals')).data.skipped, `plan_renewal ${state}`).toBe(true);
+      await setControl('financial_reconciliation', state);
+      expect((await cAdmin.rpc('run_financial_reconciliation_for_entities', { p_entity_ids: [f.earningId] })).data.skipped, `recon ${state}`).toBe(true);
+      expect((await cAdmin.rpc('run_financial_reconciliation', { p_limit: 10 })).data.skipped, `recon-global ${state}`).toBe(true);
+    }
+    await setControl('plan_renewal', 'disabled');
     await setControl('financial_reconciliation', 'disabled');
   });
 
-  it('BYPASS scope: an approved run scoped to earning A never mutates earning B; expired control blocks', async () => {
+  it('SCOPE: an approved run scoped to earning A releases A only; earning B is never touched; expired control blocks', async () => {
     const a = await makeEarning(); const b = await makeEarning();
     await setControl('earning_release', 'scoped_execution');
     const run = track(await request(cOps, { p_operation_type: 'earning_release', p_execution_mode: 'execute_scoped', p_scope_type: 'record_ids', p_scoped_ids: [a.earningId], p_batch_limit: null, p_reason: 'scope A' }));
     await rpc(cOps, 'support_preview_operation_run', { p_run_id: run.data.run_id });
     await rpc(cOps, 'support_confirm_operation_run', { p_run_id: run.data.run_id, p_confirmation_token: run.data.confirmation_token });
     await rpc(cOps, 'support_execute_operation_run', { p_run_id: run.data.run_id, p_confirmation_token: run.data.confirmation_token });
-    // B (out of scope) is untouched; A is released.
-    expect((await cAdmin.from('companion_earnings').select('state').eq('id', b.earningId).single()).data!.state).toBe('pending_completion');
-    expect((await cAdmin.from('companion_earnings').select('state').eq('id', a.earningId).single()).data!.state).toBe('payable');
-    // An EXPIRED control (past expiry) reads as disabled → the raw worker is inert again.
-    await cAdmin.from('financial_operation_controls').update({ state: 'enabled', expires_at: new Date(Date.now() - 60_000).toISOString() }).eq('control_name', 'earning_release');
+    expect((await cAdmin.from('companion_earnings').select('state').eq('id', b.earningId).single()).data!.state, 'B out of scope').toBe('pending_completion');
+    expect((await cAdmin.from('companion_earnings').select('state').eq('id', a.earningId).single()).data!.state, 'A released via approved run').toBe('payable');
+    // Expiry: a scoped_execution control with a PAST expiry reads as 'disabled', so a
+    // subsequent approved run's execution is refused (control_disabled). No 'enabled' used.
+    await cAdmin.from('financial_operation_controls').update({ expires_at: new Date(Date.now() - 60_000).toISOString() }).eq('control_name', 'earning_release');
     const c = await makeEarning();
-    await cAdmin.from('bookings').update({ ends_at: new Date(Date.now() - 13 * 3600_000).toISOString() }).eq('id', c.bookingId);
-    await cAdmin.rpc('release_eligible_earnings');
-    expect((await cAdmin.from('companion_earnings').select('state').eq('id', c.earningId).single()).data!.state, 'expired control ⇒ disabled').toBe('pending_completion');
-    await setControl('earning_release', 'disabled');
+    const run2 = track(await request(cOps, { p_operation_type: 'earning_release', p_execution_mode: 'execute_scoped', p_scope_type: 'record_ids', p_scoped_ids: [c.earningId], p_batch_limit: null, p_reason: 'expired' }));
+    await rpc(cOps, 'support_preview_operation_run', { p_run_id: run2.data.run_id });
+    await rpc(cOps, 'support_confirm_operation_run', { p_run_id: run2.data.run_id, p_confirmation_token: run2.data.confirmation_token });
+    expect(JSON.stringify((await rpc(cOps, 'support_execute_operation_run', { p_run_id: run2.data.run_id, p_confirmation_token: run2.data.confirmation_token })).error), 'expired ⇒ disabled').toMatch(/control_disabled/);
+    expect((await cAdmin.from('companion_earnings').select('state').eq('id', c.earningId).single()).data!.state).toBe('pending_completion');
+    // Clear the past expiry back to a clean disabled control.
+    await cAdmin.from('financial_operation_controls').update({ state: 'disabled', expires_at: null }).eq('control_name', 'earning_release');
+  });
+
+  it('THROW-SAFETY: a run that throws mid-flight leaves NO control enabled and every control disabled', async () => {
+    const f = await makeEarning();
+    try {
+      const run = track(await request(cOps, { p_operation_type: 'earning_release', p_execution_mode: 'execute_scoped', p_scope_type: 'record_ids', p_scoped_ids: [f.earningId], p_batch_limit: null, p_reason: 'throw' }));
+      await rpc(cOps, 'support_preview_operation_run', { p_run_id: run.data.run_id });
+      await rpc(cOps, 'support_confirm_operation_run', { p_run_id: run.data.run_id, p_confirmation_token: run.data.confirmation_token });
+      throw new Error('deliberate mid-flight failure after confirming a run');
+    } catch { /* swallowed — the point is what state is left behind */ }
+    // Financial safety does NOT depend on a cleanup hook: no control is enabled.
+    const states = ((await cAdmin.from('financial_operation_controls').select('state')).data ?? []).map((r) => r.state);
+    expect(states.some((s) => s === 'enabled'), 'no control left enabled').toBe(false);
+    // And the environment never left hosted_test.
+    expect((await cAdmin.from('financial_operations_config').select('environment').eq('id', true).single()).data!.environment).toBe('hosted_test');
+  });
+
+  it('CONTROLS-CLEAN: after all direct-worker tests every financial control is disabled', async () => {
+    // Not relying on afterAll: assert the resting state here, at the end of the block.
+    for (const name of ['earning_release', 'transfer_claim', 'refund_claim', 'plan_renewal', 'financial_reconciliation']) {
+      await setControl(name, 'disabled');
+    }
+    const rows = (await cAdmin.from('financial_operation_controls').select('control_name, state')).data ?? [];
+    expect(rows.every((r) => r.state === 'disabled'), 'all controls disabled').toBe(true);
   });
 
   // ---- PREVIEW PURITY: capture before/after across every entity kind; only run

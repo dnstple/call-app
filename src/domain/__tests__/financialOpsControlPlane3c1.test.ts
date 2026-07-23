@@ -165,10 +165,23 @@ describe('0073 readiness — support-only, no secrets', () => {
 });
 
 describe('0073 kill-switch ENFORCEMENT — every raw batch worker gates on the guard', () => {
-  it('defines the central guard, environment reader and phrase-gated environment RPC', () => {
-    expect(M).toContain('create or replace function app_private.batch_worker_enabled(p_op text)');
-    expect(fn('app_private.batch_worker_enabled')).toContain("effective_control_state(p_op) = 'enabled'");
-    expect(fn('app_private.batch_worker_enabled')).toContain("current_financial_environment() <> 'production_live'");
+  it('the raw-worker guard requires an unforgeable context + production_live + control + master (never just enabled)', () => {
+    const g = fn('app_private.batch_worker_enabled');
+    // ALL FOUR must hold — a control being 'enabled' alone is NOT sufficient.
+    expect(g).toContain('app_private.scoped_execution_op() = p_op');                    // (1) txn-local context
+    expect(g).toContain("current_financial_environment() = 'production_live'");         // (2) prod-live only
+    expect(g).toContain("effective_control_state(p_op) = 'enabled'");                   // (3) op control
+    expect(g).toContain("effective_control_state('production_live_operations') = 'enabled'");  // (4) master
+    // The context is transaction-local (is_local) and set only by begin_scoped_execution.
+    const ctx = fn('app_private.scoped_execution_op');
+    expect(ctx).toContain("current_setting('app.financial_scope_op', true)");
+    const begin = fn('app_private.begin_scoped_execution');
+    expect(begin).toContain("perform set_config('app.financial_scope_op', p_op, true)");   // is_local ⇒ txn-scoped
+    expect(begin).toContain('not_production_live');                                     // refuses outside prod-live
+    expect(begin).toContain('run_not_confirmed');
+    expect(begin).toContain('run_expired');
+    expect(begin).toContain('for update');
+    expect(M).toContain('grant execute on function app_private.begin_scoped_execution(uuid, text) to service_role');
     expect(M).toContain('create or replace function app_private.assert_financial_operation_allowed');
     const env = fn('public.support_set_financial_environment');
     expect(env).toContain('if not app_private.is_support_admin() then raise exception');
@@ -178,6 +191,14 @@ describe('0073 kill-switch ENFORCEMENT — every raw batch worker gates on the g
     expect(env).toContain('confirmation_required');
     expect(env).toContain('for update');                            // optimistic concurrency
     expect(env).toContain('insert into public.financial_operation_control_events');   // audited
+  });
+  it('the control transition REJECTS enabled outside production_live and phrase-gates the master separately', () => {
+    const t = fn('public.support_set_financial_control');
+    expect(t).toContain('enabled_requires_production_live');
+    expect(t).toContain("p_new_state = 'enabled' and v_env <> 'production_live'");
+    expect(t).toContain("c_master_phrase constant text := 'ARM-PRODUCTION-MASTER'");
+    expect(t).toContain('master_confirmation_required');
+    expect(t).toContain("c_live_phrase constant text := 'ENABLE-PRODUCTION-LIVE'");
   });
   it('redefines EVERY authoritative batch/global worker with a batch_worker_enabled guard as the first statement', () => {
     const guarded: [string, string][] = [

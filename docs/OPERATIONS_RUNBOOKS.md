@@ -29,11 +29,36 @@ Each control (`financial_operation_controls`) is one of:
 
 Operational environments (`financial_operations_config.environment`), server-owned and
 never inferred from a browser variable: `development`, `hosted_test`, `production_dry_run`,
-`production_live`. **Production live is not the default and cannot be reached by a single
-boolean update** — enabling the `production_live_operations` control (or enabling any
-control while the environment is `production_live`) requires the confirmation phrase
-`ENABLE-PRODUCTION-LIVE` passed as a second safety parameter to
-`support_set_financial_control`.
+`production_live`. Changed only through `support_set_financial_environment` (reasoned,
+audited, optimistic; `production_live` needs the `ENABLE-PRODUCTION-LIVE` phrase).
+
+### Raw workers are inert unless FOUR conditions hold (Stage 3C1 isolation)
+
+A control being `enabled` is **not** sufficient to run a global/batch worker. Every raw
+worker (`release_eligible_earnings`, `resolve_unconfirmed_attendance`, `process_plan_renewals`,
+`claim_plan_transfers`, `recover_stale_transfers`, `claim_payment_refunds`,
+`recover_stale_refunds`, `run_financial_reconciliation(_for_entities)`,
+`process_dispute_deadline_alerts`) is inert unless **all** of these hold at once:
+
+1. a **transaction-local approved-run context** for that exact operation is active — set only
+   by `app_private.begin_scoped_execution()` after it locks and validates an approved,
+   confirmed, unexpired operation run (this context cannot be forged or reused by a browser,
+   an ordinary service-role RPC, a pg_cron job, or an Edge Function, because none of them run
+   inside that transaction);
+2. the environment is `production_live`;
+3. the operation's own control is `enabled`;
+4. the `production_live_operations` master control is `enabled`.
+
+So in `development` / `hosted_test` / `production_dry_run`, **every raw worker is inert no
+matter what any control is set to** — the active pg_cron jobs and settlement Edge Functions
+are harmless without touching their schedules. Transition hardening: an individual control
+**cannot** be set to `enabled` unless the environment is already `production_live`
+(`enabled_requires_production_live`); arming the master needs its own dedicated phrase
+`ARM-PRODUCTION-MASTER`; enabling a control while `production_live` needs `ENABLE-PRODUCTION-LIVE`.
+Changing the environment alone, or the master alone, never makes a worker operative — all
+four conditions plus an approved scoped run must agree. Expired controls read as `disabled`.
+
+Two-person approval remains a documented later requirement.
 
 ---
 

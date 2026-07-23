@@ -114,14 +114,22 @@ alter table public.financial_operation_control_events enable row level security;
 alter table public.financial_operation_control_events force row level security;
 
 -- Reasoned, audited, optimistic-concurrency transition. Never runs a worker.
--- production-live states require a second safety parameter (confirmation
--- phrase) so a single boolean update can never reach production_live.
+-- HARDENED (Stage 3C1 isolation):
+--   * no individual control may enter 'enabled' unless the environment is ALREADY
+--     'production_live' — enabling a control in dev/hosted_test/production_dry_run
+--     is rejected outright, so no test or operator can arm a global worker there;
+--   * arming the production master ('production_live_operations') requires its OWN
+--     dedicated phrase (distinct from the environment phrase);
+--   * enabling any control while already production_live requires the live phrase;
+--   * changing the master alone never enables any worker (batch_worker_enabled also
+--     requires the per-op control + the transaction-local approved-run context).
 create or replace function public.support_set_financial_control(
   p_control text, p_expected_state text, p_new_state text,
   p_reason text, p_expires_at timestamptz default null, p_confirmation text default null)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
   c_live_phrase constant text := 'ENABLE-PRODUCTION-LIVE';
+  c_master_phrase constant text := 'ARM-PRODUCTION-MASTER';
   v_row public.financial_operation_controls;
   v_env text;
 begin
@@ -131,12 +139,19 @@ begin
   end if;
   if p_reason is null or trim(p_reason) = '' then raise exception 'reason_required: a reason is required'; end if;
   select environment into v_env from public.financial_operations_config where id = true;
-  -- Second safety gate: turning the production-live master switch ON, or enabling
-  -- ANY control while the environment is production_live, needs the phrase.
-  if ((p_control = 'production_live_operations' and p_new_state <> 'disabled')
-      or (v_env = 'production_live' and p_new_state = 'enabled'))
+  -- No control may be armed to 'enabled' outside production_live.
+  if p_new_state = 'enabled' and v_env <> 'production_live' then
+    raise exception 'enabled_requires_production_live: cannot enable % in the % environment', p_control, v_env;
+  end if;
+  -- Arming the production master needs its own dedicated confirmation phrase.
+  if p_control = 'production_live_operations' and p_new_state <> 'disabled'
+     and coalesce(p_confirmation, '') <> c_master_phrase then
+    raise exception 'master_confirmation_required: arming the production master requires its confirmation phrase';
+  end if;
+  -- Enabling any (non-master) control while production_live needs the live phrase.
+  if p_control <> 'production_live_operations' and p_new_state = 'enabled'
      and coalesce(p_confirmation, '') <> c_live_phrase then
-    raise exception 'confirmation_required: production-live changes require the confirmation phrase';
+    raise exception 'confirmation_required: enabling a production-live control requires the confirmation phrase';
   end if;
   -- Single-winner: lock the row, then enforce the caller's expected current state.
   select * into v_row from public.financial_operation_controls where control_name = p_control for update;
@@ -180,26 +195,83 @@ revoke all on function app_private.current_financial_environment() from public, 
 grant execute on function app_private.current_financial_environment() to authenticated, service_role;
 
 -- ------------------------------------------------------------
--- 2b. THE AUTHORITATIVE KILL-SWITCH GUARD. Every RAW batch/global worker gates
---     on batch_worker_enabled() at its narrowest safe choke point (its first
---     statement), so a direct service-role call, a pg_cron job running as a
---     superuser, an Edge Function, or an internal orchestrator all refuse
---     identically when the control is not 'enabled'. This closes the bypass:
---     the control is a real kill switch, not merely a UI/wrapper convention.
+-- 2b. THE AUTHORITATIVE KILL-SWITCH GUARD + UNFORGEABLE EXECUTION CONTEXT.
 --
---     A raw batch worker may run ONLY when its control is explicitly 'enabled'
---     (NOT under disabled / dry_run_only / scoped_execution — scoped runs go
---     through the operation-run wrapper). In production_live the master switch
---     must also be enabled. Expired controls read as 'disabled'.
+--     A control being 'enabled' is NOT sufficient to run a raw worker. Every RAW
+--     batch/global worker gates on batch_worker_enabled() which is true ONLY when
+--     ALL of the following hold simultaneously:
+--       (1) a TRANSACTION-LOCAL approved-run context for this exact operation is
+--           active — set only by app_private.begin_scoped_execution() AFTER it
+--           locks + validates an approved, confirmed, unexpired operation run;
+--       (2) the environment is production_live;
+--       (3) the operation's own control is 'enabled';
+--       (4) the production-live master control is 'enabled'.
+--     Expired controls read as 'disabled' (see effective_control_state).
+--
+--     Because the context is a transaction-local GUC (is_local=true), it vanishes
+--     at transaction end and CANNOT be invented or reused by a browser, an
+--     ordinary service-role RPC, a pg_cron job (running as a superuser) or an Edge
+--     Function — none of them run inside begin_scoped_execution's transaction. In
+--     development / hosted_test / production_dry_run condition (2) is never met, so
+--     EVERY raw worker is inert no matter what a control is set to. Setting a
+--     control to 'enabled' therefore never makes a global worker operative outside
+--     production_live, and even there a direct raw call (without the context) is
+--     inert. This removes the reliance on cleanup hooks for financial safety.
+--
+--     Stage 3C1 wires NO scoped implementation that calls a raw worker, so raw
+--     workers are inert in every 3C1 environment. Scoped execution of the raw
+--     workers is Stage 3C2.
 -- ------------------------------------------------------------
+-- The transaction-local approved operation for the current transaction (or null).
+create or replace function app_private.scoped_execution_op()
+returns text language sql stable security definer set search_path = '' as $$
+  select nullif(current_setting('app.financial_scope_op', true), '');
+$$;
+revoke all on function app_private.scoped_execution_op() from public, anon, authenticated;
+grant execute on function app_private.scoped_execution_op() to authenticated, service_role;
+
 create or replace function app_private.batch_worker_enabled(p_op text)
 returns boolean language sql stable security definer set search_path = '' as $$
-  select app_private.effective_control_state(p_op) = 'enabled'
-    and (app_private.current_financial_environment() <> 'production_live'
-         or app_private.effective_control_state('production_live_operations') = 'enabled');
+  select coalesce(app_private.scoped_execution_op() = p_op, false)            -- (1) unforgeable context
+     and app_private.current_financial_environment() = 'production_live'      -- (2) prod-live only
+     and app_private.effective_control_state(p_op) = 'enabled'               -- (3) op control on
+     and app_private.effective_control_state('production_live_operations') = 'enabled';  -- (4) master on
 $$;
 revoke all on function app_private.batch_worker_enabled(text) from public, anon, authenticated;
 grant execute on function app_private.batch_worker_enabled(text) to authenticated, service_role;
+
+-- Establish the transaction-local approved-run context. Callable only by a scoped
+-- wrapper (service_role / definer). It re-validates EVERYTHING before granting the
+-- context: an approved + confirmed + unexpired run, matching operation + scope,
+-- production_live, the op control and the master control. In any non-production
+-- environment it refuses, so the context can never be established under 3C1.
+create or replace function app_private.begin_scoped_execution(p_run_id uuid, p_op text)
+returns void language plpgsql security definer set search_path = '' as $$
+declare v_run public.financial_operation_runs; v_max int;
+begin
+  select max_batch_limit into v_max from public.financial_operations_config where id = true;
+  if app_private.current_financial_environment() <> 'production_live' then
+    raise exception 'not_production_live: scoped worker execution is only available in production_live';
+  end if;
+  if app_private.effective_control_state(p_op) not in ('scoped_execution', 'enabled') then
+    raise exception 'control_disabled: % is not executable', p_op;
+  end if;
+  if app_private.effective_control_state('production_live_operations') <> 'enabled' then
+    raise exception 'production_live_locked: the master control is disabled';
+  end if;
+  select * into v_run from public.financial_operation_runs where id = p_run_id for update;
+  if v_run.id is null then raise exception 'run_not_found'; end if;
+  if v_run.operation_type <> p_op then raise exception 'run_operation_mismatch'; end if;
+  if v_run.state not in ('confirmed', 'executing') then raise exception 'run_not_confirmed'; end if;
+  if v_run.expires_at <= now() then raise exception 'run_expired'; end if;
+  if v_run.scope_type <> 'record_ids' or array_length(v_run.scoped_ids, 1) is null then raise exception 'scope_required'; end if;
+  if array_length(v_run.scoped_ids, 1) > v_max then raise exception 'batch_limit_exceeded'; end if;
+  perform set_config('app.financial_scope_op', p_op, true);          -- transaction-local (is_local)
+  perform set_config('app.financial_scope_run', p_run_id::text, true);
+end;
+$$;
+revoke all on function app_private.begin_scoped_execution(uuid, text) from public, anon, authenticated;
+grant execute on function app_private.begin_scoped_execution(uuid, text) to service_role;
 
 -- The central asserting guard for SCOPED, run-approved execution (used by the
 -- operation-run execution wrapper and available to any future scoped worker).
