@@ -32,11 +32,12 @@ function fn(name: string): string {
   return M.slice(s, M.indexOf('\n$$;', s));
 }
 
-describe('0075 is additive — 0001–0074 untouched, 0075 highest', () => {
+describe('0075 is additive — 0001–0074 untouched', () => {
   it('adds 0075 and never modifies any prior migration file', () => {
     const files = readdirSync(MIG).filter((f) => /^\d{4}_.*\.sql$/.test(f)).map((f) => f.slice(0, 4)).sort();
     expect(files).toContain('0075');
-    expect(files[files.length - 1]).toBe('0075');
+    // (Later stages add higher-numbered migrations additively; 0075 stays immutable.)
+    expect(files.indexOf('0075')).toBeGreaterThan(files.indexOf('0074'));
     expect(M_CODE).not.toMatch(/drop table/i);
   });
 });

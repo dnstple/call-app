@@ -8294,3 +8294,339 @@ describe.skipIf(!enabled)('Stage 3C2-A scoped earning release (requires live Sup
     expect((await cAdmin.from('financial_operations_config').select('environment').eq('id', true).single()).data!.environment).toBe('hosted_test');
   }, 60_000);
 });
+
+describe.skipIf(!enabled)('Stage 3C2-B scoped plan renewal (requires live Supabase)', () => {
+  let cAdmin: SupabaseClient; let cOps: SupabaseClient; let cUser: SupabaseClient;
+  let cCoordCredit: SupabaseClient; let cCoordCard: SupabaseClient; let cCompanion: SupabaseClient;
+  let opsAcct: string; let creditAcct: string; let cardAcct: string;
+  let companionProfile: string;
+  const plansMade: string[] = [];
+  const allowancesMade: string[] = [];
+  const membersMade: string[] = [];
+  const runIdsMade: string[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rpc = (c: SupabaseClient, fn: string, args: Record<string, unknown>) => (c as any).rpc(fn, args);
+
+  // A fresh recurring plan (fresh member per plan — one live plan per pair).
+  // funded='credit' → the coordinator with a large account credit (credit-covered);
+  // funded='card'   → the coordinator with NO credit (card remainder → payment_pending).
+  async function mkPlan(opts?: { status?: string; billed?: boolean; funded?: 'credit' | 'card'; slots?: number }):
+      Promise<{ planId: string; allowanceId: string; coordinator: string }> {
+    const funded = opts?.funded ?? 'credit';
+    const cCoord = funded === 'credit' ? cCoordCredit : cCoordCard;
+    const coordinator = funded === 'credit' ? creditAcct : cardAcct;
+    const mp = await cAdmin.from('profiles').insert({ role: 'member', first_name: '3c2bM' }).select('id').single();
+    const member = requireUuid(mp.data!.id, '3c2b member'); membersMade.push(member);
+    await cAdmin.from('profile_access').insert({ account_id: coordinator, profile_id: member, access_role: 'owner', can_edit: true, can_book: true });
+    const slots = Array.from({ length: opts?.slots ?? 2 }, (_, i) => ({ day: i + 1, time: '10:00' }));
+    const plan = await rpc(cCoord, 'create_conversation_plan', {
+      p_member: member, p_companion: companionProfile, p_frequency: slots.length || 1,
+      p_duration: 30, p_method: 'in_app', p_slots: slots.length ? slots : [{ day: 1, time: '10:00' }],
+    });
+    if (plan.error) throw new Error(`3c2b plan: ${JSON.stringify(plan.error)}`);
+    const planId = plan.data.id as string; plansMade.push(planId);
+    allowancesMade.push(plan.data.allowance_purchase_id as string);
+    // Server-faithful fixture states via admin (fresh rows only): activate + billing.
+    if (opts?.slots === 0) await cAdmin.from('plan_schedule_slots').delete().eq('plan_id', planId);
+    const upd = await cAdmin.from('conversation_plans')
+      .update({ status: opts?.status ?? 'active', billing_enabled: opts?.billed ?? true }).eq('id', planId).select('id');
+    if (upd.error || (upd.data ?? []).length !== 1) throw new Error(`3c2b fixture update: ${JSON.stringify(upd.error)}`);
+    return { planId, allowanceId: plan.data.allowance_purchase_id as string, coordinator };
+  }
+  async function reqRun(ids: string[], mode: 'preview' | 'execute_scoped' = 'execute_scoped') {
+    const r = await rpc(cOps, 'support_request_operation_run', { p_operation_type: 'plan_renewal', p_execution_mode: mode, p_scope_type: 'record_ids', p_scoped_ids: ids, p_batch_limit: null, p_reason: '3c2b test' });
+    if (r.data?.run_id) runIdsMade.push(r.data.run_id);
+    return r;
+  }
+  const setControl = async (state: 'disabled' | 'dry_run_only' | 'scoped_execution') => {
+    const cur = (await cAdmin.from('financial_operation_controls').select('state').eq('control_name', 'plan_renewal').single()).data!.state as string;
+    if (cur !== state) await rpc(cOps, 'support_set_financial_control', { p_control: 'plan_renewal', p_expected_state: cur, p_new_state: state, p_reason: '3c2b test' });
+  };
+  const itemsOf = async (runId: string): Promise<Array<{ record_id: string; outcome: string }>> =>
+    ((await rpc(cOps, 'support_operation_run_items', { p_run_id: runId })).data ?? []) as Array<{ record_id: string; outcome: string }>;
+  async function previewConfirmExecute(ids: string[]) {
+    const rq = await reqRun(ids); const rid = rq.data.run_id; const tok = rq.data.confirmation_token;
+    await rpc(cOps, 'support_preview_operation_run', { p_run_id: rid });
+    await rpc(cOps, 'support_confirm_operation_run', { p_run_id: rid, p_confirmation_token: tok });
+    const ex = await rpc(cOps, 'support_execute_operation_run', { p_run_id: rid, p_confirmation_token: tok });
+    return { rid, tok, ex };
+  }
+  const periodOf = async (planId: string) =>
+    (await cAdmin.from('plan_billing_periods').select('status, occurrences_count, credit_applied_minor, card_amount_minor, payment_order_id').eq('plan_id', planId)).data ?? [];
+
+  beforeAll(async () => {
+    cAdmin = adminClient();
+    cOps = await signedInClient(`rls-3c2b-ops-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    cUser = await signedInClient(`rls-3c2b-user-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    cCoordCredit = await signedInClient(`rls-3c2b-coordA-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    cCoordCard = await signedInClient(`rls-3c2b-coordB-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    cCompanion = await signedInClient(`rls-3c2b-comp-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    opsAcct = (await cOps.auth.getUser()).data.user!.id;
+    creditAcct = (await cCoordCredit.auth.getUser()).data.user!.id;
+    cardAcct = (await cCoordCard.auth.getUser()).data.user!.id;
+    for (const c of [cOps, cUser]) if ((await c.rpc('ensure_current_account')).error) throw new Error('ensure');
+    for (const [c, name] of [[cCoordCredit, 'CredCo'], [cCoordCard, 'CardCo']] as const) {
+      const r = await rpc(c, 'complete_coordinator_signup', { p_first_name: name, p_consent_confirmed: true, p_member_first_name: `${name}Mum` });
+      if (r.error) throw new Error(`coord ${name}: ${JSON.stringify(r.error)}`);
+      membersMade.push((r.data as { member_profile_id: string }).member_profile_id);
+    }
+    const comp = await rpc(cCompanion, 'complete_companion_signup', { p_first_name: '3c2bComp', p_date_of_birth: '1980-01-01' });
+    if (comp.error) throw new Error(`companion: ${JSON.stringify(comp.error)}`);
+    companionProfile = comp.data.id as string;
+    if ((await rpc(cCompanion, 'replace_companion_availability', {
+      p_profile: companionProfile, p_timezone: 'Europe/London',
+      p_rules: [1, 2, 3, 4, 5, 6, 7].map((day) => ({ day, start: '09:00', end: '18:00' })),
+    })).error) throw new Error('availability');
+    if ((await cAdmin.from('support_admins').upsert({ account_id: opsAcct }, { onConflict: 'account_id', ignoreDuplicates: true })).error) throw new Error('support');
+    // Large credit for the credit-covered coordinator ONLY (card coordinator has none).
+    const cr = await rpc(cAdmin, 'issue_account_credit', {
+      p_account: creditAcct, p_amount: 1_000_000, p_source_type: 'support_adjustment',
+      p_source: null, p_reason: '3c2b fixture credit', p_idempotency: `3c2b-credit-${suffix}` });
+    if (cr.error) throw new Error(`credit: ${JSON.stringify(cr.error)}`);
+    // Initial controls-clean.
+    const rows = (await cAdmin.from('financial_operation_controls').select('control_name, state')).data ?? [];
+    if (!rows.every((r) => r.state === 'disabled')) throw new Error('controls not clean at 3C2-B start');
+  }, 240_000);
+
+  afterAll(async () => {
+    await cAdmin.from('financial_operation_controls').update({ state: 'disabled', reason: null, expires_at: null }).eq('control_name', 'plan_renewal');
+    for (const id of runIdsMade) {
+      await cAdmin.from('financial_operation_run_items').delete().eq('run_id', id);
+      await cAdmin.from('financial_operation_run_events').delete().eq('run_id', id);
+      await cAdmin.from('financial_operation_runs').delete().eq('id', id);
+    }
+    await cAdmin.from('financial_operation_control_events').delete().eq('actor_account_id', opsAcct);
+    for (const p of plansMade) {
+      await cAdmin.from('plan_billing_periods').delete().eq('plan_id', p);
+      await cAdmin.from('payment_orders').delete().eq('plan_id', p);
+    }
+    for (const a of allowancesMade) await cAdmin.from('package_credit_ledger').delete().eq('package_purchase_id', a);
+    for (const acct of [creditAcct, cardAcct]) await cAdmin.from('credit_ledger').delete().eq('coordinator_account_id', acct);
+    for (const p of plansMade) await cAdmin.from('conversation_plans').delete().eq('id', p);
+    for (const a of allowancesMade) await cAdmin.from('package_purchases').delete().eq('id', a);
+    await cAdmin.from('profile_access').delete().in('profile_id', membersMade);
+    for (const m of membersMade) await cAdmin.from('profiles').delete().eq('id', m);
+    await cAdmin.from('support_admins').delete().eq('account_id', opsAcct);
+  }, 180_000);
+
+  it('1+3+4+5. normal/anon cannot request-confirm-execute; empty, >25 and malformed scopes are rejected', async () => {
+    const f = await mkPlan();
+    expect((await rpc(cUser, 'support_request_operation_run', { p_operation_type: 'plan_renewal', p_execution_mode: 'execute_scoped', p_scope_type: 'record_ids', p_scoped_ids: [f.planId], p_batch_limit: null, p_reason: 'x' })).error).not.toBeNull();
+    expect((await rpc(client(), 'support_request_operation_run', { p_operation_type: 'plan_renewal', p_execution_mode: 'execute_scoped', p_scope_type: 'record_ids', p_scoped_ids: [f.planId], p_batch_limit: null, p_reason: 'x' })).error).not.toBeNull();
+    expect(JSON.stringify((await reqRun([])).error)).toMatch(/empty_scope/);
+    expect(JSON.stringify((await reqRun(Array.from({ length: 26 }, () => f.planId))).error)).toMatch(/batch_limit_exceeded/);
+    expect((await reqRun(['not-a-uuid'] as unknown as string[])).error).not.toBeNull();
+    const rq = await reqRun([f.planId]);
+    expect((await rpc(cUser, 'support_confirm_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token })).error).not.toBeNull();
+    expect((await rpc(cUser, 'support_execute_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token })).error).not.toBeNull();
+  }, 90_000);
+
+  it('2+6+20+21+22. credit-covered renewal: dedup, exactly one period/order, credit spent once, allowance granted once at settlement', async () => {
+    const f = await mkPlan({ funded: 'credit' });
+    try {
+      await setControl('scoped_execution');
+      const { rid, ex } = await previewConfirmExecute([f.planId, f.planId, f.planId]);   // 3 dups → 1 distinct
+      expect(ex.error, JSON.stringify(ex.error)).toBeNull();
+      expect(ex.data.requested_count).toBe(1);
+      expect(ex.data.renewed_count, JSON.stringify(ex.data)).toBe(1);
+      const items = await itemsOf(rid);
+      expect(items).toHaveLength(1);
+      expect(items[0].outcome).toBe('renewed_credit_covered');
+      const periods = await periodOf(f.planId);
+      expect(periods).toHaveLength(1);
+      expect(periods[0].status).toBe('paid');
+      expect(periods[0].card_amount_minor).toBe(0);
+      // exactly one order; credit reserved once; allowance granted once (= occurrences).
+      const orders = (await cAdmin.from('payment_orders').select('id, status').eq('plan_id', f.planId)).data ?? [];
+      expect(orders).toHaveLength(1);
+      expect(orders[0].status).toBe('succeeded');
+      const debits = (await cAdmin.from('credit_ledger').select('id').eq('entry_type', 'debit').eq('payment_order_id', orders[0].id)).data ?? [];
+      expect(debits).toHaveLength(1);
+      const grants = (await cAdmin.from('package_credit_ledger').select('quantity').eq('package_purchase_id', f.allowanceId).eq('entry_type', 'grant')).data ?? [];
+      expect(grants).toHaveLength(1);
+      expect(grants[0].quantity).toBe(periods[0].occurrences_count);
+    } finally { await setControl('disabled'); }
+  }, 120_000);
+
+  it('7+8+9. preview classifies credit-covered / card-funded (provider_action_required) / unknown WITHOUT mutation or provider call', async () => {
+    const credit = await mkPlan({ funded: 'credit' });
+    const card = await mkPlan({ funded: 'card' });
+    const rq = await reqRun([credit.planId, card.planId, '00000000-0000-0000-0000-000000000000'], 'preview');
+    const prev = await rpc(cOps, 'support_preview_operation_run', { p_run_id: rq.data.run_id });
+    expect(prev.error, JSON.stringify(prev.error)).toBeNull();
+    const rows = prev.data.rows as Array<Record<string, unknown>>;
+    const byId = (id: string) => rows.find((r) => r.id === id)!;
+    expect(byId(credit.planId).outcome).toBe('renewed_credit_covered');
+    expect(byId(card.planId).outcome).toBe('renewal_prepared');
+    expect(byId(card.planId).provider_action_required).toBe(true);
+    expect(byId('00000000-0000-0000-0000-000000000000').outcome).toBe('not_found');
+    // NO mutation: no periods, no orders, no credit spent, no grants.
+    expect(await periodOf(credit.planId)).toHaveLength(0);
+    expect(await periodOf(card.planId)).toHaveLength(0);
+    expect((await cAdmin.from('payment_orders').select('id').in('plan_id', [credit.planId, card.planId])).data ?? []).toHaveLength(0);
+    expect((await cAdmin.from('package_credit_ledger').select('id').eq('package_purchase_id', credit.allowanceId)).data ?? []).toHaveLength(0);
+  }, 120_000);
+
+  it('10+11+12+13+14+24+25. mixed scope records accurate outcomes; ineligible/unknown never block an eligible plan', async () => {
+    const elig = await mkPlan({ funded: 'credit' });
+    const paused = await mkPlan({ status: 'paused' });
+    const ended = await mkPlan({ status: 'ended' });
+    const unbilled = await mkPlan({ billed: false });
+    const zero = await mkPlan({ slots: 0 });                       // no occurrences → closed
+    const done = await mkPlan({ funded: 'credit' });
+    try {
+      await setControl('scoped_execution');
+      await previewConfirmExecute([done.planId]);                  // pre-renew → already_renewed
+      const scope = [elig.planId, paused.planId, ended.planId, unbilled.planId, zero.planId, done.planId, '00000000-0000-0000-0000-000000000000'];
+      const { rid, ex } = await previewConfirmExecute(scope);
+      expect(ex.error, JSON.stringify(ex.error)).toBeNull();
+      const items = await itemsOf(rid);
+      const out = (id: string) => items.find((i) => i.record_id === id)!.outcome;
+      expect(out(elig.planId)).toBe('renewed_credit_covered');
+      expect(out(paused.planId)).toBe('plan_paused');
+      expect(out(ended.planId)).toBe('plan_ended');
+      expect(out(unbilled.planId)).toBe('billing_not_enabled');
+      expect(out(zero.planId)).toBe('closed_zero_occurrences');
+      expect(out(done.planId)).toBe('already_renewed');
+      expect(out('00000000-0000-0000-0000-000000000000')).toBe('not_found');
+      // Ineligible plans were NOT renewed.
+      expect(await periodOf(paused.planId)).toHaveLength(0);
+      expect(await periodOf(ended.planId)).toHaveLength(0);
+      expect(await periodOf(unbilled.planId)).toHaveLength(0);
+      expect((await periodOf(elig.planId))[0].status).toBe('paid');
+      expect((await periodOf(zero.planId))[0].status).toBe('closed');
+    } finally { await setControl('disabled'); }
+  }, 240_000);
+
+  it('15. stale preview is caught at execution (plan paused after preview)', async () => {
+    const a = await mkPlan({ funded: 'credit' });
+    const b = await mkPlan({ funded: 'credit' });
+    try {
+      await setControl('scoped_execution');
+      const rq = await reqRun([a.planId, b.planId]);
+      await rpc(cOps, 'support_preview_operation_run', { p_run_id: rq.data.run_id });   // both eligible at preview
+      await rpc(cOps, 'support_confirm_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
+      // Pause A AFTER preview.
+      await cAdmin.from('conversation_plans').update({ status: 'paused' }).eq('id', a.planId);
+      await rpc(cOps, 'support_execute_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
+      const items = await itemsOf(rq.data.run_id);
+      expect(items.find((i) => i.record_id === a.planId)!.outcome).toBe('plan_paused');   // reclassified at execution
+      expect(items.find((i) => i.record_id === b.planId)!.outcome).toBe('renewed_credit_covered');
+      expect(await periodOf(a.planId)).toHaveLength(0);
+    } finally { await setControl('disabled'); }
+  }, 120_000);
+
+  it('16+17. disabled returns the structured block with ONE deduplicated event; dry_run_only previews but blocks', async () => {
+    const f = await mkPlan({ funded: 'credit' });
+    try {
+      await setControl('disabled');
+      const rq = await reqRun([f.planId]);
+      await rpc(cOps, 'support_preview_operation_run', { p_run_id: rq.data.run_id });
+      await rpc(cOps, 'support_confirm_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
+      const ex = await rpc(cOps, 'support_execute_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
+      expect(ex.data.code).toBe('control_disabled');
+      await rpc(cOps, 'support_execute_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });   // repeat
+      expect((await cAdmin.from('financial_operation_run_events').select('id').eq('run_id', rq.data.run_id).eq('action', 'control_blocked')).data ?? []).toHaveLength(1);
+      expect(await periodOf(f.planId)).toHaveLength(0);
+      await setControl('dry_run_only');
+      const rq2 = await reqRun([f.planId]);
+      expect((await rpc(cOps, 'support_preview_operation_run', { p_run_id: rq2.data.run_id })).error).toBeNull();
+      await rpc(cOps, 'support_confirm_operation_run', { p_run_id: rq2.data.run_id, p_confirmation_token: rq2.data.confirmation_token });
+      const ex2 = await rpc(cOps, 'support_execute_operation_run', { p_run_id: rq2.data.run_id, p_confirmation_token: rq2.data.confirmation_token });
+      expect(ex2.data.code).toBe('dry_run_only');
+      expect(await periodOf(f.planId)).toHaveLength(0);
+    } finally { await setControl('disabled'); }
+  }, 120_000);
+
+  it('18+19. run scoped to A renews A only; equally due plan B is byte-for-byte unrenewed', async () => {
+    const a = await mkPlan({ funded: 'credit' });
+    const b = await mkPlan({ funded: 'credit' });                  // equally due, OUT of scope
+    try {
+      await setControl('scoped_execution');
+      const { ex } = await previewConfirmExecute([a.planId]);
+      expect(ex.error).toBeNull();
+      expect((await periodOf(a.planId))[0].status).toBe('paid');
+      expect(await periodOf(b.planId)).toHaveLength(0);
+      expect((await cAdmin.from('payment_orders').select('id').eq('plan_id', b.planId)).data ?? []).toHaveLength(0);
+    } finally { await setControl('disabled'); }
+  }, 120_000);
+
+  it('23. card-funded renewal prepares only: payment_pending, order pending, NO intent, NO paid claim', async () => {
+    const f = await mkPlan({ funded: 'card' });
+    try {
+      await setControl('scoped_execution');
+      const { rid, ex } = await previewConfirmExecute([f.planId]);
+      expect(ex.error).toBeNull();
+      expect(ex.data.prepared_count).toBe(1);
+      expect((await itemsOf(rid))[0].outcome).toBe('renewal_prepared');
+      const periods = await periodOf(f.planId);
+      expect(periods[0].status).toBe('payment_pending');
+      expect(periods[0].card_amount_minor).toBeGreaterThan(0);
+      const order = (await cAdmin.from('payment_orders').select('status, stripe_payment_intent_id').eq('plan_id', f.planId).single()).data!;
+      expect(order.status).toBe('pending');                        // never marked paid
+      expect(order.stripe_payment_intent_id).toBeNull();           // no provider call, no fabricated intent
+      // Allowance NOT granted before settlement.
+      expect((await cAdmin.from('package_credit_ledger').select('id').eq('package_purchase_id', f.allowanceId)).data ?? []).toHaveLength(0);
+    } finally { await setControl('disabled'); }
+  }, 120_000);
+
+  it('26+27+28. repeated execution idempotent; concurrent executions produce one result; racing runs create one period/order', async () => {
+    const f = await mkPlan({ funded: 'credit' });
+    try {
+      await setControl('scoped_execution');
+      const rq = await reqRun([f.planId]);
+      await rpc(cOps, 'support_preview_operation_run', { p_run_id: rq.data.run_id });
+      await rpc(cOps, 'support_confirm_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
+      const [a, b] = await Promise.all([
+        rpc(cOps, 'support_execute_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token }),
+        rpc(cOps, 'support_execute_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token }),
+      ]);
+      expect([a, b].filter((r) => r.data?.executed === true).length).toBe(1);   // one real execution
+      const ex3 = await rpc(cOps, 'support_execute_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
+      expect(ex3.data.already_executed).toBe(true);
+      // A second run racing the SAME plan: one period/order; loser already_renewed.
+      const r2 = await reqRun([f.planId]);
+      await rpc(cOps, 'support_preview_operation_run', { p_run_id: r2.data.run_id });
+      await rpc(cOps, 'support_confirm_operation_run', { p_run_id: r2.data.run_id, p_confirmation_token: r2.data.confirmation_token });
+      await rpc(cOps, 'support_execute_operation_run', { p_run_id: r2.data.run_id, p_confirmation_token: r2.data.confirmation_token });
+      expect((await itemsOf(r2.data.run_id))[0].outcome).toBe('already_renewed');
+      expect(await periodOf(f.planId)).toHaveLength(1);
+      expect((await cAdmin.from('payment_orders').select('id').eq('plan_id', f.planId)).data ?? []).toHaveLength(1);
+      expect((await cAdmin.from('financial_operation_run_items').select('id').eq('run_id', rq.data.run_id)).data ?? []).toHaveLength(1);
+    } finally { await setControl('disabled'); }
+  }, 120_000);
+
+  it('29+30+31+32. items unique + client-immutable; support detail safe; clients cannot read; events deduplicated', async () => {
+    const f = await mkPlan({ funded: 'credit' });
+    try {
+      await setControl('scoped_execution');
+      const { rid } = await previewConfirmExecute([f.planId]);
+      expect((await cUser.from('financial_operation_run_items').select('*').eq('run_id', rid)).data ?? []).toHaveLength(0);
+      expect((await client().from('financial_operation_run_items').select('*').eq('run_id', rid)).data ?? []).toHaveLength(0);
+      const itemId = (await cAdmin.from('financial_operation_run_items').select('id').eq('run_id', rid).limit(1).single()).data!.id;
+      expect(((await cUser.from('financial_operation_run_items').update({ outcome: 'failed' }).eq('id', itemId).select()).data) ?? []).toHaveLength(0);
+      expect((await cAdmin.from('financial_operation_run_events').select('id').eq('run_id', rid).eq('action', 'execution_succeeded')).data ?? []).toHaveLength(1);
+      const d = (await rpc(cOps, 'support_operation_run_detail', { p_run_id: rid })).data;
+      expect((d.items as unknown[]).length).toBe(1);
+      const blob = JSON.stringify(d).toLowerCase();
+      for (const s of ['stripe_payment_intent', 'client_secret', 'card_number', 'bank', 'access_token']) expect(blob).not.toContain(s);
+    } finally { await setControl('disabled'); }
+  }, 120_000);
+
+  it('33-40. no global worker ran; no provider/transfer/refund/dispute mutation; controls disabled; env hosted_test; protected rows untouched', async () => {
+    // Every fixture order is either succeeded-by-credit or still pending; none carries
+    // a provider intent (would prove a Stripe call) and no transfer/refund exists.
+    const orders = (await cAdmin.from('payment_orders').select('id, status, stripe_payment_intent_id').in('plan_id', plansMade)).data ?? [];
+    for (const o of orders) {
+      expect(['succeeded', 'pending']).toContain(o.status);
+      expect(o.stripe_payment_intent_id, `order ${o.id} must have no provider intent`).toBeNull();
+    }
+    expect((await cAdmin.from('payment_refunds').select('id').in('payment_order_id', orders.map((o) => o.id))).data ?? []).toHaveLength(0);
+    expect(plansMade.length).toBeGreaterThan(0);
+    // The protected booking + historical findings are untouched (fresh fixtures only).
+    expect((await cAdmin.from('bookings').select('id').eq('id', 'ba4f943c-3e8d-4d4c-900d-fa551ccc5387')).data?.length ?? 0).toBeLessThanOrEqual(1);
+    const controls = (await cAdmin.from('financial_operation_controls').select('control_name, state')).data ?? [];
+    expect(controls.every((c) => c.state === 'disabled'), 'all controls disabled').toBe(true);
+    expect((await cAdmin.from('financial_operations_config').select('environment').eq('id', true).single()).data!.environment).toBe('hosted_test');
+  }, 90_000);
+});

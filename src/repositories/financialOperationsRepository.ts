@@ -145,17 +145,24 @@ export async function executeOperationRun(runId: string, token: string): Promise
   if (data && data.ok === false) {
     return { ok: false, blockedCode: data.code as string, succeeded: 0, skipped: 0, examined: 0 };
   }
-  // 0075 (earning_release): structured per-run counts.
+  // 0075 (earning_release) / 0076 (plan_renewal): structured per-run counts.
+  // plan_renewal counts renewed + prepared as succeeded work (prepared = period
+  // created, provider work pending — never a claimed payment success).
+  const renewed = (data.renewed_count ?? 0) + (data.prepared_count ?? 0);
   return {
-    ok: true, succeeded: data.released_count ?? data.succeeded ?? 0,
+    ok: true, succeeded: data.released_count ?? (data.renewed_count !== undefined ? renewed : undefined) ?? data.succeeded ?? 0,
     skipped: data.skipped_count ?? data.skipped ?? 0, examined: data.requested_count ?? data.examined ?? 0,
   };
 }
 
-// 0075 — per-record execution ledger (support-only, no secrets).
+// 0075/0076 — per-record execution ledger (support-only, no secrets).
 export type ItemOutcome =
   | 'released' | 'already_payable' | 'not_found' | 'not_yet_eligible' | 'issue_held'
-  | 'evidence_held' | 'reversed' | 'transfer_already_started' | 'invalid_state' | 'failed';
+  | 'evidence_held' | 'reversed' | 'transfer_already_started' | 'invalid_state' | 'failed'
+  // Stage 3C2-B plan_renewal
+  | 'renewed_credit_covered' | 'renewal_prepared' | 'closed_zero_occurrences'
+  | 'already_renewed' | 'action_required_existing' | 'payment_failed_existing'
+  | 'plan_not_active' | 'plan_paused' | 'plan_ended' | 'billing_not_enabled' | 'not_recurring';
 export interface RunItem {
   recordId: string; ordinal: number; outcome: ItemOutcome; reasonCode: string | null;
   beforeState: string | null; afterState: string | null; attemptedAt: string | null; completedAt: string | null;

@@ -23,7 +23,7 @@ const OPERATIONS: { key: OperationType; label: string; executable: boolean }[] =
   { key: 'transfer_finalise', label: 'Transfer finalise (not yet enabled)', executable: false },
   { key: 'refund_claim', label: 'Refund claim (not yet enabled)', executable: false },
   { key: 'refund_finalise', label: 'Refund finalise (not yet enabled)', executable: false },
-  { key: 'plan_renewal', label: 'Plan renewal (not yet enabled)', executable: false },
+  { key: 'plan_renewal', label: 'Plan renewal', executable: true },
   { key: 'dispute_reconciliation', label: 'Dispute reconciliation (not yet enabled)', executable: false },
   { key: 'financial_reconciliation', label: 'Financial reconciliation (not yet enabled)', executable: false },
   { key: 'evidence_review_release', label: 'Evidence-review release (not yet enabled)', executable: false },
@@ -36,6 +36,17 @@ const OUTCOME_STYLE: Record<string, string> = {
   issue_held: 'bg-amber-100 text-amber-700', evidence_held: 'bg-amber-100 text-amber-700',
   reversed: 'bg-red-100 text-red-700', transfer_already_started: 'bg-sky-100 text-sky-700',
   invalid_state: 'bg-red-100 text-red-700', failed: 'bg-red-100 text-red-700',
+  // Stage 3C2-B plan-renewal ledger: distinguish credit-covered completion,
+  // prepared-with-provider-work-pending, already-renewed and ineligible states.
+  renewed_credit_covered: 'bg-emerald-100 text-emerald-700',
+  closed_zero_occurrences: 'bg-emerald-100 text-emerald-700',
+  renewal_prepared: 'bg-indigo-100 text-indigo-700',
+  already_renewed: 'bg-sky-100 text-sky-700',
+  action_required_existing: 'bg-indigo-100 text-indigo-700',
+  payment_failed_existing: 'bg-red-100 text-red-700',
+  plan_not_active: 'bg-amber-100 text-amber-700', plan_paused: 'bg-amber-100 text-amber-700',
+  plan_ended: 'bg-amber-100 text-amber-700', billing_not_enabled: 'bg-amber-100 text-amber-700',
+  not_recurring: 'bg-amber-100 text-amber-700',
 };
 
 // Severity mapping for readiness counts — calm operational language.
