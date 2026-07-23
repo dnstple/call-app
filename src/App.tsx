@@ -23,6 +23,7 @@ const InternalDisputes = lazy(() => import('./pages/InternalDisputes'));
 const InternalDisputeDetail = lazy(() => import('./pages/InternalDisputeDetail'));
 const InternalReconciliation = lazy(() => import('./pages/InternalReconciliation'));
 const InternalReconciliationDetail = lazy(() => import('./pages/InternalReconciliationDetail'));
+const InternalOperations = lazy(() => import('./pages/InternalOperations'));
 import Settings from './pages/Settings';
 import AvailabilityRates from './pages/AvailabilityRates';
 import SignupWizard from './signup/SignupWizard';
@@ -233,6 +234,10 @@ function AppRoutes() {
                 {/* 2G6E-C internal financial reconciliation — DB-role protected. */}
                 <Route path="/internal/finance/reconciliation" element={<SupportOnly><InternalReconciliation /></SupportOnly>} />
                 <Route path="/internal/finance/reconciliation/:findingId" element={<SupportOnly><InternalReconciliationDetail /></SupportOnly>} />
+                {/* Stage 3C1 — financial operations control plane (readiness + previews),
+                    DB-role protected, absent from normal navigation. */}
+                <Route path="/support/operations" element={<SupportOnly><InternalOperations /></SupportOnly>} />
+                <Route path="/internal/operations" element={<Navigate to="/support/operations" replace />} />
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/availability" element={<AvailabilityRates />} />
                 <Route
