@@ -6554,7 +6554,8 @@ describe.skipIf(!enabled)('Stage 3B1 attendance evidence (requires live Supabase
     // Documented edit policy: review_eligible STAYS true — the booking is still
     // 'completed', so the Member may edit the review within the RPC's 24h window.
     expect(d.review_eligible).toBe(true);
-  });
+    // Full two-step live flow over many sequential RPCs — exceeds the 5s default.
+  }, 60_000);
 
   it('29+30. aggregation is idempotent and concurrency-safe (one deterministic result)', async () => {
     const { bookingId, roomName } = await makeCall();
@@ -6952,7 +6953,8 @@ describe.skipIf(!enabled)('Stage 3B2 evidence payout holds (requires live Supaba
     const e = await makeCall({ withOrder: true });
     expect((await rpc(cComp, 'submit_companion_attendance', { p_booking: e.bookingId, p_outcome: 'took_place', p_explanation: null })).error).toBeNull();
     expect(await holdOf(e.bookingId)).toBeNull();
-  });
+    // Five independent live call fixtures + evaluations — exceeds the 5s default.
+  }, 120_000);
 
   it('5. a declaration WITHOUT finalised+complete evidence never holds (evidence still pending)', async () => {
     const { bookingId, roomName } = await makeCall({ startAgoMin: 20, durationMin: 30, withOrder: true });   // window OPEN
@@ -7058,7 +7060,8 @@ describe.skipIf(!enabled)('Stage 3B2 evidence payout holds (requires live Supaba
     const still = await holdOf(b.bookingId);
     expect(still?.state).toBe('claimed');                            // survived — a human owns it
     expect(still?.support_touched).toBe(true);
-  });
+    // Untouched + support-touched review flows, two full live fixtures — exceeds the 5s default.
+  }, 120_000);
 
   // ---- support workflow: privacy, single-winner claim, append-only notes, recheck ----
   it('11. the support queue/detail are support-only, carry the review, and expose no secrets', async () => {
