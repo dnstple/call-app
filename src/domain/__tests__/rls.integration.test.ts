@@ -7585,18 +7585,43 @@ describe.skipIf(!enabled)('Stage 3C1 financial operations control plane (require
     }
   });
 
-  it('35. transfer/refund/renewal/reconciliation execution remains stage_not_enabled (scoped impl is Stage 3C2)', async () => {
-    controlsTouched.add('transfer_claim');
-    // 'scoped_execution' is the strongest state settable outside production_live
-    // ('enabled' is rejected). Even so, the wrapper defers every non-earning op.
-    await rpc(cOps, 'support_set_financial_control', { p_control: 'transfer_claim', p_expected_state: 'disabled', p_new_state: 'scoped_execution', p_reason: 'attempt' });
-    const g = await makeEarning();
-    const req = track(await request(cOps, { p_operation_type: 'transfer_claim', p_execution_mode: 'execute_scoped', p_scope_type: 'record_ids', p_scoped_ids: [g.earningId], p_batch_limit: null, p_reason: 'x' }));
-    await rpc(cOps, 'support_preview_operation_run', { p_run_id: req.data.run_id });
-    await rpc(cOps, 'support_confirm_operation_run', { p_run_id: req.data.run_id, p_confirmation_token: req.data.confirmation_token });
-    expect(JSON.stringify((await rpc(cOps, 'support_execute_operation_run', { p_run_id: req.data.run_id, p_confirmation_token: req.data.confirmation_token })).error)).toMatch(/stage_not_enabled/);
-    await rpc(cOps, 'support_set_financial_control', { p_control: 'transfer_claim', p_expected_state: 'scoped_execution', p_new_state: 'disabled', p_reason: 'reset' });
-  });
+  it('35. refund and reconciliation execution remain stage_not_enabled; scoped renewal and transfer review are covered by their dedicated stages', async () => {
+    // CURRENT OPERATION MATRIX (latest cumulative support_execute_operation_run):
+    //   implemented — earning_release (0075), plan_renewal (0076),
+    //                 transfer_claim (0077, read-only scoped transfer review);
+    //   still stage_not_enabled — transfer_finalise, refund_claim, refund_finalise,
+    //                 dispute_reconciliation, financial_reconciliation,
+    //                 evidence_review_release.
+    // The implemented operations' behaviour (explicit scopes only; transfer review
+    // creates zero attempts and moves no money) is proven by the dedicated Stage
+    // 3C2-A/B/C hosted blocks — not duplicated here.
+    const stillDeferred = ['refund_claim', 'financial_reconciliation'] as const;
+    const scopeId = '00000000-0000-0000-0000-00000000c0de';   // arbitrary explicit id; nothing is executed
+    for (const op of stillDeferred) {
+      controlsTouched.add(op);
+      // Begin from a KNOWN-disabled control via the sanctioned RPC.
+      const cur = (await cAdmin.from('financial_operation_controls').select('state').eq('control_name', op).single()).data!.state as string;
+      if (cur !== 'disabled') {
+        await rpc(cOps, 'support_set_financial_control', { p_control: op, p_expected_state: cur, p_new_state: 'disabled', p_reason: 'reset before test' });
+      }
+      try {
+        // 'scoped_execution' is the strongest state settable outside production_live
+        // ('enabled' is rejected). Even so, the wrapper defers these operations.
+        await rpc(cOps, 'support_set_financial_control', { p_control: op, p_expected_state: 'disabled', p_new_state: 'scoped_execution', p_reason: 'attempt' });
+        const req = track(await request(cOps, { p_operation_type: op, p_execution_mode: 'execute_scoped', p_scope_type: 'record_ids', p_scoped_ids: [scopeId], p_batch_limit: null, p_reason: 'x' }));
+        await rpc(cOps, 'support_preview_operation_run', { p_run_id: req.data.run_id });
+        await rpc(cOps, 'support_confirm_operation_run', { p_run_id: req.data.run_id, p_confirmation_token: req.data.confirmation_token });
+        expect(JSON.stringify((await rpc(cOps, 'support_execute_operation_run', { p_run_id: req.data.run_id, p_confirmation_token: req.data.confirmation_token })).error), op).toMatch(/stage_not_enabled/);
+      } finally {
+        const now = (await cAdmin.from('financial_operation_controls').select('state').eq('control_name', op).single()).data!.state as string;
+        if (now !== 'disabled') {
+          await rpc(cOps, 'support_set_financial_control', { p_control: op, p_expected_state: now, p_new_state: 'disabled', p_reason: 'reset' });
+        }
+      }
+      // Assert the control is disabled again before moving on.
+      expect((await cAdmin.from('financial_operation_controls').select('state').eq('control_name', op).single()).data!.state, `${op} disabled after test`).toBe('disabled');
+    }
+  }, 90_000);
 
   it('ENV. enabling any control is rejected outside production_live; the env + master RPCs are phrase-gated', async () => {
     // Begin from a KNOWN-disabled control via the sanctioned RPC rather than trusting
