@@ -7479,7 +7479,13 @@ describe.skipIf(!enabled)('Stage 3C1 financial operations control plane (require
       const req = track(await request(cOps, { p_operation_type: op, p_execution_mode: 'preview', p_scope_type: 'record_ids', p_scoped_ids: [id], p_batch_limit: null, p_reason: 'one-record' }));
       return (await rpc(cOps, 'support_preview_operation_run', { p_run_id: req.data.run_id })).data;
     };
-    for (const [op, id] of [['earning_release', f.earningId], ['transfer_claim', g.earningId], ['transfer_finalise', attemptId],
+    // transfer_finalise's canonical scope is EARNING UUIDs (Stage 3C2-C2): since
+    // 0078 its preview classifies through classify_scoped_transfer, so the fresh
+    // earning g (which owns the processing attempt above) is supplied — the
+    // attempt id itself is not a valid transfer_finalise scope member. Any
+    // EXISTING earning previews found=true regardless of eligibility.
+    void attemptId;   // fixture retained: it shapes g as processing (attempt exists)
+    for (const [op, id] of [['earning_release', f.earningId], ['transfer_claim', g.earningId], ['transfer_finalise', g.earningId],
                             ['refund_claim', refundId], ['refund_finalise', refundId], ['dispute_reconciliation', disputeId],
                             ['evidence_review_release', reviewId]] as const) {
       const d = await previewOne(op, id);
