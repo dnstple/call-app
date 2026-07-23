@@ -7898,13 +7898,41 @@ describe.skipIf(!enabled)('Stage 3C2-A scoped earning release (requires live Sup
     return f;
   }
   const makeEligible = makeEligibleEarningFixture3c2a;   // alias used across this block
+  // The single classification authority's verdict for one earning, obtained via the
+  // sanctioned support preview path (classify_earning_release is app_private/service-
+  // only and never granted to browser roles).
+  async function previewOutcome(earningId: string): Promise<string | undefined> {
+    const rq = await reqRun([earningId], 'preview');
+    if (!rq.data?.run_id) return undefined;
+    const prev = await rpc(cOps, 'support_preview_operation_run', { p_run_id: rq.data.run_id });
+    const rows = (prev.data?.rows as Array<Record<string, unknown>> | undefined) ?? [];
+    return rows[0]?.outcome as string | undefined;
+  }
   // Derived helpers. issue/evidence FIRST satisfy the wait + declaration (mature),
   // THEN add the hold — otherwise not_yet_eligible correctly precedes and the test
   // would not actually prove the issue/evidence condition.
   async function makeIssueHeldEligibleEarningFixture() {
+    // 1. fully mature, releasable earning; 2. prove it is releasable BEFORE the issue.
     const f = await makeEligibleEarningFixture3c2a();
-    const r = await cAdmin.from('conversation_issues').insert({ booking_id: f.bookingId, reporter_account_id: coordAcct, category: 'audio_video_problem', state: 'open', idempotency_key: `3c2-iss-${f.bookingId}` }).select('booking_id');
-    if (r.error || !(r.data ?? []).length) throw new Error(`issue fixture insert failed: ${JSON.stringify(r.error)}`);
+    expect(await previewOutcome(f.earningId), 'releasable before issue').toBe('released');
+    // 3. insert a VALID open issue from a real booking actor: the coordinator
+    // (reporter_account_id = coordAcct, whose access_role on this booking's member is
+    // 'coordinator'), with the matching reporter_role and the NOT-NULL description.
+    // reporter_role ∈ ('coordinator','companion','system'); description is required.
+    const r = await cAdmin.from('conversation_issues').insert({
+      booking_id: f.bookingId, earning_id: f.earningId,
+      reporter_account_id: coordAcct, reporter_role: 'coordinator',
+      category: 'audio_video_problem',
+      description: 'Fixture: coordinator reports an audio/video problem for review',
+      state: 'open', idempotency_key: `3c2-iss-${f.bookingId}`,
+    }).select('booking_id, reporter_role, state');
+    expect(r.error, `issue fixture insert: ${JSON.stringify(r.error)}`).toBeNull();
+    expect((r.data ?? []).length, 'exactly one issue inserted').toBe(1);
+    expect(r.data![0].reporter_role, 'reporter_role matches the coordinator actor').toBe('coordinator');
+    expect(r.data![0].booking_id, 'issue is on the fresh fixture booking').toBe(f.bookingId);
+    expect(r.data![0].state, 'issue is open').toBe('open');
+    // 4. prove it now classifies as issue_held (classifier unchanged).
+    expect(await previewOutcome(f.earningId), 'issue_held after the open issue').toBe('issue_held');
     return f;
   }
   async function makeEvidenceHeldEligibleEarningFixture() {
@@ -8131,7 +8159,10 @@ describe.skipIf(!enabled)('Stage 3C2-A scoped earning release (requires live Sup
       await rpc(cOps, 'support_preview_operation_run', { p_run_id: rq.data.run_id });   // both eligible at preview
       await rpc(cOps, 'support_confirm_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
       // Mutate A AFTER preview: an open issue appears → execution must catch it.
-      await cAdmin.from('conversation_issues').insert({ booking_id: a.bookingId, reporter_account_id: coordAcct, category: 'audio_video_problem', state: 'open', idempotency_key: `3c2-late-${a.bookingId}` });
+      // Valid issue from a real booking actor (the coordinator) with the matching
+      // reporter_role and the NOT-NULL description.
+      const lateIssue = await cAdmin.from('conversation_issues').insert({ booking_id: a.bookingId, earning_id: a.earningId, reporter_account_id: coordAcct, reporter_role: 'coordinator', category: 'audio_video_problem', description: 'Fixture: late-arriving audio/video problem from the coordinator', state: 'open', idempotency_key: `3c2-late-${a.bookingId}` }).select('id');
+      expect(lateIssue.error, `late issue insert: ${JSON.stringify(lateIssue.error)}`).toBeNull();
       const ex = await rpc(cOps, 'support_execute_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
       const items = await itemsOf(rq.data.run_id);
       expect(items.find((i) => i.record_id === a.earningId)!.outcome).toBe('issue_held');   // caught at execution
