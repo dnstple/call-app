@@ -20,7 +20,7 @@ import {
 const OPERATIONS: { key: OperationType; label: string; executable: boolean }[] = [
   { key: 'earning_release', label: 'Earning release', executable: true },
   { key: 'transfer_claim', label: 'Transfer review (read-only, no money moves)', executable: true },
-  { key: 'transfer_finalise', label: 'Transfer finalise (not yet enabled)', executable: false },
+  { key: 'transfer_finalise', label: 'Provider transfer execution (TEST MODE ONLY — moves test money, max 5, irreversible)', executable: true },
   { key: 'refund_claim', label: 'Refund claim (not yet enabled)', executable: false },
   { key: 'refund_finalise', label: 'Refund finalise (not yet enabled)', executable: false },
   { key: 'plan_renewal', label: 'Plan renewal', executable: true },
@@ -59,6 +59,18 @@ const OUTCOME_STYLE: Record<string, string> = {
   connect_not_ready: 'bg-amber-100 text-amber-700', zero_amount: 'bg-stone-200 text-stone-600',
   retryable_failure: 'bg-amber-100 text-amber-700',
   permanent_failure: 'bg-red-100 text-red-700 font-semibold',
+  // Stage 3C2-C2 provider execution (TEST MODE ONLY; production_live execution is
+  // unavailable). Reconciliation-required states carry strong warnings; there is
+  // no general retry action — a reconciliation item only permits a read-only
+  // re-lookup via a fresh scoped run.
+  provider_transfer_found_and_finalized: 'bg-emerald-100 text-emerald-700',
+  provider_transfer_created_and_finalized: 'bg-emerald-100 text-emerald-700',
+  provider_lookup_failed: 'bg-red-100 text-red-700 font-semibold',
+  provider_lookup_ambiguous: 'bg-red-100 text-red-700 font-semibold',
+  provider_transfer_mismatch: 'bg-red-100 text-red-700 font-semibold',
+  provider_outcome_uncertain: 'bg-red-100 text-red-700 font-semibold',
+  reconciliation_required: 'bg-red-100 text-red-700 font-semibold',
+  failed_permanent: 'bg-red-100 text-red-700 font-semibold',
 };
 
 // Severity mapping for readiness counts — calm operational language.

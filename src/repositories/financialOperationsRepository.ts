@@ -172,7 +172,11 @@ export type ItemOutcome =
   // no provider work — the provider stage is C2)
   | 'eligible_provider_action_required' | 'provider_lookup_required' | 'already_processing'
   | 'already_transferred' | 'not_payable' | 'held_for_issue' | 'connect_not_ready'
-  | 'zero_amount' | 'retryable_failure' | 'permanent_failure';
+  | 'zero_amount' | 'retryable_failure' | 'permanent_failure'
+  // Stage 3C2-C2 provider execution (test-mode saga via the scoped Edge endpoint)
+  | 'provider_transfer_found_and_finalized' | 'provider_transfer_created_and_finalized'
+  | 'provider_lookup_failed' | 'provider_lookup_ambiguous' | 'provider_transfer_mismatch'
+  | 'provider_outcome_uncertain' | 'reconciliation_required' | 'failed_permanent';
 export interface RunItem {
   recordId: string; ordinal: number; outcome: ItemOutcome; reasonCode: string | null;
   beforeState: string | null; afterState: string | null; attemptedAt: string | null; completedAt: string | null;

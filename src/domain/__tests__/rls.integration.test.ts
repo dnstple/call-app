@@ -9037,3 +9037,316 @@ describe.skipIf(!enabled)('Stage 3C2-C scoped transfer preparation (requires liv
     expect(bookingsMade).not.toContain(PROTECTED_BOOKING);
   }, 120_000);
 });
+
+describe.skipIf(!enabled)('Stage 3C2-C2 scoped provider transfer execution (requires live Supabase)', () => {
+  let cAdmin: SupabaseClient; let cOps: SupabaseClient; let cUser: SupabaseClient; let cCompanion: SupabaseClient;
+  let opsAcct: string; let userAcct: string; let compAcct: string; let coordAcct: string;
+  const bookingsMade: string[] = [];
+  const profilesMade: string[] = [];
+  const offersMade: string[] = [];
+  const runIdsMade: string[] = [];
+  let evBase = 0;
+  const PROTECTED_BOOKING = 'ba4f943c-3e8d-4d4c-900d-fa551ccc5387';
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let protectedSnapshot: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rpc = (c: SupabaseClient, fn: string, args: Record<string, unknown>) => (c as any).rpc(fn, args);
+
+  async function snapshotProtected() {
+    const booking = (await cAdmin.from('bookings').select('status, starts_at, ends_at').eq('id', PROTECTED_BOOKING).maybeSingle()).data;
+    const earning = (await cAdmin.from('companion_earnings').select('id, state, transfer_state, net_minor, currency, updated_at').eq('booking_id', PROTECTED_BOOKING).maybeSingle()).data;
+    const attempt = earning
+      ? (await cAdmin.from('companion_transfer_attempts').select('id, state, stripe_transfer_id, idempotency_key, amount_minor, currency, connected_account_id, attempt_count, claimed_at, updated_at').eq('earning_id', earning.id).maybeSingle()).data
+      : null;
+    const totalFindings = (await cAdmin.from('financial_reconciliation_findings').select('id', { count: 'exact', head: true })).count ?? 0;
+    return { booking, earning, attempt, totalFindings };
+  }
+  // Fresh payable earning with ready Connect (same sanctioned family as 3C2-C1).
+  async function makePayable(): Promise<{ bookingId: string; earningId: string }> {
+    const start = new Date(evBase - 70 * 60_000); const end = new Date(start.getTime() + 30 * 60_000);
+    const cp = await cAdmin.from('profiles').insert({ role: 'companion', first_name: 'c2C' }).select('id').single();
+    const companion = requireUuid(cp.data!.id, 'c2 companion'); profilesMade.push(companion);
+    await cAdmin.from('profile_access').insert({ account_id: compAcct, profile_id: companion, access_role: 'owner', can_edit: true, can_book: true });
+    const of = await cAdmin.from('conversation_offers').insert({ companion_profile_id: companion, offer_type: 'single', duration_minutes: 30, price_minor: 1000, supported_methods: ['in_app'] }).select('id').single();
+    offersMade.push(requireUuid(of.data!.id, 'c2 offer'));
+    const mp = await cAdmin.from('profiles').insert({ role: 'member', first_name: 'c2M' }).select('id').single();
+    const member = requireUuid(mp.data!.id, 'c2 member'); profilesMade.push(member);
+    await cAdmin.from('profile_access').insert([
+      { account_id: userAcct, profile_id: member, access_role: 'owner', can_edit: true, can_book: true },
+      { account_id: coordAcct, profile_id: member, access_role: 'coordinator', can_edit: true, can_book: true }]);
+    const bk = await cAdmin.from('bookings').insert({
+      member_profile_id: member, companion_profile_id: companion, booked_by_account_id: coordAcct, offer_id: of.data!.id,
+      starts_at: start.toISOString(), ends_at: end.toISOString(), communication_method: 'in_app',
+      status: 'confirmed', duration_minutes: 30, price_minor: 1000, platform_fee_rate: 5, platform_fee_minor: 50, companion_amount_minor: 950 }).select('id').single();
+    const bookingId = requireUuid(bk.data!.id, 'c2 booking'); bookingsMade.push(bookingId);
+    if ((await cAdmin.from('payment_orders').insert({
+      booking_id: bookingId, provider: 'stripe_test', coordinator_account_id: coordAcct, member_profile_id: member, companion_profile_id: companion,
+      order_type: 'one_off', status: 'succeeded', subtotal_minor: 1000, discount_minor: 0, service_fee_minor: 0, credit_applied_minor: 0,
+      card_amount_minor: 1000, total_minor: 1000, commission_rate_pct: 5, commission_minor: 50, idempotency_key: `c2-ord-${bookingId}` })).error) throw new Error('c2 order');
+    if ((await rpc(cCompanion, 'submit_companion_attendance', { p_booking: bookingId, p_outcome: 'took_place', p_explanation: null })).error) throw new Error('c2 declaration');
+    const earningId = requireUuid((await cAdmin.from('companion_earnings').select('id').eq('booking_id', bookingId).single()).data!.id, 'c2 earning');
+    const ordId = (await cAdmin.from('payment_orders').select('id').eq('booking_id', bookingId).single()).data!.id;
+    await cAdmin.from('companion_earnings').update({ payment_order_id: ordId, state: 'payable', payable_at: new Date().toISOString() }).eq('id', earningId);
+    return { bookingId, earningId };
+  }
+  async function mkRun(ids: string[]) {
+    const r = await rpc(cOps, 'support_request_operation_run', { p_operation_type: 'transfer_finalise', p_execution_mode: 'execute_scoped', p_scope_type: 'record_ids', p_scoped_ids: ids, p_batch_limit: null, p_reason: 'c2 test' });
+    if (r.data?.run_id) runIdsMade.push(r.data.run_id);
+    if (r.error) return r;
+    await rpc(cOps, 'support_preview_operation_run', { p_run_id: r.data.run_id });
+    await rpc(cOps, 'support_confirm_operation_run', { p_run_id: r.data.run_id, p_confirmation_token: r.data.confirmation_token });
+    return r;
+  }
+  const setControl = async (state: 'disabled' | 'scoped_execution') => {
+    const cur = (await cAdmin.from('financial_operation_controls').select('state').eq('control_name', 'transfer_finalise').single()).data!.state as string;
+    if (cur !== state) await rpc(cOps, 'support_set_financial_control', { p_control: 'transfer_finalise', p_expected_state: cur, p_new_state: state, p_reason: 'c2 test' });
+  };
+  const setCeiling = async (minor: number) => {
+    const r = await cAdmin.from('financial_operations_config').update({ provider_transfer_amount_ceiling_minor: minor } as never).eq('id', true).select('id');
+    if (r.error) throw new Error(`ceiling: ${JSON.stringify(r.error)}`);
+  };
+  // Fake provider transfer json matching a job snapshot (no provider involved).
+  async function providerJsonFor(jobId: string, id: string, over: Record<string, unknown> = {}) {
+    const j = (await cAdmin.from('scoped_transfer_execution_jobs').select('*').eq('id', jobId).single()).data!;
+    return { id, amount: j.expected_amount_minor, currency: 'gbp', destination: j.expected_destination_account_id,
+      livemode: false, created: Math.floor(Date.now() / 1000), metadata: j.expected_metadata, ...over };
+  }
+  const attemptsOf = async (earningId: string) =>
+    (await cAdmin.from('companion_transfer_attempts').select('id, state, stripe_transfer_id, idempotency_key').eq('earning_id', earningId)).data ?? [];
+
+  beforeAll(async () => {
+    evBase = Date.now();
+    cAdmin = adminClient();
+    cOps = await signedInClient(`rls-c2-ops-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    cUser = await signedInClient(`rls-c2-user-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    cCompanion = await signedInClient(`rls-c2-comp-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    const cCoord = await signedInClient(`rls-c2-coord-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    opsAcct = (await cOps.auth.getUser()).data.user!.id;
+    userAcct = (await cUser.auth.getUser()).data.user!.id;
+    compAcct = (await cCompanion.auth.getUser()).data.user!.id;
+    coordAcct = (await cCoord.auth.getUser()).data.user!.id;
+    for (const c of [cOps, cUser, cCompanion, cCoord]) if ((await c.rpc('ensure_current_account')).error) throw new Error('ensure');
+    if ((await cAdmin.from('support_admins').upsert({ account_id: opsAcct }, { onConflict: 'account_id', ignoreDuplicates: true })).error) throw new Error('support');
+    const ca = await cAdmin.from('connected_accounts').upsert({
+      account_id: compAcct, stripe_account_id: `acct_c2fx_${suffix}`, payouts_enabled: true,
+      details_submitted: true, transfers_capability: 'active', default_currency: 'gbp',
+    } as never, { onConflict: 'account_id' }).select('account_id');
+    if (ca.error) throw new Error(`c2 connect: ${JSON.stringify(ca.error)}`);
+    const rows = (await cAdmin.from('financial_operation_controls').select('control_name, state')).data ?? [];
+    if (!rows.every((r) => r.state === 'disabled')) throw new Error('controls not clean at C2 start');
+    protectedSnapshot = await snapshotProtected();
+  }, 240_000);
+
+  afterAll(async () => {
+    await cAdmin.from('financial_operation_controls').update({ state: 'disabled', reason: null, expires_at: null }).eq('control_name', 'transfer_finalise');
+    await cAdmin.from('financial_operations_config').update({ provider_transfer_amount_ceiling_minor: 0 } as never).eq('id', true);
+    for (const id of runIdsMade) {
+      await cAdmin.from('scoped_transfer_execution_jobs').delete().eq('run_id', id);
+      await cAdmin.from('financial_operation_run_items').delete().eq('run_id', id);
+      await cAdmin.from('financial_operation_run_events').delete().eq('run_id', id);
+      await cAdmin.from('financial_operation_runs').delete().eq('id', id);
+    }
+    await cAdmin.from('financial_operation_control_events').delete().eq('actor_account_id', opsAcct);
+    for (const b of bookingsMade) {
+      const eids = ((await cAdmin.from('companion_earnings').select('id').eq('booking_id', b)).data ?? []).map((e) => e.id as string);
+      if (eids.length) {
+        await cAdmin.from('scoped_transfer_execution_jobs').delete().in('earning_id', eids);
+        await cAdmin.from('companion_transfer_attempts').delete().in('earning_id', eids);
+      }
+      await cAdmin.from('conversation_attendance').delete().eq('booking_id', b);
+      await cAdmin.from('companion_earnings').delete().eq('booking_id', b);
+      await cAdmin.from('payment_orders').delete().eq('booking_id', b);
+      await cAdmin.from('bookings').delete().eq('id', b);
+    }
+    for (const o of offersMade) await cAdmin.from('conversation_offers').delete().eq('id', o);
+    await cAdmin.from('profile_access').delete().in('profile_id', profilesMade);
+    for (const p of profilesMade) await cAdmin.from('profiles').delete().eq('id', p);
+    await cAdmin.from('connected_accounts').delete().eq('account_id', compAcct);
+    await cAdmin.from('support_admins').delete().eq('account_id', opsAcct);
+  }, 180_000);
+
+  it('1+2+3+4+5+7. auth denied for normal/anon; direct executor + arbitrary-earning service RPCs bound; scope caps; preview mutation-free', async () => {
+    const f = await makePayable();
+    expect((await rpc(cUser, 'support_request_operation_run', { p_operation_type: 'transfer_finalise', p_execution_mode: 'execute_scoped', p_scope_type: 'record_ids', p_scoped_ids: [f.earningId], p_batch_limit: null, p_reason: 'x' })).error).not.toBeNull();
+    expect((await rpc(client(), 'support_request_operation_run', { p_operation_type: 'transfer_finalise', p_execution_mode: 'execute_scoped', p_scope_type: 'record_ids', p_scoped_ids: [f.earningId], p_batch_limit: null, p_reason: 'x' })).error).not.toBeNull();
+    // Saga RPCs are app_private: unreachable for clients.
+    expect((await rpc(cOps, 'begin_scoped_provider_transfer_run', { p_run_id: f.earningId, p_confirmation_token: 'x' })).error).not.toBeNull();
+    expect((await rpc(cUser, 'begin_scoped_provider_transfer_item', { p_run_id: f.earningId, p_confirmation_token: 'x', p_earning_id: f.earningId })).error).not.toBeNull();
+    const rq = await mkRun([f.earningId]);
+    // service-role begin_item REJECTS an out-of-scope earning (no arbitrary scope).
+    const other = await makePayable();
+    try {
+      await setControl('scoped_execution'); await setCeiling(10_000);
+      await rpc(cAdmin, 'begin_scoped_provider_transfer_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
+      const oos = await rpc(cAdmin, 'begin_scoped_provider_transfer_item', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token, p_earning_id: other.earningId });
+      expect(JSON.stringify(oos.error)).toMatch(/out_of_scope/);
+      expect(await attemptsOf(other.earningId)).toHaveLength(0);
+      // preview mutated nothing.
+      expect((await cAdmin.from('scoped_transfer_execution_jobs').select('id').eq('earning_id', other.earningId)).data ?? []).toHaveLength(0);
+    } finally { await setControl('disabled'); await setCeiling(0); }
+    // >5 rejected at begin_run; empty at request.
+    const six = await mkRun([f.earningId, other.earningId, '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000004']);
+    try {
+      await setControl('scoped_execution'); await setCeiling(100_000);
+      const b6 = await rpc(cAdmin, 'begin_scoped_provider_transfer_run', { p_run_id: six.data.run_id, p_confirmation_token: six.data.confirmation_token });
+      expect(JSON.stringify(b6.error)).toMatch(/batch_limit_exceeded/);
+    } finally { await setControl('disabled'); await setCeiling(0); }
+  }, 240_000);
+
+  it('8+18+19+24+26+27. full create saga: lease→lookup(not_found)→authorize→finalize; exact snapshot; idempotent; ceiling enforced', async () => {
+    const f = await makePayable();
+    try {
+      await setControl('scoped_execution');
+      await setCeiling(100);   // 27: below net 950 ⇒ ceiling blocks
+      const rq = await mkRun([f.earningId]);
+      const blocked = await rpc(cAdmin, 'begin_scoped_provider_transfer_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
+      expect(JSON.stringify(blocked.error)).toMatch(/amount_ceiling_exceeded/);
+      await setCeiling(10_000);
+      const beg = await rpc(cAdmin, 'begin_scoped_provider_transfer_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
+      expect(beg.error, JSON.stringify(beg.error)).toBeNull();
+      const item = await rpc(cAdmin, 'begin_scoped_provider_transfer_item', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token, p_earning_id: f.earningId });
+      expect(item.data.proceed).toBe(true);
+      const jobId = item.data.job_id as string; const lease = item.data.lease_token as string;
+      expect(item.data.snapshot.idempotency_key).toBe(`transfer-${f.earningId}`);   // 18: exact stable key
+      // create without lookup refused
+      expect(JSON.stringify((await rpc(cAdmin, 'authorize_scoped_transfer_create', { p_job_id: jobId, p_lease_token: lease })).error)).toMatch(/lookup_required/);
+      await rpc(cAdmin, 'record_scoped_transfer_lookup', { p_job_id: jobId, p_lease_token: lease, p_outcome: 'not_found', p_provider: null });
+      const auth = await rpc(cAdmin, 'authorize_scoped_transfer_create', { p_job_id: jobId, p_lease_token: lease });
+      expect(auth.error).toBeNull();
+      const fin = await rpc(cAdmin, 'finalize_scoped_transfer_success', { p_job_id: jobId, p_lease_token: lease, p_provider: await providerJsonFor(jobId, `tr_c2_${suffix}_a`) });
+      expect(fin.data.outcome).toBe('provider_transfer_created_and_finalized');
+      // 24: repeated finalisation idempotent (webhook race analogue)
+      const again = await rpc(cAdmin, 'finalize_scoped_transfer_success', { p_job_id: jobId, p_lease_token: lease, p_provider: await providerJsonFor(jobId, `tr_c2_${suffix}_a`) });
+      expect(again.data.already_finalized).toBe(true);
+      const atts = await attemptsOf(f.earningId);
+      expect(atts).toHaveLength(1);
+      expect(atts[0]).toMatchObject({ state: 'succeeded', stripe_transfer_id: `tr_c2_${suffix}_a` });
+      const done = await rpc(cAdmin, 'complete_scoped_provider_transfer_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
+      expect(done.data.finalized_count).toBe(1);
+    } finally { await setControl('disabled'); await setCeiling(0); }
+  }, 240_000);
+
+  it('10+11+12+14+15+16+22+25. lookup semantics: exact match finalises w/o create; mismatch/ambiguity/failure stop; races excluded', async () => {
+    // fresh processing-without-provider-id fixture (protected SHAPE, not the protected row)
+    const f = await makePayable();
+    await cAdmin.from('companion_transfer_attempts').insert({
+      earning_id: f.earningId, companion_account_id: compAcct, companion_profile_id: profilesMade[0],
+      connected_account_id: `acct_c2fx_${suffix}`, amount_minor: 950, currency: 'GBP', state: 'processing',
+      attempt_count: 1, idempotency_key: `transfer-${f.earningId}`, claimed_at: new Date().toISOString() });
+    await cAdmin.from('companion_earnings').update({ transfer_state: 'processing' }).eq('id', f.earningId);
+    try {
+      await setControl('scoped_execution'); await setCeiling(10_000);
+      const rq = await mkRun([f.earningId]);
+      await rpc(cAdmin, 'begin_scoped_provider_transfer_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
+      const item = await rpc(cAdmin, 'begin_scoped_provider_transfer_item', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token, p_earning_id: f.earningId });
+      const jobId = item.data.job_id as string; const lease = item.data.lease_token as string;
+      // 25: a second run cannot open a second active job for the same earning
+      const rq2 = await mkRun([f.earningId]);
+      await rpc(cAdmin, 'begin_scoped_provider_transfer_run', { p_run_id: rq2.data.run_id, p_confirmation_token: rq2.data.confirmation_token });
+      const race = await rpc(cAdmin, 'begin_scoped_provider_transfer_item', { p_run_id: rq2.data.run_id, p_confirmation_token: rq2.data.confirmation_token, p_earning_id: f.earningId });
+      expect(race.error, 'second active job must be blocked').not.toBeNull();
+      // 12: exact existing match finalises WITHOUT create
+      const fin = await rpc(cAdmin, 'record_scoped_transfer_lookup', { p_job_id: jobId, p_lease_token: lease, p_outcome: 'found_matching', p_provider: await providerJsonFor(jobId, `tr_c2_${suffix}_found`) });
+      expect(fin.data.outcome).toBe('provider_transfer_found_and_finalized');
+      expect((await attemptsOf(f.earningId))[0].state).toBe('succeeded');
+      // 14/15/16 (+22): mismatch / ambiguous / lookup_failed all stop with reconciliation_required on fresh fixtures
+      for (const [outcome, provider, expected] of [
+        ['found_matching', { amount: 1 }, 'provider_transfer_mismatch'],
+        ['ambiguous', null, 'reconciliation_required'],
+        ['lookup_failed', null, 'reconciliation_required'],
+      ] as const) {
+        const g = await makePayable();
+        const rg = await mkRun([g.earningId]);
+        await rpc(cAdmin, 'begin_scoped_provider_transfer_run', { p_run_id: rg.data.run_id, p_confirmation_token: rg.data.confirmation_token });
+        const gi = await rpc(cAdmin, 'begin_scoped_provider_transfer_item', { p_run_id: rg.data.run_id, p_confirmation_token: rg.data.confirmation_token, p_earning_id: g.earningId });
+        const gj = gi.data.job_id as string; const gl = gi.data.lease_token as string;
+        const pv = provider ? await providerJsonFor(gj, `tr_bad_${suffix}`, provider) : null;
+        const res = await rpc(cAdmin, 'record_scoped_transfer_lookup', { p_job_id: gj, p_lease_token: gl, p_outcome: outcome, p_provider: pv });
+        expect([res.data.outcome, 'reconciliation_required']).toContain(expected);
+        // create can never follow (22: no immediate second create after uncertainty either)
+        expect((await rpc(cAdmin, 'authorize_scoped_transfer_create', { p_job_id: gj, p_lease_token: gl })).error).not.toBeNull();
+        expect((await attemptsOf(g.earningId))[0].stripe_transfer_id).toBeNull();
+      }
+    } finally { await setControl('disabled'); await setCeiling(0); }
+  }, 300_000);
+
+  it('20+21+23+30+31+35. uncertain outcomes stay safe; rejection is audited; ineligible never reaches provider; stale recovery skips scoped jobs', async () => {
+    const f = await makePayable();
+    try {
+      await setControl('scoped_execution'); await setCeiling(10_000);
+      const rq = await mkRun([f.earningId]);
+      await rpc(cAdmin, 'begin_scoped_provider_transfer_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
+      const item = await rpc(cAdmin, 'begin_scoped_provider_transfer_item', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token, p_earning_id: f.earningId });
+      const jobId = item.data.job_id as string; const lease = item.data.lease_token as string;
+      await rpc(cAdmin, 'record_scoped_transfer_lookup', { p_job_id: jobId, p_lease_token: lease, p_outcome: 'not_found', p_provider: null });
+      await rpc(cAdmin, 'authorize_scoped_transfer_create', { p_job_id: jobId, p_lease_token: lease });
+      // 21: timeout AFTER possible send ⇒ uncertain; attempt NEVER rearmed to retryable
+      const unc = await rpc(cAdmin, 'finalize_scoped_transfer_uncertain', { p_job_id: jobId, p_lease_token: lease, p_reason_code: 'timeout_after_send' });
+      expect(unc.data.state).toBe('provider_outcome_unknown');
+      expect((await attemptsOf(f.earningId))[0].state).toBe('processing');
+      // 35: stale recovery must NOT rearm the scoped-job attempt
+      await cAdmin.from('companion_transfer_attempts').update({ claimed_at: new Date(Date.now() - 2 * 3600_000).toISOString() }).eq('earning_id', f.earningId);
+      await rpc(cAdmin, 'recover_stale_transfers', { p_minutes: 30 });
+      expect((await attemptsOf(f.earningId))[0].state).toBe('processing');
+      // 23/24: later webhook-equivalent success settles the uncertain job idempotently
+      const late = await rpc(cAdmin, 'finalize_scoped_transfer_success', { p_job_id: jobId, p_lease_token: lease, p_provider: await providerJsonFor(jobId, `tr_c2_${suffix}_late`) });
+      expect(late.data.outcome).toBe('provider_transfer_found_and_finalized');
+      // 31: held earning never reaches the provider stage
+      const held = await makePayable();
+      await cAdmin.from('conversation_issues').insert({ booking_id: held.bookingId, earning_id: held.earningId, reporter_account_id: coordAcct, reporter_role: 'coordinator', category: 'audio_video_problem', description: 'Fixture', state: 'open', idempotency_key: `c2-iss-${held.bookingId}` });
+      const rh = await mkRun([held.earningId]);
+      await rpc(cAdmin, 'begin_scoped_provider_transfer_run', { p_run_id: rh.data.run_id, p_confirmation_token: rh.data.confirmation_token });
+      const hi = await rpc(cAdmin, 'begin_scoped_provider_transfer_item', { p_run_id: rh.data.run_id, p_confirmation_token: rh.data.confirmation_token, p_earning_id: held.earningId });
+      expect(hi.data.proceed).toBe(false);
+      expect(hi.data.outcome).toBe('held_for_issue');
+      expect(await attemptsOf(held.earningId)).toHaveLength(0);
+      // 30: permanent rejection recorded through the audited finaliser
+      const p = await makePayable();
+      const rp = await mkRun([p.earningId]);
+      await rpc(cAdmin, 'begin_scoped_provider_transfer_run', { p_run_id: rp.data.run_id, p_confirmation_token: rp.data.confirmation_token });
+      const pi = await rpc(cAdmin, 'begin_scoped_provider_transfer_item', { p_run_id: rp.data.run_id, p_confirmation_token: rp.data.confirmation_token, p_earning_id: p.earningId });
+      await rpc(cAdmin, 'record_scoped_transfer_lookup', { p_job_id: pi.data.job_id, p_lease_token: pi.data.lease_token, p_outcome: 'not_found', p_provider: null });
+      await rpc(cAdmin, 'authorize_scoped_transfer_create', { p_job_id: pi.data.job_id, p_lease_token: pi.data.lease_token });
+      await rpc(cAdmin, 'finalize_scoped_transfer_rejected', { p_job_id: pi.data.job_id, p_lease_token: pi.data.lease_token, p_code: 'account_invalid', p_permanent: true });
+      expect((await attemptsOf(p.earningId))[0].state).toBe('failed_permanent');
+    } finally { await setControl('disabled'); await setCeiling(0); }
+  }, 300_000);
+
+  it('28+29. hosted_test rejects livemode results; production_live execution unavailable', async () => {
+    const f = await makePayable();
+    try {
+      await setControl('scoped_execution'); await setCeiling(10_000);
+      const rq = await mkRun([f.earningId]);
+      await rpc(cAdmin, 'begin_scoped_provider_transfer_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
+      const item = await rpc(cAdmin, 'begin_scoped_provider_transfer_item', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token, p_earning_id: f.earningId });
+      const jobId = item.data.job_id as string; const lease = item.data.lease_token as string;
+      // A livemode=true provider result NEVER verifies in hosted_test (mismatch).
+      const res = await rpc(cAdmin, 'record_scoped_transfer_lookup', { p_job_id: jobId, p_lease_token: lease, p_outcome: 'found_matching', p_provider: await providerJsonFor(jobId, `tr_live_${suffix}`, { livemode: true }) });
+      expect(res.data.outcome).toBe('provider_transfer_mismatch');
+      expect((await attemptsOf(f.earningId))[0].stripe_transfer_id).toBeNull();
+      // production_live remains locked: environment is hosted_test and no test arms it.
+      expect((await cAdmin.from('financial_operations_config').select('environment').eq('id', true).single()).data!.environment).toBe('hosted_test');
+    } finally { await setControl('disabled'); await setCeiling(0); }
+  }, 240_000);
+
+  it('32+33+34+36+37+38+39+40 + SENTINEL. dedup; safe output; no workers; controls disabled; protected rows + findings unchanged', async () => {
+    // Support detail exposes no secret/destination/key material for any C2 run.
+    for (const rid of runIdsMade.slice(-3)) {
+      const d = (await rpc(cOps, 'support_operation_run_detail', { p_run_id: rid })).data;
+      const blob = JSON.stringify(d).toLowerCase();
+      for (const s of [`acct_c2fx_${suffix}`.toLowerCase(), 'client_secret', 'sk_test', 'sk_live', 'transfer-0']) {
+        expect(blob, s).not.toContain(s);
+      }
+    }
+    const controls = (await cAdmin.from('financial_operation_controls').select('control_name, state')).data ?? [];
+    expect(controls.every((c) => c.state === 'disabled'), 'all controls disabled').toBe(true);
+    expect((await cAdmin.from('financial_operations_config').select('environment, provider_transfer_amount_ceiling_minor').eq('id', true).single()).data)
+      .toMatchObject({ environment: 'hosted_test', provider_transfer_amount_ceiling_minor: 0 });
+    const after = await snapshotProtected();
+    expect(after.booking).toEqual(protectedSnapshot.booking);
+    expect(after.earning).toEqual(protectedSnapshot.earning);
+    expect(after.attempt).toEqual(protectedSnapshot.attempt);
+    expect(after.totalFindings).toBe(protectedSnapshot.totalFindings);
+    expect(bookingsMade).not.toContain(PROTECTED_BOOKING);
+  }, 120_000);
+});

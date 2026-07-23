@@ -34,7 +34,8 @@ describe('0077 is additive — 0001–0076 untouched, 0077 highest', () => {
   it('adds 0077; no drops/creates of prior tables; vocabularies are supersets', () => {
     const files = readdirSync(MIG).filter((f) => /^\d{4}_.*\.sql$/.test(f)).map((f) => f.slice(0, 4)).sort();
     expect(files).toContain('0077');
-    expect(files[files.length - 1]).toBe('0077');
+    // (Later stages add higher-numbered migrations additively; 0077 stays immutable.)
+    expect(files.indexOf('0077')).toBeGreaterThan(files.indexOf('0076'));
     expect(M_CODE).not.toMatch(/drop table/i);
     expect(M_CODE).not.toMatch(/create table/i);   // items ledger + attempts reused
     // Every 0075/0076 outcome + action survives (supersets).
