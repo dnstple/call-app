@@ -9197,8 +9197,12 @@ describe.skipIf(!enabled)('Stage 3C2-C2 scoped provider transfer execution (requ
     const f = await makePayable();
     try {
       await setControl('scoped_execution');
-      await setCeiling(100);   // 27: below net 950 ⇒ ceiling blocks
+      // ZERO ceiling (the default) blocks all provider execution.
+      await setCeiling(0);
       const rq = await mkRun([f.earningId]);
+      const unconfigured = await rpc(cAdmin, 'begin_scoped_provider_transfer_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
+      expect(JSON.stringify(unconfigured.error)).toMatch(/amount_ceiling_unconfigured/);
+      await setCeiling(100);   // 27: below net 950 ⇒ ceiling blocks
       const blocked = await rpc(cAdmin, 'begin_scoped_provider_transfer_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
       expect(JSON.stringify(blocked.error)).toMatch(/amount_ceiling_exceeded/);
       await setCeiling(10_000);

@@ -30,7 +30,8 @@ describe('0078 is additive; scope, batch and ceiling are hard-gated', () => {
   it('adds 0078 highest; 0001–0077 untouched; no drops; vocabularies are supersets', () => {
     const files = readdirSync(MIG).filter((f) => /^\d{4}_.*\.sql$/.test(f)).map((f) => f.slice(0, 4)).sort();
     expect(files).toContain('0078');
-    expect(files[files.length - 1]).toBe('0078');
+    // (0079 additively exposes the saga RPCs; 0078 stays immutable.)
+    expect(files.indexOf('0078')).toBeGreaterThan(files.indexOf('0077'));
     expect(M_CODE).not.toMatch(/drop table/i);
     for (const o of ['released', 'renewed_credit_covered', 'eligible_provider_action_required',
                      'item_review_required', 'item_provider_lookup_required']) {
@@ -161,6 +162,60 @@ describe('0078 grants + worker firewall + legacy preservation', () => {
     expect(pv).toContain('app_private.classify_scoped_transfer(d.id, now())');
     // production_live in the Edge handler is rejected until a later activation stage.
     expect(EDGE).toContain("production_live_execution_not_yet_enabled");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 0079 — public RPC exposure wrappers (PGRST202 root-cause correction).
+// ---------------------------------------------------------------------------
+describe('0079 public wrappers — zero logic, exact signatures, service_role only', () => {
+  const M79 = readFileSync(join(MIG, '0079_expose_provider_saga_rpcs.sql'), 'utf-8');
+  const WRAPPERS: Array<[string, string]> = [
+    ['begin_scoped_provider_transfer_run', '(p_run_id uuid, p_confirmation_token text)'],
+    ['begin_scoped_provider_transfer_item', '(p_run_id uuid, p_confirmation_token text, p_earning_id uuid)'],
+    ['record_scoped_transfer_lookup', '(p_job_id uuid, p_lease_token text, p_outcome text, p_provider jsonb default null)'],
+    ['authorize_scoped_transfer_create', '(p_job_id uuid, p_lease_token text)'],
+    ['finalize_scoped_transfer_success', '(p_job_id uuid, p_lease_token text, p_provider jsonb)'],
+    ['finalize_scoped_transfer_uncertain', '(p_job_id uuid, p_lease_token text, p_reason_code text)'],
+    ['finalize_scoped_transfer_rejected', '(p_job_id uuid, p_lease_token text, p_code text, p_permanent boolean)'],
+    ['complete_scoped_provider_transfer_run', '(p_run_id uuid, p_confirmation_token text)'],
+  ];
+  it('root cause documented: 0078 RPCs are app_private-only; PostgREST resolves public.<name> ⇒ 0079 exposes exact-signature wrappers', () => {
+    // 0078 defines all eight ONLY in app_private (the deployed truth).
+    for (const [name] of WRAPPERS) {
+      expect(M).toContain(`create or replace function app_private.${name}(`);
+      expect(M).not.toContain(`create or replace function public.${name}(`);
+    }
+    const files = readdirSync(MIG).filter((f) => /^\d{4}_.*\.sql$/.test(f)).map((f) => f.slice(0, 4)).sort();
+    expect(files[files.length - 1]).toBe('0079');
+  });
+  it('each wrapper has the EXACT app_private signature + param names and delegates in ONE statement (no business logic)', () => {
+    for (const [name, sig] of WRAPPERS) {
+      expect(M79, name).toContain(`create or replace function public.${name}${sig}`);
+      const start = M79.indexOf(`create or replace function public.${name}${sig}`);
+      const body = M79.slice(start, M79.indexOf('$$;', start));
+      expect(body, `${name} delegates`).toContain(`select app_private.${name}(`);
+      expect(body, `${name} definer`).toContain('security definer');
+      expect(body, `${name} search_path`).toContain("set search_path = ''");
+      // Zero logic: no conditionals, no writes, no extra reads.
+      expect(body).not.toMatch(/\b(if|insert|update|delete|for |loop)\b/i);
+    }
+  });
+  it('every wrapper is revoked from PUBLIC/anon/authenticated and granted ONLY to service_role; no arbitrary-scope expansion added', () => {
+    for (const [name] of WRAPPERS) {
+      expect(M79).toContain(`from public, anon, authenticated;`);
+      expect(M79).toContain(`grant execute on function public.${name}`);
+      expect(M79).not.toContain(`grant execute on function public.${name.replace(/./g, '$&')} to authenticated`);
+    }
+    expect((M79.match(/grant execute on function public\.[a-z_]+\([^)]*\) to service_role;/g) ?? []).length).toBe(8);
+    expect((M79.match(/to authenticated/g) ?? []).length).toBe(0);
+    // No provider/worker/cron CODE and no protected ids (comments stripped —
+    // the header documents the Edge Function name and the Stripe ban).
+    const lc = M79.replace(/--.*$/gm, '').toLowerCase();
+    for (const bad of ['stripe', 'pg_net', 'cron.', 'claim_plan_transfers', 'ba4f943c', '71ecc', '080b']) {
+      expect(lc, bad).not.toContain(bad);
+    }
+    expect(M79).toContain("select pg_notify('pgrst', 'reload schema')");
   });
 });
 
