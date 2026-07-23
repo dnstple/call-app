@@ -36,7 +36,8 @@ describe('0076 is additive — 0001–0075 untouched, 0076 highest', () => {
   it('adds 0076 and never drops/replaces a prior table or migration', () => {
     const files = readdirSync(MIG).filter((f) => /^\d{4}_.*\.sql$/.test(f)).map((f) => f.slice(0, 4)).sort();
     expect(files).toContain('0076');
-    expect(files[files.length - 1]).toBe('0076');
+    // (Later stages add higher-numbered migrations additively; 0076 stays immutable.)
+    expect(files.indexOf('0076')).toBeGreaterThan(files.indexOf('0075'));
     expect(M_CODE).not.toMatch(/drop table/i);
     // Vocabulary extensions are supersets: every 0075 outcome/action survives.
     for (const o of ['released', 'already_payable', 'not_found', 'not_yet_eligible', 'issue_held',

@@ -145,12 +145,16 @@ export async function executeOperationRun(runId: string, token: string): Promise
   if (data && data.ok === false) {
     return { ok: false, blockedCode: data.code as string, succeeded: 0, skipped: 0, examined: 0 };
   }
-  // 0075 (earning_release) / 0076 (plan_renewal): structured per-run counts.
-  // plan_renewal counts renewed + prepared as succeeded work (prepared = period
-  // created, provider work pending — never a claimed payment success).
+  // 0075 (earning_release) / 0076 (plan_renewal) / 0077 (transfer preparation):
+  // structured per-run counts. plan_renewal counts renewed + prepared; transfer
+  // preparation counts prepared queued attempts only (never a provider success).
   const renewed = (data.renewed_count ?? 0) + (data.prepared_count ?? 0);
   return {
-    ok: true, succeeded: data.released_count ?? (data.renewed_count !== undefined ? renewed : undefined) ?? data.succeeded ?? 0,
+    ok: true,
+    succeeded: data.released_count
+      ?? (data.renewed_count !== undefined ? renewed : undefined)
+      ?? (data.prepared_count !== undefined ? data.prepared_count : undefined)
+      ?? data.succeeded ?? 0,
     skipped: data.skipped_count ?? data.skipped ?? 0, examined: data.requested_count ?? data.examined ?? 0,
   };
 }
@@ -162,7 +166,11 @@ export type ItemOutcome =
   // Stage 3C2-B plan_renewal
   | 'renewed_credit_covered' | 'renewal_prepared' | 'closed_zero_occurrences'
   | 'already_renewed' | 'action_required_existing' | 'payment_failed_existing'
-  | 'plan_not_active' | 'plan_paused' | 'plan_ended' | 'billing_not_enabled' | 'not_recurring';
+  | 'plan_not_active' | 'plan_paused' | 'plan_ended' | 'billing_not_enabled' | 'not_recurring'
+  // Stage 3C2-C1 transfer preparation (database-only; no provider call)
+  | 'prepared_for_provider' | 'provider_lookup_required' | 'already_processing'
+  | 'already_transferred' | 'not_payable' | 'held_for_issue' | 'connect_not_ready'
+  | 'zero_amount' | 'retryable_failure' | 'permanent_failure';
 export interface RunItem {
   recordId: string; ordinal: number; outcome: ItemOutcome; reasonCode: string | null;
   beforeState: string | null; afterState: string | null; attemptedAt: string | null; completedAt: string | null;

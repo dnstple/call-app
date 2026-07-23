@@ -8669,3 +8669,343 @@ describe.skipIf(!enabled)('Stage 3C2-B scoped plan renewal (requires live Supaba
     expect((await cAdmin.from('financial_operations_config').select('environment').eq('id', true).single()).data!.environment).toBe('hosted_test');
   }, 90_000);
 });
+
+describe.skipIf(!enabled)('Stage 3C2-C scoped transfer preparation (requires live Supabase)', () => {
+  let cAdmin: SupabaseClient; let cOps: SupabaseClient; let cUser: SupabaseClient; let cCompanion: SupabaseClient; let cCompanionNR: SupabaseClient;
+  let opsAcct: string; let userAcct: string; let compAcct: string; let compNRAcct: string; let coordAcct: string;
+  const bookingsMade: string[] = [];
+  const profilesMade: string[] = [];
+  const offersMade: string[] = [];
+  const runIdsMade: string[] = [];
+  let evBase = 0;
+  // The PROTECTED historical record — read-only sentinel ONLY; never in any scope.
+  const PROTECTED_BOOKING = 'ba4f943c-3e8d-4d4c-900d-fa551ccc5387';
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let protectedSnapshot: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rpc = (c: SupabaseClient, fn: string, args: Record<string, unknown>) => (c as any).rpc(fn, args);
+
+  async function snapshotProtected() {
+    const booking = (await cAdmin.from('bookings').select('status, starts_at, ends_at').eq('id', PROTECTED_BOOKING).maybeSingle()).data;
+    const earning = (await cAdmin.from('companion_earnings').select('id, state, transfer_state, net_minor, currency, updated_at').eq('booking_id', PROTECTED_BOOKING).maybeSingle()).data;
+    const attempt = earning
+      ? (await cAdmin.from('companion_transfer_attempts').select('id, state, stripe_transfer_id, idempotency_key, amount_minor, currency, connected_account_id, attempt_count, claimed_at, updated_at').eq('earning_id', earning.id).maybeSingle()).data
+      : null;
+    const findings = earning
+      ? ((await cAdmin.from('financial_reconciliation_findings').select('id, status').eq('primary_entity_id', earning.id)).data ?? [])
+      : [];
+    const totalFindings = (await cAdmin.from('financial_reconciliation_findings').select('id', { count: 'exact', head: true })).count ?? 0;
+    return { booking, earning, attempt, findings, totalFindings };
+  }
+
+  // Fresh fixture family (same sanctioned path as 3C1/3C2-A): funded confirmed
+  // ended booking + took_place → pending earning; then admin sets payable.
+  async function makeEarning(owner: 'ready' | 'notready' = 'ready'): Promise<{ bookingId: string; earningId: string }> {
+    const start = new Date(evBase - 70 * 60_000); const end = new Date(start.getTime() + 30 * 60_000);
+    const ownAcct = owner === 'ready' ? compAcct : compNRAcct;
+    const ownClient = owner === 'ready' ? cCompanion : cCompanionNR;
+    const cp = await cAdmin.from('profiles').insert({ role: 'companion', first_name: '3c2cC' }).select('id').single();
+    const companion = requireUuid(cp.data!.id, '3c2c companion'); profilesMade.push(companion);
+    await cAdmin.from('profile_access').insert({ account_id: ownAcct, profile_id: companion, access_role: 'owner', can_edit: true, can_book: true });
+    const of = await cAdmin.from('conversation_offers').insert({ companion_profile_id: companion, offer_type: 'single', duration_minutes: 30, price_minor: 1000, supported_methods: ['in_app'] }).select('id').single();
+    offersMade.push(requireUuid(of.data!.id, '3c2c offer'));
+    const mp = await cAdmin.from('profiles').insert({ role: 'member', first_name: '3c2cM' }).select('id').single();
+    const member = requireUuid(mp.data!.id, '3c2c member'); profilesMade.push(member);
+    await cAdmin.from('profile_access').insert([
+      { account_id: userAcct, profile_id: member, access_role: 'owner', can_edit: true, can_book: true },
+      { account_id: coordAcct, profile_id: member, access_role: 'coordinator', can_edit: true, can_book: true }]);
+    const bk = await cAdmin.from('bookings').insert({
+      member_profile_id: member, companion_profile_id: companion, booked_by_account_id: coordAcct, offer_id: of.data!.id,
+      starts_at: start.toISOString(), ends_at: end.toISOString(), communication_method: 'in_app',
+      status: 'confirmed', duration_minutes: 30, price_minor: 1000, platform_fee_rate: 5, platform_fee_minor: 50, companion_amount_minor: 950 }).select('id').single();
+    const bookingId = requireUuid(bk.data!.id, '3c2c booking'); bookingsMade.push(bookingId);
+    if ((await cAdmin.from('payment_orders').insert({
+      booking_id: bookingId, provider: 'stripe_test', coordinator_account_id: coordAcct, member_profile_id: member, companion_profile_id: companion,
+      order_type: 'one_off', status: 'succeeded', subtotal_minor: 1000, discount_minor: 0, service_fee_minor: 0, credit_applied_minor: 0,
+      card_amount_minor: 1000, total_minor: 1000, commission_rate_pct: 5, commission_minor: 50, idempotency_key: `3c2c-ord-${bookingId}` })).error) throw new Error('3c2c order');
+    if ((await rpc(ownClient, 'submit_companion_attendance', { p_booking: bookingId, p_outcome: 'took_place', p_explanation: null })).error) throw new Error('3c2c declaration');
+    const earningId = requireUuid((await cAdmin.from('companion_earnings').select('id').eq('booking_id', bookingId).single()).data!.id, '3c2c earning');
+    // Link the earning to the settled order (claim/classifier requires order settled).
+    const ordId = (await cAdmin.from('payment_orders').select('id').eq('booking_id', bookingId).single()).data!.id;
+    await cAdmin.from('companion_earnings').update({ payment_order_id: ordId }).eq('id', earningId);
+    return { bookingId, earningId };
+  }
+  async function makePayable(owner: 'ready' | 'notready' = 'ready') {
+    const f = await makeEarning(owner);
+    const upd = await cAdmin.from('companion_earnings').update({ state: 'payable', payable_at: new Date().toISOString() }).eq('id', f.earningId).select('id');
+    if (upd.error || (upd.data ?? []).length !== 1) throw new Error(`3c2c payable: ${JSON.stringify(upd.error)}`);
+    return f;
+  }
+  // Attach a fresh attempt in a given state (admin fixture; unique earning_id).
+  async function withAttempt(earningId: string, state: string, providerId: string | null) {
+    const r = await cAdmin.from('companion_transfer_attempts').insert({
+      earning_id: earningId, companion_account_id: compAcct, companion_profile_id: profilesMade[0],
+      connected_account_id: `acct_fx_${suffix}`, amount_minor: 950, currency: 'GBP', state,
+      attempt_count: 1, idempotency_key: `transfer-${earningId}`, stripe_transfer_id: providerId,
+      claimed_at: state === 'processing' ? new Date().toISOString() : null,
+    }).select('id');
+    if (r.error) throw new Error(`3c2c attempt: ${JSON.stringify(r.error)}`);
+  }
+  async function reqRun(ids: string[], mode: 'preview' | 'execute_scoped' = 'execute_scoped') {
+    const r = await rpc(cOps, 'support_request_operation_run', { p_operation_type: 'transfer_claim', p_execution_mode: mode, p_scope_type: 'record_ids', p_scoped_ids: ids, p_batch_limit: null, p_reason: '3c2c test' });
+    if (r.data?.run_id) runIdsMade.push(r.data.run_id);
+    return r;
+  }
+  const setControl = async (state: 'disabled' | 'dry_run_only' | 'scoped_execution') => {
+    const cur = (await cAdmin.from('financial_operation_controls').select('state').eq('control_name', 'transfer_claim').single()).data!.state as string;
+    if (cur !== state) await rpc(cOps, 'support_set_financial_control', { p_control: 'transfer_claim', p_expected_state: cur, p_new_state: state, p_reason: '3c2c test' });
+  };
+  const itemsOf = async (runId: string): Promise<Array<{ record_id: string; outcome: string; reason_code: string | null }>> =>
+    ((await rpc(cOps, 'support_operation_run_items', { p_run_id: runId })).data ?? []) as Array<{ record_id: string; outcome: string; reason_code: string | null }>;
+  async function previewConfirmExecute(ids: string[]) {
+    const rq = await reqRun(ids); const rid = rq.data.run_id; const tok = rq.data.confirmation_token;
+    await rpc(cOps, 'support_preview_operation_run', { p_run_id: rid });
+    await rpc(cOps, 'support_confirm_operation_run', { p_run_id: rid, p_confirmation_token: tok });
+    const ex = await rpc(cOps, 'support_execute_operation_run', { p_run_id: rid, p_confirmation_token: tok });
+    return { rid, tok, ex };
+  }
+  const attemptsOf = async (earningId: string) =>
+    (await cAdmin.from('companion_transfer_attempts').select('id, state, attempt_count, claimed_at, stripe_transfer_id, idempotency_key').eq('earning_id', earningId)).data ?? [];
+  const earningOf = async (earningId: string) =>
+    (await cAdmin.from('companion_earnings').select('state, transfer_state').eq('id', earningId).single()).data!;
+
+  beforeAll(async () => {
+    evBase = Date.now();
+    cAdmin = adminClient();
+    cOps = await signedInClient(`rls-3c2c-ops-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    cUser = await signedInClient(`rls-3c2c-user-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    cCompanion = await signedInClient(`rls-3c2c-comp-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    cCompanionNR = await signedInClient(`rls-3c2c-compnr-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    const cCoord = await signedInClient(`rls-3c2c-coord-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    opsAcct = (await cOps.auth.getUser()).data.user!.id;
+    userAcct = (await cUser.auth.getUser()).data.user!.id;
+    compAcct = (await cCompanion.auth.getUser()).data.user!.id;
+    compNRAcct = (await cCompanionNR.auth.getUser()).data.user!.id;
+    coordAcct = (await cCoord.auth.getUser()).data.user!.id;
+    for (const c of [cOps, cUser, cCompanion, cCompanionNR, cCoord]) if ((await c.rpc('ensure_current_account')).error) throw new Error('ensure');
+    if ((await cAdmin.from('support_admins').upsert({ account_id: opsAcct }, { onConflict: 'account_id', ignoreDuplicates: true })).error) throw new Error('support');
+    // READY companion account: a fully-enabled fresh connected account (fixture; no
+    // provider call — a plain row insert). The NOT-READY companion has none.
+    const ca = await cAdmin.from('connected_accounts').upsert({
+      account_id: compAcct, stripe_account_id: `acct_fx_${suffix}`, payouts_enabled: true,
+      details_submitted: true, transfers_capability: 'active', default_currency: 'gbp',
+    } as never, { onConflict: 'account_id' }).select('account_id');
+    if (ca.error) throw new Error(`3c2c connect fixture: ${JSON.stringify(ca.error)}`);
+    // Initial controls-clean + PROTECTED SENTINEL SNAPSHOT.
+    const rows = (await cAdmin.from('financial_operation_controls').select('control_name, state')).data ?? [];
+    if (!rows.every((r) => r.state === 'disabled')) throw new Error('controls not clean at 3C2-C start');
+    protectedSnapshot = await snapshotProtected();
+  }, 240_000);
+
+  afterAll(async () => {
+    await cAdmin.from('financial_operation_controls').update({ state: 'disabled', reason: null, expires_at: null }).eq('control_name', 'transfer_claim');
+    for (const id of runIdsMade) {
+      await cAdmin.from('financial_operation_run_items').delete().eq('run_id', id);
+      await cAdmin.from('financial_operation_run_events').delete().eq('run_id', id);
+      await cAdmin.from('financial_operation_runs').delete().eq('id', id);
+    }
+    await cAdmin.from('financial_operation_control_events').delete().eq('actor_account_id', opsAcct);
+    for (const b of bookingsMade) {
+      const eids = ((await cAdmin.from('companion_earnings').select('id').eq('booking_id', b)).data ?? []).map((e) => e.id as string);
+      if (eids.length) await cAdmin.from('companion_transfer_attempts').delete().in('earning_id', eids);
+      await cAdmin.from('companion_evidence_payout_reviews').delete().eq('booking_id', b);
+      await cAdmin.from('conversation_issues').delete().eq('booking_id', b);
+      await cAdmin.from('conversation_attendance').delete().eq('booking_id', b);
+      await cAdmin.from('companion_earnings').delete().eq('booking_id', b);
+      await cAdmin.from('payment_orders').delete().eq('booking_id', b);
+      await cAdmin.from('bookings').delete().eq('id', b);
+    }
+    for (const o of offersMade) await cAdmin.from('conversation_offers').delete().eq('id', o);
+    await cAdmin.from('profile_access').delete().in('profile_id', profilesMade);
+    for (const p of profilesMade) await cAdmin.from('profiles').delete().eq('id', p);
+    await cAdmin.from('connected_accounts').delete().eq('account_id', compAcct);
+    await cAdmin.from('support_admins').delete().eq('account_id', opsAcct);
+  }, 180_000);
+
+  it('1+3+4+5. normal/anon cannot request-confirm-execute; empty, >25 and malformed scopes rejected', async () => {
+    const f = await makePayable();
+    expect((await rpc(cUser, 'support_request_operation_run', { p_operation_type: 'transfer_claim', p_execution_mode: 'execute_scoped', p_scope_type: 'record_ids', p_scoped_ids: [f.earningId], p_batch_limit: null, p_reason: 'x' })).error).not.toBeNull();
+    expect((await rpc(client(), 'support_request_operation_run', { p_operation_type: 'transfer_claim', p_execution_mode: 'execute_scoped', p_scope_type: 'record_ids', p_scoped_ids: [f.earningId], p_batch_limit: null, p_reason: 'x' })).error).not.toBeNull();
+    expect(JSON.stringify((await reqRun([])).error)).toMatch(/empty_scope/);
+    expect(JSON.stringify((await reqRun(Array.from({ length: 26 }, () => f.earningId))).error)).toMatch(/batch_limit_exceeded/);
+    expect((await reqRun(['not-a-uuid'] as unknown as string[])).error).not.toBeNull();
+    const rq = await reqRun([f.earningId]);
+    expect((await rpc(cUser, 'support_confirm_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token })).error).not.toBeNull();
+    expect((await rpc(cUser, 'support_execute_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token })).error).not.toBeNull();
+  }, 90_000);
+
+  it('2+6+22+23. preparation queues ONE attempt for A only (dedup 3→1); equally eligible B untouched; earning row unchanged', async () => {
+    const a = await makePayable();
+    const b = await makePayable();
+    try {
+      await setControl('scoped_execution');
+      const { rid, ex } = await previewConfirmExecute([a.earningId, a.earningId, a.earningId]);
+      expect(ex.error, JSON.stringify(ex.error)).toBeNull();
+      expect(ex.data.requested_count).toBe(1);
+      expect(ex.data.prepared_count).toBe(1);
+      expect((await itemsOf(rid))[0].outcome).toBe('prepared_for_provider');
+      const atts = await attemptsOf(a.earningId);
+      expect(atts).toHaveLength(1);
+      expect(atts[0]).toMatchObject({ state: 'queued', attempt_count: 0, claimed_at: null, stripe_transfer_id: null, idempotency_key: `transfer-${a.earningId}` });
+      expect(await earningOf(a.earningId)).toMatchObject({ state: 'payable', transfer_state: 'not_ready' });   // NEVER touched
+      expect(await attemptsOf(b.earningId)).toHaveLength(0);                                                    // out of scope
+    } finally { await setControl('disabled'); }
+  }, 120_000);
+
+  it('7+8. preview classifies eligible + not_found without mutation, claim or provider call', async () => {
+    const f = await makePayable();
+    const rq = await reqRun([f.earningId, '00000000-0000-0000-0000-000000000000'], 'preview');
+    const prev = await rpc(cOps, 'support_preview_operation_run', { p_run_id: rq.data.run_id });
+    expect(prev.error, JSON.stringify(prev.error)).toBeNull();
+    const rows = prev.data.rows as Array<Record<string, unknown>>;
+    expect(rows.find((r) => r.id === f.earningId)!.outcome).toBe('eligible_for_preparation');
+    expect(rows.find((r) => r.id === '00000000-0000-0000-0000-000000000000')!.outcome).toBe('not_found');
+    expect(await attemptsOf(f.earningId)).toHaveLength(0);   // preview claimed nothing
+    expect(await earningOf(f.earningId)).toMatchObject({ state: 'payable', transfer_state: 'not_ready' });
+  }, 90_000);
+
+  it('9-17+24+25+27. mixed scope: holds/not-ready/zero/reversed/transferred/processing±id classified exactly; null provider id never means retry; no second attempt', async () => {
+    const elig = await makePayable();
+    const held = await makePayable();
+    await cAdmin.from('conversation_issues').insert({ booking_id: held.bookingId, earning_id: held.earningId, reporter_account_id: coordAcct, reporter_role: 'coordinator', category: 'audio_video_problem', description: 'Fixture issue', state: 'open', idempotency_key: `3c2c-iss-${held.bookingId}` });
+    const evd = await makePayable();
+    await cAdmin.from('companion_evidence_payout_reviews').insert({ booking_id: evd.bookingId, conflict_code: 'companion_not_observed', state: 'active', support_touched: false, first_detected_at: new Date().toISOString(), last_detected_at: new Date().toISOString() });
+    const nr = await makePayable('notready');                                             // connect_not_ready
+    const zero = await makePayable(); await cAdmin.from('companion_earnings').update({ net_minor: 0 }).eq('id', zero.earningId);
+    const rev = await makePayable(); await cAdmin.from('companion_earnings').update({ state: 'reversed', transfer_state: 'reversed' }).eq('id', rev.earningId);
+    const done = await makePayable(); await withAttempt(done.earningId, 'succeeded', `tr_fx_done_${suffix}`);
+    await cAdmin.from('companion_earnings').update({ transfer_state: 'transferred' }).eq('id', done.earningId);
+    const procId = await makePayable(); await withAttempt(procId.earningId, 'processing', `tr_fx_proc_${suffix}`);
+    await cAdmin.from('companion_earnings').update({ transfer_state: 'processing' }).eq('id', procId.earningId);
+    const procNoId = await makePayable(); await withAttempt(procNoId.earningId, 'processing', null);
+    await cAdmin.from('companion_earnings').update({ transfer_state: 'processing' }).eq('id', procNoId.earningId);
+    try {
+      await setControl('scoped_execution');
+      const scope = [elig.earningId, held.earningId, evd.earningId, nr.earningId, zero.earningId, rev.earningId, done.earningId, procId.earningId, procNoId.earningId];
+      const { rid, ex } = await previewConfirmExecute(scope);
+      expect(ex.error, JSON.stringify(ex.error)).toBeNull();
+      const items = await itemsOf(rid);
+      const out = (id: string) => items.find((i) => i.record_id === id)!.outcome;
+      expect(out(elig.earningId)).toBe('prepared_for_provider');
+      expect(out(held.earningId)).toBe('held_for_issue');
+      expect(out(evd.earningId)).toBe('evidence_held');
+      expect(out(nr.earningId)).toBe('connect_not_ready');
+      expect(out(zero.earningId)).toBe('zero_amount');
+      expect(out(rev.earningId)).toBe('reversed');
+      expect(out(done.earningId)).toBe('already_transferred');
+      expect(out(procId.earningId)).toBe('already_processing');
+      expect(out(procNoId.earningId)).toBe('provider_lookup_required');                    // null id ≠ retryable
+      // Nothing ineligible gained an attempt; processing rows untouched; ONE attempt each.
+      for (const f of [held, evd, nr, zero, rev]) expect(await attemptsOf(f.earningId)).toHaveLength(0);
+      expect((await attemptsOf(procNoId.earningId))[0]).toMatchObject({ state: 'processing', stripe_transfer_id: null });
+      expect(await attemptsOf(procId.earningId)).toHaveLength(1);
+      expect(ex.data.lookup_required_count).toBe(1);
+      expect(ex.data.failed_count).toBe(0);
+    } finally { await setControl('disabled'); }
+  }, 240_000);
+
+  it('18. stale preview reclassified at execution (issue appears after preview)', async () => {
+    const a = await makePayable(); const b = await makePayable();
+    try {
+      await setControl('scoped_execution');
+      const rq = await reqRun([a.earningId, b.earningId]);
+      await rpc(cOps, 'support_preview_operation_run', { p_run_id: rq.data.run_id });
+      await rpc(cOps, 'support_confirm_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
+      await cAdmin.from('conversation_issues').insert({ booking_id: a.bookingId, earning_id: a.earningId, reporter_account_id: coordAcct, reporter_role: 'coordinator', category: 'audio_video_problem', description: 'Fixture late issue', state: 'open', idempotency_key: `3c2c-late-${a.bookingId}` });
+      await rpc(cOps, 'support_execute_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
+      const items = await itemsOf(rq.data.run_id);
+      expect(items.find((i) => i.record_id === a.earningId)!.outcome).toBe('held_for_issue');
+      expect(items.find((i) => i.record_id === b.earningId)!.outcome).toBe('prepared_for_provider');
+      expect(await attemptsOf(a.earningId)).toHaveLength(0);
+    } finally { await setControl('disabled'); }
+  }, 120_000);
+
+  it('19+20+21. disabled → structured block + one deduplicated event; dry_run_only previews but blocks', async () => {
+    const f = await makePayable();
+    try {
+      await setControl('disabled');
+      const rq = await reqRun([f.earningId]);
+      await rpc(cOps, 'support_preview_operation_run', { p_run_id: rq.data.run_id });
+      await rpc(cOps, 'support_confirm_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
+      const ex = await rpc(cOps, 'support_execute_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
+      expect(ex.data.code).toBe('control_disabled');
+      await rpc(cOps, 'support_execute_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
+      expect((await cAdmin.from('financial_operation_run_events').select('id').eq('run_id', rq.data.run_id).eq('action', 'control_blocked')).data ?? []).toHaveLength(1);
+      expect(await attemptsOf(f.earningId)).toHaveLength(0);
+      await setControl('dry_run_only');
+      const rq2 = await reqRun([f.earningId]);
+      expect((await rpc(cOps, 'support_preview_operation_run', { p_run_id: rq2.data.run_id })).error).toBeNull();
+      await rpc(cOps, 'support_confirm_operation_run', { p_run_id: rq2.data.run_id, p_confirmation_token: rq2.data.confirmation_token });
+      expect((await rpc(cOps, 'support_execute_operation_run', { p_run_id: rq2.data.run_id, p_confirmation_token: rq2.data.confirmation_token })).data.code).toBe('dry_run_only');
+      expect(await attemptsOf(f.earningId)).toHaveLength(0);
+    } finally { await setControl('disabled'); }
+  }, 120_000);
+
+  it('24+25+26. repeat idempotent; concurrent executions one result; racing runs create at most one queued attempt', async () => {
+    const f = await makePayable();
+    try {
+      await setControl('scoped_execution');
+      const rq = await reqRun([f.earningId]);
+      await rpc(cOps, 'support_preview_operation_run', { p_run_id: rq.data.run_id });
+      await rpc(cOps, 'support_confirm_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
+      const [a, b] = await Promise.all([
+        rpc(cOps, 'support_execute_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token }),
+        rpc(cOps, 'support_execute_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token }),
+      ]);
+      expect([a, b].filter((r) => r.data?.executed === true).length).toBe(1);
+      const r2 = await reqRun([f.earningId]);
+      await rpc(cOps, 'support_preview_operation_run', { p_run_id: r2.data.run_id });
+      await rpc(cOps, 'support_confirm_operation_run', { p_run_id: r2.data.run_id, p_confirmation_token: r2.data.confirmation_token });
+      await rpc(cOps, 'support_execute_operation_run', { p_run_id: r2.data.run_id, p_confirmation_token: r2.data.confirmation_token });
+      const items2 = await itemsOf(r2.data.run_id);
+      expect(items2[0]).toMatchObject({ outcome: 'prepared_for_provider', reason_code: 'already_prepared' });
+      expect(await attemptsOf(f.earningId)).toHaveLength(1);
+      expect((await cAdmin.from('financial_operation_run_items').select('id').eq('run_id', rq.data.run_id)).data ?? []).toHaveLength(1);
+    } finally { await setControl('disabled'); }
+  }, 120_000);
+
+  it('29+30+31+32. items unique + client-immutable; support detail safe; clients cannot read; events deduplicated', async () => {
+    const f = await makePayable();
+    try {
+      await setControl('scoped_execution');
+      const { rid } = await previewConfirmExecute([f.earningId]);
+      expect((await cUser.from('financial_operation_run_items').select('*').eq('run_id', rid)).data ?? []).toHaveLength(0);
+      expect((await client().from('financial_operation_run_items').select('*').eq('run_id', rid)).data ?? []).toHaveLength(0);
+      const itemId = (await cAdmin.from('financial_operation_run_items').select('id').eq('run_id', rid).limit(1).single()).data!.id;
+      expect(((await cUser.from('financial_operation_run_items').update({ outcome: 'failed' }).eq('id', itemId).select()).data) ?? []).toHaveLength(0);
+      expect((await cAdmin.from('financial_operation_run_events').select('id').eq('run_id', rid).eq('action', 'execution_succeeded')).data ?? []).toHaveLength(1);
+      const d = (await rpc(cOps, 'support_operation_run_detail', { p_run_id: rid })).data;
+      expect((d.items as unknown[]).length).toBe(1);
+      const blob = JSON.stringify(d).toLowerCase();
+      for (const s of ['acct_fx_', 'client_secret', 'card_number', 'bank', 'access_token', `transfer-${f.earningId}`]) {
+        expect(blob, s).not.toContain(s.toLowerCase());
+      }
+    } finally { await setControl('disabled'); }
+  }, 120_000);
+
+  it('33-41 + SENTINEL. no provider/worker side effects; controls disabled; env hosted_test; PROTECTED record byte-for-byte unchanged; findings untouched', async () => {
+    // No fixture attempt ever left 'queued'/original state toward provider work,
+    // no earning gained transfer_state 'processing' from this stage, and every
+    // prepared attempt still has a NULL provider id (nothing contacted Stripe).
+    for (const b of bookingsMade) {
+      const eids = ((await cAdmin.from('companion_earnings').select('id').eq('booking_id', b)).data ?? []).map((e) => e.id as string);
+      for (const eid of eids) {
+        for (const att of await attemptsOf(eid)) {
+          if (att.state === 'queued') expect(att.stripe_transfer_id).toBeNull();
+        }
+      }
+    }
+    const controls = (await cAdmin.from('financial_operation_controls').select('control_name, state')).data ?? [];
+    expect(controls.every((c) => c.state === 'disabled'), 'all controls disabled').toBe(true);
+    expect((await cAdmin.from('financial_operations_config').select('environment').eq('id', true).single()).data!.environment).toBe('hosted_test');
+    // PROTECTED HISTORICAL SENTINEL: byte-for-byte identical snapshot.
+    const after = await snapshotProtected();
+    expect(after.booking).toEqual(protectedSnapshot.booking);
+    expect(after.earning).toEqual(protectedSnapshot.earning);
+    expect(after.attempt).toEqual(protectedSnapshot.attempt);
+    expect(after.findings).toEqual(protectedSnapshot.findings);
+    expect(after.totalFindings).toBe(protectedSnapshot.totalFindings);
+    // The protected booking was never part of any fixture scope.
+    expect(bookingsMade).not.toContain(PROTECTED_BOOKING);
+  }, 120_000);
+});

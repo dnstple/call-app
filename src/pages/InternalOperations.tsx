@@ -19,7 +19,7 @@ import {
 // every other operation type is preview-only and clearly labelled "not yet enabled".
 const OPERATIONS: { key: OperationType; label: string; executable: boolean }[] = [
   { key: 'earning_release', label: 'Earning release', executable: true },
-  { key: 'transfer_claim', label: 'Transfer claim (not yet enabled)', executable: false },
+  { key: 'transfer_claim', label: 'Transfer preparation (no money moves)', executable: true },
   { key: 'transfer_finalise', label: 'Transfer finalise (not yet enabled)', executable: false },
   { key: 'refund_claim', label: 'Refund claim (not yet enabled)', executable: false },
   { key: 'refund_finalise', label: 'Refund finalise (not yet enabled)', executable: false },
@@ -47,6 +47,17 @@ const OUTCOME_STYLE: Record<string, string> = {
   plan_not_active: 'bg-amber-100 text-amber-700', plan_paused: 'bg-amber-100 text-amber-700',
   plan_ended: 'bg-amber-100 text-amber-700', billing_not_enabled: 'bg-amber-100 text-amber-700',
   not_recurring: 'bg-amber-100 text-amber-700',
+  // Stage 3C2-C1 transfer preparation. STRONG warnings where provider truth is
+  // unknown or terminal: lookup-required / permanent failure / transferred /
+  // reversed. No retry action exists in C1 and nothing here calls the provider.
+  prepared_for_provider: 'bg-emerald-100 text-emerald-700',
+  provider_lookup_required: 'bg-red-100 text-red-700 font-semibold',
+  already_processing: 'bg-indigo-100 text-indigo-700',
+  already_transferred: 'bg-sky-100 text-sky-700',
+  not_payable: 'bg-amber-100 text-amber-700', held_for_issue: 'bg-amber-100 text-amber-700',
+  connect_not_ready: 'bg-amber-100 text-amber-700', zero_amount: 'bg-stone-200 text-stone-600',
+  retryable_failure: 'bg-amber-100 text-amber-700',
+  permanent_failure: 'bg-red-100 text-red-700 font-semibold',
 };
 
 // Severity mapping for readiness counts — calm operational language.
