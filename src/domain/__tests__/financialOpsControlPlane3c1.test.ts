@@ -15,6 +15,7 @@ import { describe, expect, it } from 'vitest';
 const ROOT = join(__dirname, '..', '..', '..');
 const MIGRATIONS_DIR = join(ROOT, 'supabase', 'migrations');
 const M = readFileSync(join(MIGRATIONS_DIR, '0073_financial_operations_control_plane.sql'), 'utf-8');
+const M74 = readFileSync(join(MIGRATIONS_DIR, '0074_persist_financial_operation_block_events.sql'), 'utf-8');
 const APP = readFileSync(join(ROOT, 'src', 'App.tsx'), 'utf-8');
 
 const stripSql = (s: string): string => s.replace(/--.*$/gm, '');
@@ -304,12 +305,47 @@ describe('0073 migration dependency order — every table precedes the functions
     expect(a).toContain('control_disabled');
     expect(a).toContain('run_not_confirmed');
   });
-  it('no migration 0074 exists (0073 is corrected in place)', () => {
-    const has0074 = readdirSync(MIGRATIONS_DIR).some((f) => f.startsWith('0074'));
-    expect(has0074, 'must not create 0074').toBe(false);
-    // 0073 is still the highest-numbered migration.
+  it('the dependency-order fix stayed inside 0073 (no 0075+); 0074 is the additive block-event correction', () => {
     const nums = readdirSync(MIGRATIONS_DIR).filter((f) => /^\d{4}_.*\.sql$/.test(f)).map((f) => f.slice(0, 4)).sort();
-    expect(nums[nums.length - 1]).toBe('0073');
+    // 0074 exists (proven transaction-semantics defect); nothing beyond it.
+    expect(nums).toContain('0074');
+    expect(nums[nums.length - 1], 'no 0075+ created').toBe('0074');
+    // The 0073 ordering correction did NOT spawn its own migration.
+    expect(readdirSync(MIGRATIONS_DIR).filter((f) => /^0074/.test(f))).toEqual(['0074_persist_financial_operation_block_events.sql']);
+  });
+});
+
+describe('0074 blocked-event persistence — structured result instead of insert-then-raise', () => {
+  it('redefines ONLY support_execute_operation_run and reloads PostgREST', () => {
+    expect(M74).toContain('create or replace function public.support_execute_operation_run(p_run_id uuid, p_confirmation_token text)');
+    expect((M74.match(/create or replace function/g) ?? [])).toHaveLength(1);   // one function only
+    expect(M74).toContain("select pg_notify('pgrst', 'reload schema')");
+    expect(M74).not.toContain('create table');                                  // no schema changes
+  });
+  it('an expected control block writes ONE deduplicated event then RETURNS a structured result (no raise)', () => {
+    const e = M74.slice(M74.indexOf('create or replace function public.support_execute_operation_run'));
+    // The block branch: dedup guard + insert control_blocked + structured return, NOT a raise.
+    expect(e).toContain("if v_state in ('disabled', 'dry_run_only') then");
+    expect(e).toMatch(/not exists \(select 1 from public\.financial_operation_run_events[\s\S]*?action = 'control_blocked'\)/);
+    expect(e).toContain("'control_blocked'");
+    expect(e).toMatch(/return jsonb_build_object\(\s*'ok', false, 'executed', false,\s*'code'/);
+    // The two OLD raises for these states are gone.
+    expect(e).not.toContain("raise exception 'control_disabled");
+    expect(e).not.toContain("raise exception 'execution_not_permitted");
+  });
+  it('every OTHER guard still raises (auth, not_found, token, expired, cancelled, stage_not_enabled) and no worker/Stripe added', () => {
+    const e = M74.slice(M74.indexOf('create or replace function public.support_execute_operation_run'));
+    for (const g of ['not_found: run', 'invalid_token', 'run_cancelled', 'run_expired', 'confirmation_required',
+                     "v_control <> 'earning_release'", 'stage_not_enabled', 'batch_limit_exceeded']) {
+      expect(e, g).toContain(g);
+    }
+    // Only the non-Stripe earning-release primitive; no transfer/refund/dispute/reconciliation worker, no Stripe/cron.
+    expect(e).toContain('perform app_private.make_earning_payable(v_id)');
+    const lc = stripSql(e).toLowerCase();   // executable SQL only (comments explain what it avoids)
+    for (const bad of ['claim_plan_transfers', 'claim_payment_refunds', 'finalize_transfer', 'finalize_refund',
+                       'run_financial_reconciliation', 'process_plan_renewals', 'stripe', 'pg_net', 'cron.schedule']) {
+      expect(lc, bad).not.toContain(bad);
+    }
   });
 });
 

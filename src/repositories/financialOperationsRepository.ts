@@ -128,8 +128,22 @@ export async function cancelOperationRun(runId: string, reason: string): Promise
   const { error } = await db().rpc('support_cancel_operation_run', { p_run_id: runId, p_reason: reason });
   if (error) throw mapError(error);
 }
-export async function executeOperationRun(runId: string, token: string): Promise<{ succeeded: number; skipped: number; examined: number }> {
+export interface ExecuteResult {
+  ok: boolean;
+  /** For an EXPECTED operational block (control disabled / dry_run_only), the RPC
+   * returns `ok:false` with a structured code instead of raising — it must NOT be
+   * treated as an error. Hard failures (auth, not_found, expired, etc.) still throw. */
+  blockedCode?: string;
+  succeeded: number;
+  skipped: number;
+  examined: number;
+}
+export async function executeOperationRun(runId: string, token: string): Promise<ExecuteResult> {
   const { data, error } = await db().rpc('support_execute_operation_run', { p_run_id: runId, p_confirmation_token: token });
-  if (error) throw mapError(error);
-  return { succeeded: data.succeeded ?? 0, skipped: data.skipped ?? 0, examined: data.examined ?? 0 };
+  if (error) throw mapError(error);   // auth / not_found / invalid_token / run_expired / stage_not_enabled …
+  // 0074: an expected operational block is a structured, non-throwing result.
+  if (data && data.ok === false) {
+    return { ok: false, blockedCode: data.code as string, succeeded: 0, skipped: 0, examined: 0 };
+  }
+  return { ok: true, succeeded: data.succeeded ?? 0, skipped: data.skipped ?? 0, examined: data.examined ?? 0 };
 }

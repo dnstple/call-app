@@ -4256,6 +4256,24 @@ function requireUuid(value: unknown, label: string): string {
   return value;
 }
 
+/**
+ * Fixture-insert guard: a Supabase insert that violates a constraint returns
+ * `{ data: null, error }`, and blindly reading `res.data!.id` throws the opaque
+ * "Cannot read properties of null". This surfaces the ACTUAL database error
+ * (message / code / details / hint) so future hosted fixture failures are
+ * diagnosable at a glance, then returns the row id. Use for every service-role
+ * fixture insert that must succeed.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function insertedId(res: { data: any; error: any }, label: string): string {
+  if (res.error) {
+    const e = res.error;
+    throw new Error(`fixture_insert_failed[${label}]: ${e.message ?? ''} `
+      + `(code=${e.code ?? '?'}, details=${e.details ?? ''}, hint=${e.hint ?? ''})`);
+  }
+  return requireUuid(res.data?.id, label);
+}
+
 // Stage 3C1 isolation: drives claim_plan_transfers + claim_payment_refunds live →
 // now INERT in hosted_test. Dispute logic is covered by the disputes2g6d /
 // disputeSupportOps2g6e contract suites + 3C1 enforcement; skipped until Stage 3C2.
@@ -7421,10 +7439,12 @@ describe.skipIf(!enabled)('Stage 3C1 financial operations control plane (require
       earning_id: g.earningId, companion_account_id: ca.companion_account_id, companion_profile_id: ca.companion_profile_id,
       connected_account_id: 'acct_3c1_fixture', amount_minor: 950, currency: 'GBP', state: 'processing', attempt_count: 1, idempotency_key: `3c1-ta-${g.earningId}` }).select('id').single();
     const attemptId = requireUuid(ta.data!.id, '3c1 attempt');
+    // Valid refund fixture: reason is NOT NULL (0053) and remedy = credit + card (0052 check).
     const rf = await cAdmin.from('payment_refunds').insert({
-      payment_order_id: f.orderId, booking_id: f.bookingId, payer_account_id: coordAcct, remedy_minor: 500,
-      currency: 'GBP', state: 'requested', idempotency_key: `3c1-rf-${f.bookingId}` }).select('id').single();
-    const refundId = requireUuid(rf.data!.id, '3c1 refund');
+      payment_order_id: f.orderId, booking_id: f.bookingId, payer_account_id: coordAcct,
+      remedy_minor: 500, card_refund_minor: 500, credit_restore_minor: 0, currency: 'GBP', state: 'requested',
+      reason: '3c1 fixture refund', stripe_payment_intent_id: `pi_3c1_${f.bookingId}`, idempotency_key: `3c1-rf-${f.bookingId}` }).select('id').single();
+    const refundId = insertedId(rf, '3c1 refund');
     const dp = await cAdmin.from('payment_disputes').insert({
       stripe_dispute_id: `dp_3c1_${f.bookingId}`, payment_order_id: f.orderId, disputed_amount_minor: 1000, currency: 'GBP',
       reason: 'fraudulent', internal_state: 'unresolved', evidence_due_at: new Date(Date.now() + 48 * 3600_000).toISOString() }).select('id').single();
@@ -7474,25 +7494,49 @@ describe.skipIf(!enabled)('Stage 3C1 financial operations control plane (require
   });
 
   // ---- execution gating (32–36) ----
-  it('32. execution stays blocked while the control is disabled', async () => {
+  it('32+8. disabled execution returns a structured block, PERSISTS one control_blocked event (0074), mutates nothing, and dedupes on repeat', async () => {
     const f = await makeEarning();
     const req = track(await request(cOps, { p_operation_type: 'earning_release', p_execution_mode: 'execute_scoped', p_scope_type: 'record_ids', p_scoped_ids: [f.earningId], p_batch_limit: null, p_reason: 'x' }));
     await rpc(cOps, 'support_preview_operation_run', { p_run_id: req.data.run_id });
     expect((await rpc(cOps, 'support_confirm_operation_run', { p_run_id: req.data.run_id, p_confirmation_token: req.data.confirmation_token })).error).toBeNull();
-    expect(JSON.stringify((await rpc(cOps, 'support_execute_operation_run', { p_run_id: req.data.run_id, p_confirmation_token: req.data.confirmation_token })).error)).toMatch(/control_disabled/);
-    expect((await cAdmin.from('financial_operation_run_events').select('id').eq('run_id', req.data.run_id).eq('action', 'control_blocked')).data ?? []).not.toHaveLength(0);
+    // 0074: an expected operational block is a STRUCTURED result (not a raised error) so the audit event commits.
+    const ex = await rpc(cOps, 'support_execute_operation_run', { p_run_id: req.data.run_id, p_confirmation_token: req.data.confirmation_token });
+    expect(ex.error, JSON.stringify(ex.error)).toBeNull();
+    expect(ex.data.ok).toBe(false);
+    expect(ex.data.executed).toBe(false);
+    expect(ex.data.code).toBe('control_disabled');
+    // Exactly ONE control_blocked event persists (rolled back under 0073; committed under 0074).
+    expect((await cAdmin.from('financial_operation_run_events').select('id').eq('run_id', req.data.run_id).eq('action', 'control_blocked')).data ?? []).toHaveLength(1);
+    // Repeat is deduplicated — still exactly one event, run untouched, earning untouched.
+    const ex2 = await rpc(cOps, 'support_execute_operation_run', { p_run_id: req.data.run_id, p_confirmation_token: req.data.confirmation_token });
+    expect(ex2.data.code).toBe('control_disabled');
+    expect((await cAdmin.from('financial_operation_run_events').select('id').eq('run_id', req.data.run_id).eq('action', 'control_blocked')).data ?? []).toHaveLength(1);
+    expect((await cAdmin.from('financial_operation_runs').select('state').eq('id', req.data.run_id).single()).data!.state).toBe('confirmed');
     expect((await cAdmin.from('companion_earnings').select('state').eq('id', f.earningId).single()).data!.state).toBe('pending_completion');
   });
 
-  it('33. a dry_run_only control permits preview but rejects execution', async () => {
+  it('33+10. a dry_run_only control permits preview but returns a structured block (with one persisted event) on execute', async () => {
     controlsTouched.add('earning_release');
     await rpc(cOps, 'support_set_financial_control', { p_control: 'earning_release', p_expected_state: 'disabled', p_new_state: 'dry_run_only', p_reason: 'preview only' });
     const f = await makeEarning();
     const req = track(await request(cOps, { p_operation_type: 'earning_release', p_execution_mode: 'execute_scoped', p_scope_type: 'record_ids', p_scoped_ids: [f.earningId], p_batch_limit: null, p_reason: 'x' }));
     expect((await rpc(cOps, 'support_preview_operation_run', { p_run_id: req.data.run_id })).error).toBeNull();
     await rpc(cOps, 'support_confirm_operation_run', { p_run_id: req.data.run_id, p_confirmation_token: req.data.confirmation_token });
-    expect(JSON.stringify((await rpc(cOps, 'support_execute_operation_run', { p_run_id: req.data.run_id, p_confirmation_token: req.data.confirmation_token })).error)).toMatch(/execution_not_permitted|dry_run_only/);
+    const ex = await rpc(cOps, 'support_execute_operation_run', { p_run_id: req.data.run_id, p_confirmation_token: req.data.confirmation_token });
+    expect(ex.error).toBeNull();
+    expect(ex.data.code).toBe('dry_run_only');
+    expect(ex.data.executed).toBe(false);
+    expect((await cAdmin.from('financial_operation_run_events').select('id').eq('run_id', req.data.run_id).eq('action', 'control_blocked')).data ?? []).toHaveLength(1);
+    expect((await cAdmin.from('companion_earnings').select('state').eq('id', f.earningId).single()).data!.state).toBe('pending_completion');
     await rpc(cOps, 'support_set_financial_control', { p_control: 'earning_release', p_expected_state: 'dry_run_only', p_new_state: 'disabled', p_reason: 'reset' });
+  });
+
+  it('11. a normal client and an anonymous client cannot forge a control_blocked (or any) run event', async () => {
+    const f = await makeEarning();
+    const req = track(await request(cOps, { p_operation_type: 'earning_release', p_execution_mode: 'preview', p_scope_type: 'record_ids', p_scoped_ids: [f.earningId], p_batch_limit: null, p_reason: 'x' }));
+    for (const c of [cUser, client()]) {
+      expect(((await c.from('financial_operation_run_events').insert({ run_id: req.data.run_id, action: 'control_blocked' } as never).select()).data) ?? []).toHaveLength(0);
+    }
   });
 
   it('34+36. scoped_execution runs one fixture earning; repeated execution is idempotent; server_filter is out of scope', async () => {
@@ -7636,9 +7680,9 @@ describe.skipIf(!enabled)('Stage 3C1 financial operations control plane (require
     const f = await makeEarning();
     const rf = await cAdmin.from('payment_refunds').insert({
       payment_order_id: f.orderId, booking_id: f.bookingId, payer_account_id: coordAcct, remedy_minor: 500,
-      card_refund_minor: 500, currency: 'GBP', state: 'requested', stripe_payment_intent_id: `pi_3c1_${f.bookingId}`,
-      idempotency_key: `3c1-rfb-${f.bookingId}` }).select('id').single();
-    const refundId = requireUuid(rf.data!.id, '3c1 refund bypass');
+      card_refund_minor: 500, credit_restore_minor: 0, currency: 'GBP', state: 'requested', reason: '3c1 bypass refund',
+      stripe_payment_intent_id: `pi_3c1_${f.bookingId}`, idempotency_key: `3c1-rfb-${f.bookingId}` }).select('id').single();
+    const refundId = insertedId(rf, '3c1 refund bypass');
     for (const state of REACHABLE) {
       await setControl('refund_claim', state);
       expect((await cAdmin.rpc('claim_payment_refunds', { p_limit: 50, p_ids: [refundId] })).error).toBeNull();
@@ -7677,7 +7721,8 @@ describe.skipIf(!enabled)('Stage 3C1 financial operations control plane (require
     const run2 = track(await request(cOps, { p_operation_type: 'earning_release', p_execution_mode: 'execute_scoped', p_scope_type: 'record_ids', p_scoped_ids: [c.earningId], p_batch_limit: null, p_reason: 'expired' }));
     await rpc(cOps, 'support_preview_operation_run', { p_run_id: run2.data.run_id });
     await rpc(cOps, 'support_confirm_operation_run', { p_run_id: run2.data.run_id, p_confirmation_token: run2.data.confirmation_token });
-    expect(JSON.stringify((await rpc(cOps, 'support_execute_operation_run', { p_run_id: run2.data.run_id, p_confirmation_token: run2.data.confirmation_token })).error), 'expired ⇒ disabled').toMatch(/control_disabled/);
+    const exExpired = await rpc(cOps, 'support_execute_operation_run', { p_run_id: run2.data.run_id, p_confirmation_token: run2.data.confirmation_token });
+    expect(exExpired.data?.code, 'expired control ⇒ structured control_disabled block').toBe('control_disabled');
     expect((await cAdmin.from('companion_earnings').select('state').eq('id', c.earningId).single()).data!.state).toBe('pending_completion');
     // Clear the past expiry back to a clean disabled control.
     await cAdmin.from('financial_operation_controls').update({ state: 'disabled', expires_at: null }).eq('control_name', 'earning_release');
@@ -7719,8 +7764,9 @@ describe.skipIf(!enabled)('Stage 3C1 financial operations control plane (require
     const attemptId = requireUuid(ta.data!.id, '3c1 attempt purity');
     const rf = await cAdmin.from('payment_refunds').insert({
       payment_order_id: f.orderId, booking_id: f.bookingId, payer_account_id: coordAcct, remedy_minor: 500,
-      card_refund_minor: 500, currency: 'GBP', state: 'requested', stripe_payment_intent_id: `pi_pp_${f.bookingId}`, idempotency_key: `3c1-rfp-${f.bookingId}` }).select('id').single();
-    const refundId = requireUuid(rf.data!.id, '3c1 refund purity');
+      card_refund_minor: 500, credit_restore_minor: 0, currency: 'GBP', state: 'requested', reason: '3c1 purity refund',
+      stripe_payment_intent_id: `pi_pp_${f.bookingId}`, idempotency_key: `3c1-rfp-${f.bookingId}` }).select('id').single();
+    const refundId = insertedId(rf, '3c1 refund purity');
     const dp = await cAdmin.from('payment_disputes').insert({
       stripe_dispute_id: `dp_pp_${f.bookingId}`, payment_order_id: f.orderId, disputed_amount_minor: 1000, currency: 'GBP',
       reason: 'fraudulent', internal_state: 'unresolved' }).select('id').single();
