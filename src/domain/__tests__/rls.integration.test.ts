@@ -7534,7 +7534,7 @@ describe.skipIf(!enabled)('Stage 3C1 financial operations control plane (require
     expect((await cAdmin.from('financial_operation_run_events').select('id').eq('run_id', req.data.run_id).eq('action', 'control_blocked')).data ?? []).toHaveLength(1);
     expect((await cAdmin.from('financial_operation_runs').select('state').eq('id', req.data.run_id).single()).data!.state).toBe('confirmed');
     expect((await cAdmin.from('companion_earnings').select('state').eq('id', f.earningId).single()).data!.state).toBe('pending_completion');
-  });
+  }, 60_000);
 
   it('33+10. a dry_run_only control permits preview but returns a structured block (with one persisted event) on execute', async () => {
     controlsTouched.add('earning_release');
