@@ -6326,7 +6326,9 @@ describe.skipIf(!enabled)('Stage 3B1 attendance evidence (requires live Supabase
       expect(s.data.evidence_quality).toBe('outside_eligible_booking');
       expect(s.data.evidence_classification).toBe('insufficient_evidence');
     }
-  });
+    // Four sequential live-fixture creations + reads exceed Vitest's 5s default;
+    // the beforeAll timeout does not apply to individual tests, so set it here.
+  }, 60_000);
 
   it('5. a confirmed booking before its call window is pending', async () => {
     const { bookingId } = await makeCall({ startAgoMin: -60 });      // starts in ~60 min
