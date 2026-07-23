@@ -305,13 +305,13 @@ describe('0073 migration dependency order — every table precedes the functions
     expect(a).toContain('control_disabled');
     expect(a).toContain('run_not_confirmed');
   });
-  it('the dependency-order fix stayed inside 0073 (no 0075+); 0074 is the additive block-event correction', () => {
+  it('the 3C1 control plane is exactly 0073 + the additive 0074 block-event correction', () => {
     const nums = readdirSync(MIGRATIONS_DIR).filter((f) => /^\d{4}_.*\.sql$/.test(f)).map((f) => f.slice(0, 4)).sort();
-    // 0074 exists (proven transaction-semantics defect); nothing beyond it.
+    // Both 3C1 migrations exist; the 0073 ordering correction did NOT spawn its own migration.
+    expect(nums).toContain('0073');
     expect(nums).toContain('0074');
-    expect(nums[nums.length - 1], 'no 0075+ created').toBe('0074');
-    // The 0073 ordering correction did NOT spawn its own migration.
     expect(readdirSync(MIGRATIONS_DIR).filter((f) => /^0074/.test(f))).toEqual(['0074_persist_financial_operation_block_events.sql']);
+    // (Later stages add higher-numbered migrations additively; 0073/0074 stay immutable.)
   });
 });
 

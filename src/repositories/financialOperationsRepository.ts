@@ -145,5 +145,39 @@ export async function executeOperationRun(runId: string, token: string): Promise
   if (data && data.ok === false) {
     return { ok: false, blockedCode: data.code as string, succeeded: 0, skipped: 0, examined: 0 };
   }
-  return { ok: true, succeeded: data.succeeded ?? 0, skipped: data.skipped ?? 0, examined: data.examined ?? 0 };
+  // 0075 (earning_release): structured per-run counts.
+  return {
+    ok: true, succeeded: data.released_count ?? data.succeeded ?? 0,
+    skipped: data.skipped_count ?? data.skipped ?? 0, examined: data.requested_count ?? data.examined ?? 0,
+  };
+}
+
+// 0075 — per-record execution ledger (support-only, no secrets).
+export type ItemOutcome =
+  | 'released' | 'already_payable' | 'not_found' | 'not_yet_eligible' | 'issue_held'
+  | 'evidence_held' | 'reversed' | 'transfer_already_started' | 'invalid_state' | 'failed';
+export interface RunItem {
+  recordId: string; ordinal: number; outcome: ItemOutcome; reasonCode: string | null;
+  beforeState: string | null; afterState: string | null; attemptedAt: string | null; completedAt: string | null;
+}
+export interface RunDetail {
+  run: Record<string, unknown>;
+  items: RunItem[];
+  events: Array<{ action: string; recordId: string | null; detail: unknown; createdAt: string }>;
+}
+export async function getOperationRunDetail(runId: string): Promise<RunDetail> {
+  const { data, error } = await db().rpc('support_operation_run_detail', { p_run_id: runId });
+  if (error) throw mapError(error);
+  return {
+    run: data.run ?? {},
+    items: (data.items ?? []).map((i: Record<string, unknown>): RunItem => ({
+      recordId: i.record_id as string, ordinal: i.ordinal as number, outcome: i.outcome as ItemOutcome,
+      reasonCode: (i.reason_code as string) ?? null, beforeState: (i.before_state as string) ?? null,
+      afterState: (i.after_state as string) ?? null, attemptedAt: (i.attempted_at as string) ?? null,
+      completedAt: (i.completed_at as string) ?? null,
+    })),
+    events: (data.events ?? []).map((e: Record<string, unknown>) => ({
+      action: e.action as string, recordId: (e.record_id as string) ?? null, detail: e.detail, createdAt: e.created_at as string,
+    })),
+  };
 }

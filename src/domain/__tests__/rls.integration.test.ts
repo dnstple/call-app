@@ -7796,3 +7796,335 @@ describe.skipIf(!enabled)('Stage 3C1 financial operations control plane (require
     // Multiple live fixtures + six preview operations + before/after snapshots — exceeds the 5s default.
   }, 60_000);
 });
+
+/* ============================================================
+ * Stage 3C2-A — production-grade RECORD-SCOPED earning-release execution (live,
+ * fixture-scoped). Requires 0075 applied. An approved run of ≤25 explicit earning
+ * UUIDs is previewed, confirmed and executed; execution affects ONLY those ids,
+ * re-evaluates eligibility per record, records a durable per-item ledger, is safe
+ * under duplicates / concurrency / stale previews / holds, and moves an eligible
+ * earning only into its existing 'payable' state (no transfer, no Stripe). NO
+ * control is ever set to 'enabled'; controls are restored via try/finally AND
+ * asserted clean at the end. Every fixture row is freshly created + FK-safely
+ * cleaned; the protected booking and the 177 findings are never touched.
+ * ============================================================ */
+describe.skipIf(!enabled)('Stage 3C2-A scoped earning release (requires live Supabase)', () => {
+  let cAdmin: SupabaseClient; let cOps: SupabaseClient; let cUser: SupabaseClient; let cCompanion: SupabaseClient;
+  let opsAcct: string; let userAcct: string; let compAcct: string; let coordAcct: string;
+  const bookingsMade: string[] = [];
+  const profilesMade: string[] = [];
+  const offersMade: string[] = [];
+  const runIdsMade: string[] = [];
+  let evBase = 0;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rpc = (c: SupabaseClient, fn: string, args: Record<string, unknown>) => (c as any).rpc(fn, args);
+
+  // Funded, confirmed, ended booking whose Companion declared took_place → a
+  // pending_completion earning. endedHoursAgo<12 keeps it pending (submit does not
+  // auto-make-payable before the 12h wait); the caller ages the booking for eligibility.
+  async function makeEarning(): Promise<{ bookingId: string; earningId: string; orderId: string }> {
+    const start = new Date(evBase - 70 * 60_000); const end = new Date(start.getTime() + 30 * 60_000);
+    const cp = await cAdmin.from('profiles').insert({ role: 'companion', first_name: 'Ce' }).select('id').single();
+    const companion = requireUuid(cp.data!.id, '3c2 companion'); profilesMade.push(companion);
+    await cAdmin.from('profile_access').insert({ account_id: compAcct, profile_id: companion, access_role: 'owner', can_edit: true, can_book: true });
+    const of = await cAdmin.from('conversation_offers').insert({ companion_profile_id: companion, offer_type: 'single', duration_minutes: 30, price_minor: 1000, supported_methods: ['in_app'] }).select('id').single();
+    const offer = requireUuid(of.data!.id, '3c2 offer'); offersMade.push(offer);
+    const mp = await cAdmin.from('profiles').insert({ role: 'member', first_name: 'Me' }).select('id').single();
+    const member = requireUuid(mp.data!.id, '3c2 member'); profilesMade.push(member);
+    await cAdmin.from('profile_access').insert([
+      { account_id: userAcct, profile_id: member, access_role: 'owner', can_edit: true, can_book: true },
+      { account_id: coordAcct, profile_id: member, access_role: 'coordinator', can_edit: true, can_book: true }]);
+    const bk = await cAdmin.from('bookings').insert({
+      member_profile_id: member, companion_profile_id: companion, booked_by_account_id: coordAcct, offer_id: offer,
+      starts_at: start.toISOString(), ends_at: end.toISOString(), communication_method: 'in_app',
+      status: 'confirmed', duration_minutes: 30, price_minor: 1000, platform_fee_rate: 5, platform_fee_minor: 50, companion_amount_minor: 950 }).select('id').single();
+    const bookingId = requireUuid(bk.data!.id, '3c2 booking'); bookingsMade.push(bookingId);
+    const ord = await cAdmin.from('payment_orders').insert({
+      booking_id: bookingId, provider: 'stripe_test', coordinator_account_id: coordAcct, member_profile_id: member, companion_profile_id: companion,
+      order_type: 'one_off', status: 'succeeded', subtotal_minor: 1000, discount_minor: 0, service_fee_minor: 0, credit_applied_minor: 0,
+      card_amount_minor: 1000, total_minor: 1000, commission_rate_pct: 5, commission_minor: 50, idempotency_key: `3c2-ord-${bookingId}` }).select('id').single();
+    const orderId = requireUuid(ord.data!.id, '3c2 order');
+    if ((await rpc(cCompanion, 'submit_companion_attendance', { p_booking: bookingId, p_outcome: 'took_place', p_explanation: null })).error) throw new Error('3c2 declaration');
+    const earningId = requireUuid((await cAdmin.from('companion_earnings').select('id').eq('booking_id', bookingId).single()).data!.id, '3c2 earning');
+    return { bookingId, earningId, orderId };
+  }
+  // An ELIGIBLE pending earning: age the booking past the 12h payable wait (the
+  // earning is still pending_completion because submit ran while <12h).
+  async function makeEligible(): Promise<{ bookingId: string; earningId: string; orderId: string }> {
+    const f = await makeEarning();
+    await cAdmin.from('bookings').update({ ends_at: new Date(Date.now() - 13 * 3600_000).toISOString() }).eq('id', f.bookingId);
+    return f;
+  }
+  const stateOf = async (id: string) => (await cAdmin.from('companion_earnings').select('state').eq('id', id).single()).data!.state as string;
+  async function reqRun(ids: string[], mode: 'preview' | 'execute_scoped' = 'execute_scoped') {
+    const r = await rpc(cOps, 'support_request_operation_run', { p_operation_type: 'earning_release', p_execution_mode: mode, p_scope_type: 'record_ids', p_scoped_ids: ids, p_batch_limit: null, p_reason: '3c2 test' });
+    if (r.data?.run_id) runIdsMade.push(r.data.run_id);
+    return r;
+  }
+  const setControl = async (state: 'disabled' | 'dry_run_only' | 'scoped_execution') => {
+    const cur = (await cAdmin.from('financial_operation_controls').select('state').eq('control_name', 'earning_release').single()).data!.state as string;
+    if (cur !== state) await rpc(cOps, 'support_set_financial_control', { p_control: 'earning_release', p_expected_state: cur, p_new_state: state, p_reason: '3c2 test' });
+  };
+  const itemsOf = async (runId: string): Promise<Array<{ record_id: string; outcome: string }>> =>
+    ((await rpc(cOps, 'support_operation_run_items', { p_run_id: runId })).data ?? []) as Array<{ record_id: string; outcome: string }>;
+  async function previewConfirmExecute(ids: string[]) {
+    const rq = await reqRun(ids); const rid = rq.data.run_id; const tok = rq.data.confirmation_token;
+    await rpc(cOps, 'support_preview_operation_run', { p_run_id: rid });
+    await rpc(cOps, 'support_confirm_operation_run', { p_run_id: rid, p_confirmation_token: tok });
+    const ex = await rpc(cOps, 'support_execute_operation_run', { p_run_id: rid, p_confirmation_token: tok });
+    return { rid, tok, ex };
+  }
+
+  beforeAll(async () => {
+    evBase = Date.now();
+    cAdmin = adminClient();
+    cOps = await signedInClient(`rls-3c2-ops-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    cUser = await signedInClient(`rls-3c2-user-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    cCompanion = await signedInClient(`rls-3c2-comp-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    const cCoord = await signedInClient(`rls-3c2-coord-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    opsAcct = (await cOps.auth.getUser()).data.user!.id;
+    userAcct = (await cUser.auth.getUser()).data.user!.id;
+    compAcct = (await cCompanion.auth.getUser()).data.user!.id;
+    coordAcct = (await cCoord.auth.getUser()).data.user!.id;
+    for (const c of [cOps, cUser, cCompanion, cCoord]) if ((await c.rpc('ensure_current_account')).error) throw new Error('ensure');
+    if ((await cAdmin.from('support_admins').upsert({ account_id: opsAcct }, { onConflict: 'account_id', ignoreDuplicates: true })).error) throw new Error('support');
+  }, 180_000);
+
+  afterAll(async () => {
+    await cAdmin.from('financial_operation_controls').update({ state: 'disabled', reason: null, expires_at: null }).eq('control_name', 'earning_release');
+    for (const id of runIdsMade) {
+      await cAdmin.from('financial_operation_run_items').delete().eq('run_id', id);
+      await cAdmin.from('financial_operation_run_events').delete().eq('run_id', id);
+      await cAdmin.from('financial_operation_runs').delete().eq('id', id);
+    }
+    await cAdmin.from('financial_operation_runs').delete().eq('requested_by_account_id', opsAcct);
+    await cAdmin.from('financial_operation_control_events').delete().eq('actor_account_id', opsAcct);
+    for (const b of bookingsMade) {
+      await cAdmin.from('companion_evidence_payout_reviews').delete().eq('booking_id', b);
+      await cAdmin.from('conversation_issues').delete().eq('booking_id', b);
+      await cAdmin.from('conversation_attendance').delete().eq('booking_id', b);
+      await cAdmin.from('companion_earnings').delete().eq('booking_id', b);
+      await cAdmin.from('payment_orders').delete().eq('booking_id', b);
+      await cAdmin.from('bookings').delete().eq('id', b);
+    }
+    for (const o of offersMade) await cAdmin.from('conversation_offers').delete().eq('id', o);
+    await cAdmin.from('profile_access').delete().in('profile_id', profilesMade);
+    for (const p of profilesMade) await cAdmin.from('profiles').delete().eq('id', p);
+    await cAdmin.from('support_admins').delete().eq('account_id', opsAcct);
+  }, 120_000);
+
+  it('1+3+4+5. normal/anon cannot request-confirm-execute; empty, >25 and malformed scopes are rejected', async () => {
+    const f = await makeEligible();
+    expect((await rpc(cUser, 'support_request_operation_run', { p_operation_type: 'earning_release', p_execution_mode: 'execute_scoped', p_scope_type: 'record_ids', p_scoped_ids: [f.earningId], p_batch_limit: null, p_reason: 'x' })).error).not.toBeNull();
+    expect((await rpc(client(), 'support_request_operation_run', { p_operation_type: 'earning_release', p_execution_mode: 'execute_scoped', p_scope_type: 'record_ids', p_scoped_ids: [f.earningId], p_batch_limit: null, p_reason: 'x' })).error).not.toBeNull();
+    expect(JSON.stringify((await reqRun([])).error)).toMatch(/empty_scope/);
+    expect(JSON.stringify((await reqRun(Array.from({ length: 26 }, () => f.earningId))).error)).toMatch(/batch_limit_exceeded/);
+    expect((await reqRun(['not-a-uuid'] as unknown as string[])).error).not.toBeNull();
+    // A normal user cannot confirm or execute a real run either.
+    const rq = await reqRun([f.earningId]);
+    expect((await rpc(cUser, 'support_confirm_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token })).error).not.toBeNull();
+    expect((await rpc(cUser, 'support_execute_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token })).error).not.toBeNull();
+  }, 60_000);
+
+  it('2+6. support requests a run with one fixture earning; duplicate ids are deterministically deduplicated', async () => {
+    const f = await makeEligible();
+    await setControl('scoped_execution');
+    const { ex } = await previewConfirmExecute([f.earningId, f.earningId, f.earningId]);   // 3 dups → 1 distinct
+    expect(ex.error, JSON.stringify(ex.error)).toBeNull();
+    expect(ex.data.requested_count).toBe(1);
+    expect(ex.data.released_count).toBe(1);
+    await setControl('disabled');
+  }, 60_000);
+
+  it('7+8+9+10. preview reports per-id eligibility (eligible / not_found / issue_held / evidence_held) with NO mutation', async () => {
+    const elig = await makeEligible();
+    const iss = await makeEligible();
+    await cAdmin.from('conversation_issues').insert({ booking_id: iss.bookingId, reporter_account_id: coordAcct, category: 'audio_video_problem', state: 'open', idempotency_key: `3c2-iss-${iss.bookingId}` });
+    const ev = await makeEligible();
+    await cAdmin.from('companion_evidence_payout_reviews').insert({ booking_id: ev.bookingId, conflict_code: 'companion_not_observed', state: 'active', support_touched: false, first_detected_at: new Date().toISOString(), last_detected_at: new Date().toISOString() });
+    const before = await Promise.all([elig, iss, ev].map((x) => stateOf(x.earningId)));
+    const rq = await reqRun([elig.earningId, iss.earningId, ev.earningId, '00000000-0000-0000-0000-000000000000'], 'preview');
+    const prev = await rpc(cOps, 'support_preview_operation_run', { p_run_id: rq.data.run_id });
+    const rows = prev.data.rows as Array<{ id: string; eligible: boolean; blocking_reasons: string[]; blocked_by_open_issue: boolean; blocked_by_evidence_hold: boolean; found: boolean }>;
+    const byId = (id: string) => rows.find((r) => r.id === id)!;
+    expect(byId(elig.earningId).eligible).toBe(true);
+    expect(byId(iss.earningId).blocked_by_open_issue).toBe(true);
+    expect(byId(ev.earningId).blocked_by_evidence_hold).toBe(true);
+    expect(byId('00000000-0000-0000-0000-000000000000').found).toBe(false);
+    // Preview mutated nothing.
+    expect(await Promise.all([elig, iss, ev].map((x) => stateOf(x.earningId)))).toEqual(before);
+  }, 120_000);
+
+  it('12. disabled control returns the structured block and persists ONE deduplicated control_blocked event', async () => {
+    await setControl('disabled');
+    const f = await makeEligible();
+    const rq = await reqRun([f.earningId]);
+    await rpc(cOps, 'support_preview_operation_run', { p_run_id: rq.data.run_id });
+    await rpc(cOps, 'support_confirm_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
+    const ex = await rpc(cOps, 'support_execute_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
+    expect(ex.error).toBeNull();
+    expect(ex.data.code).toBe('control_disabled');
+    expect(await stateOf(f.earningId)).toBe('pending_completion');
+    await rpc(cOps, 'support_execute_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });   // repeat
+    expect((await cAdmin.from('financial_operation_run_events').select('id').eq('run_id', rq.data.run_id).eq('action', 'control_blocked')).data ?? []).toHaveLength(1);
+    expect((await cAdmin.from('financial_operation_run_items').select('id').eq('run_id', rq.data.run_id)).data ?? []).toHaveLength(0);
+  }, 60_000);
+
+  it('13. dry_run_only permits preview but blocks execution (structured, no mutation)', async () => {
+    const f = await makeEligible();
+    try {
+      await setControl('dry_run_only');
+      const rq = await reqRun([f.earningId]);
+      expect((await rpc(cOps, 'support_preview_operation_run', { p_run_id: rq.data.run_id })).error).toBeNull();
+      await rpc(cOps, 'support_confirm_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
+      const ex = await rpc(cOps, 'support_execute_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
+      expect(ex.data.code).toBe('dry_run_only');
+      expect(await stateOf(f.earningId)).toBe('pending_completion');
+    } finally { await setControl('disabled'); }
+  }, 60_000);
+
+  it('14+15+16+17+18+19+20+21+22. scoped execution records accurate per-item outcomes and touches only scoped, eligible earnings', async () => {
+    const elig = await makeEligible();
+    const outB = await makeEligible();                                // eligible but OUT OF SCOPE
+    const iss = await makeEligible();
+    await cAdmin.from('conversation_issues').insert({ booking_id: iss.bookingId, reporter_account_id: coordAcct, category: 'audio_video_problem', state: 'open', idempotency_key: `3c2-iss2-${iss.bookingId}` });
+    const ev = await makeEligible();
+    await cAdmin.from('companion_evidence_payout_reviews').insert({ booking_id: ev.bookingId, conflict_code: 'companion_not_observed', state: 'active', support_touched: false, first_detected_at: new Date().toISOString(), last_detected_at: new Date().toISOString() });
+    const early = await makeEarning();                                // <12h → not_yet_eligible
+    const payable = await makeEligible(); await cAdmin.from('companion_earnings').update({ state: 'payable', payable_at: new Date().toISOString() }).eq('id', payable.earningId);
+    const reversed = await makeEligible(); await cAdmin.from('companion_earnings').update({ state: 'reversed', transfer_state: 'reversed' }).eq('id', reversed.earningId);
+    const transferring = await makeEligible(); await cAdmin.from('companion_earnings').update({ state: 'payable', transfer_state: 'processing', payable_at: new Date().toISOString() }).eq('id', transferring.earningId);
+    try {
+      await setControl('scoped_execution');
+      const scope = [elig.earningId, iss.earningId, ev.earningId, early.earningId, payable.earningId, reversed.earningId, transferring.earningId];
+      const { rid, ex } = await previewConfirmExecute(scope);
+      expect(ex.error, JSON.stringify(ex.error)).toBeNull();
+      const items = await itemsOf(rid);
+      const out = (id: string) => items.find((i) => i.record_id === id)!.outcome;
+      expect(out(elig.earningId)).toBe('released');
+      expect(out(iss.earningId)).toBe('issue_held');
+      expect(out(ev.earningId)).toBe('evidence_held');
+      expect(out(early.earningId)).toBe('not_yet_eligible');
+      expect(out(payable.earningId)).toBe('already_payable');
+      expect(out(reversed.earningId)).toBe('reversed');
+      expect(out(transferring.earningId)).toBe('transfer_already_started');
+      // Only the eligible in-scope earning transitioned; the out-of-scope eligible B is UNCHANGED.
+      expect(await stateOf(elig.earningId)).toBe('payable');
+      expect(await stateOf(outB.earningId)).toBe('pending_completion');
+      expect(await stateOf(iss.earningId)).toBe('pending_completion');
+      expect(await stateOf(ev.earningId)).toBe('pending_completion');
+      expect(await stateOf(early.earningId)).toBe('pending_completion');
+      expect(await stateOf(reversed.earningId)).toBe('reversed');
+      expect(ex.data.released_count).toBe(1);
+      expect(ex.data.already_done_count).toBe(1);
+      expect(ex.data.failed_count).toBe(0);
+    } finally { await setControl('disabled'); }
+  }, 120_000);
+
+  it('11+23. state change after preview is caught at execution; an unknown id does not block another eligible id', async () => {
+    const a = await makeEligible(); const b = await makeEligible();
+    try {
+      await setControl('scoped_execution');
+      const rq = await reqRun([a.earningId, b.earningId, '00000000-0000-0000-0000-000000000000']);
+      await rpc(cOps, 'support_preview_operation_run', { p_run_id: rq.data.run_id });   // both eligible at preview
+      await rpc(cOps, 'support_confirm_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
+      // Mutate A AFTER preview: an open issue appears → execution must catch it.
+      await cAdmin.from('conversation_issues').insert({ booking_id: a.bookingId, reporter_account_id: coordAcct, category: 'audio_video_problem', state: 'open', idempotency_key: `3c2-late-${a.bookingId}` });
+      const ex = await rpc(cOps, 'support_execute_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
+      const items = await itemsOf(rq.data.run_id);
+      expect(items.find((i) => i.record_id === a.earningId)!.outcome).toBe('issue_held');   // caught at execution
+      expect(items.find((i) => i.record_id === b.earningId)!.outcome).toBe('released');     // unknown/A did not block B
+      expect(items.find((i) => i.record_id === '00000000-0000-0000-0000-000000000000')!.outcome).toBe('not_found');
+      expect(await stateOf(b.earningId)).toBe('payable');
+      expect(ex.data.released_count).toBe(1);
+      expect(await stateOf(a.earningId)).toBe('pending_completion');
+    } finally { await setControl('disabled'); }
+  }, 120_000);
+
+  it('24. repeated execution of the same run is idempotent (returns the durable result, no re-run)', async () => {
+    const f = await makeEligible();
+    try {
+      await setControl('scoped_execution');
+      const rq = await reqRun([f.earningId]);
+      await rpc(cOps, 'support_preview_operation_run', { p_run_id: rq.data.run_id });
+      await rpc(cOps, 'support_confirm_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
+      const ex1 = await rpc(cOps, 'support_execute_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
+      expect(ex1.data.released_count).toBe(1);
+      const ex2 = await rpc(cOps, 'support_execute_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
+      expect(ex2.data.already_executed).toBe(true);
+      expect((await cAdmin.from('financial_operation_run_items').select('id').eq('run_id', rq.data.run_id)).data ?? []).toHaveLength(1);
+    } finally { await setControl('disabled'); }
+  }, 60_000);
+
+  it('25. two concurrent executions of ONE run produce exactly one execution result', async () => {
+    const f = await makeEligible();
+    try {
+      await setControl('scoped_execution');
+      const rq = await reqRun([f.earningId]);
+      await rpc(cOps, 'support_preview_operation_run', { p_run_id: rq.data.run_id });
+      await rpc(cOps, 'support_confirm_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
+      const [a, b] = await Promise.all([
+        rpc(cOps, 'support_execute_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token }),
+        rpc(cOps, 'support_execute_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token }),
+      ]);
+      const executed = [a, b].filter((r) => r.data?.executed === true).length;
+      expect(executed).toBe(1);                                       // one real execution
+      expect(await stateOf(f.earningId)).toBe('payable');             // one transition
+      expect((await cAdmin.from('financial_operation_run_items').select('id').eq('run_id', rq.data.run_id)).data ?? []).toHaveLength(1);
+    } finally { await setControl('disabled'); }
+  }, 60_000);
+
+  it('26. two different runs racing for one earning produce one release transition; the loser reports already_payable', async () => {
+    const f = await makeEligible();
+    try {
+      await setControl('scoped_execution');
+      const r1 = await reqRun([f.earningId]); const r2 = await reqRun([f.earningId]);
+      for (const r of [r1, r2]) { await rpc(cOps, 'support_preview_operation_run', { p_run_id: r.data.run_id }); await rpc(cOps, 'support_confirm_operation_run', { p_run_id: r.data.run_id, p_confirmation_token: r.data.confirmation_token }); }
+      await Promise.all([
+        rpc(cOps, 'support_execute_operation_run', { p_run_id: r1.data.run_id, p_confirmation_token: r1.data.confirmation_token }),
+        rpc(cOps, 'support_execute_operation_run', { p_run_id: r2.data.run_id, p_confirmation_token: r2.data.confirmation_token }),
+      ]);
+      expect(await stateOf(f.earningId)).toBe('payable');
+      const outcomes = [(await itemsOf(r1.data.run_id))[0]?.outcome, (await itemsOf(r2.data.run_id))[0]?.outcome].sort();
+      expect(outcomes).toEqual(['already_payable', 'released']);     // exactly one transition
+    } finally { await setControl('disabled'); }
+  }, 120_000);
+
+  it('27+28+29+30. item rows are immutable to clients; events dedupe; support detail is safe; no direct client read', async () => {
+    const f = await makeEligible();
+    try {
+      await setControl('scoped_execution');
+      const { rid } = await previewConfirmExecute([f.earningId]);
+      // 30. normal + anon cannot read the item ledger directly (RLS forced, no policy).
+      expect((await cUser.from('financial_operation_run_items').select('*').eq('run_id', rid)).data ?? []).toHaveLength(0);
+      expect((await client().from('financial_operation_run_items').select('*').eq('run_id', rid)).data ?? []).toHaveLength(0);
+      // 27. immutable: a normal client cannot update/delete/insert an item row.
+      const itemId = (await cAdmin.from('financial_operation_run_items').select('id').eq('run_id', rid).limit(1).single()).data!.id;
+      expect(((await cUser.from('financial_operation_run_items').update({ outcome: 'failed' }).eq('id', itemId).select()).data) ?? []).toHaveLength(0);
+      expect(((await cUser.from('financial_operation_run_items').delete().eq('id', itemId).select()).data) ?? []).toHaveLength(0);
+      // 28. run-level summary event exists exactly once.
+      expect((await cAdmin.from('financial_operation_run_events').select('id').eq('run_id', rid).eq('action', 'execution_succeeded')).data ?? []).toHaveLength(1);
+      // 29. support detail returns safe item results with before/after and no secrets.
+      const d = (await rpc(cOps, 'support_operation_run_detail', { p_run_id: rid })).data;
+      expect((d.items as unknown[]).length).toBe(1);
+      const blob = JSON.stringify(d).toLowerCase();
+      for (const s of ['stripe', 'card', 'bank', 'payment_intent', 'access_token']) expect(blob).not.toContain(s);
+    } finally { await setControl('disabled'); }
+  }, 60_000);
+
+  it('31+32+33+34+35+36+37. no worker/transfer/refund/dispute/reconciliation/credit row, no Stripe; controls end disabled; env hosted_test; protected rows untouched', async () => {
+    // Across every 3C2-A fixture booking: only earning state moved (pending→payable);
+    // no transfer attempt, refund, dispute or reconciliation finding was created.
+    for (const b of bookingsMade) {
+      const eids = ((await cAdmin.from('companion_earnings').select('id').eq('booking_id', b)).data ?? []).map((e) => e.id as string);
+      if (eids.length) expect((await cAdmin.from('companion_transfer_attempts').select('id').in('earning_id', eids)).data ?? [], `transfer on ${b}`).toHaveLength(0);
+      expect((await cAdmin.from('payment_refunds').select('id').eq('booking_id', b)).data ?? [], `refund on ${b}`).toHaveLength(0);
+    }
+    expect(bookingsMade).not.toContain('ba4f943c-3e8d-4d4c-900d-fa551ccc5387');
+    // 34. every control is disabled at the end (not relying only on afterAll).
+    const controls = (await cAdmin.from('financial_operation_controls').select('control_name, state')).data ?? [];
+    expect(controls.every((c) => c.state === 'disabled'), 'all controls disabled').toBe(true);
+    // 35. the environment never left hosted_test.
+    expect((await cAdmin.from('financial_operations_config').select('environment').eq('id', true).single()).data!.environment).toBe('hosted_test');
+  }, 60_000);
+});

@@ -11,21 +11,32 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Loader2, ShieldAlert, Eye } from 'lucide-react';
 import { EmptyState, PageHeader } from '../components/ui';
 import {
-  getFinancialReadiness, previewOperationRun, requestOperationRun,
-  OperationsError, type Readiness, type OperationType, type PreviewResult, type ControlState,
+  getFinancialReadiness, previewOperationRun, requestOperationRun, getOperationRunDetail,
+  OperationsError, type Readiness, type OperationType, type PreviewResult, type ControlState, type RunDetail,
 } from '../repositories/financialOperationsRepository';
 
-const OPERATIONS: { key: OperationType; label: string }[] = [
-  { key: 'earning_release', label: 'Earning release' },
-  { key: 'transfer_claim', label: 'Transfer claim' },
-  { key: 'transfer_finalise', label: 'Transfer finalise' },
-  { key: 'refund_claim', label: 'Refund claim' },
-  { key: 'refund_finalise', label: 'Refund finalise' },
-  { key: 'plan_renewal', label: 'Plan renewal' },
-  { key: 'dispute_reconciliation', label: 'Dispute reconciliation' },
-  { key: 'financial_reconciliation', label: 'Financial reconciliation' },
-  { key: 'evidence_review_release', label: 'Evidence-review release' },
+// Stage 3C2-A: earning_release now has a production-grade record-scoped executor;
+// every other operation type is preview-only and clearly labelled "not yet enabled".
+const OPERATIONS: { key: OperationType; label: string; executable: boolean }[] = [
+  { key: 'earning_release', label: 'Earning release', executable: true },
+  { key: 'transfer_claim', label: 'Transfer claim (not yet enabled)', executable: false },
+  { key: 'transfer_finalise', label: 'Transfer finalise (not yet enabled)', executable: false },
+  { key: 'refund_claim', label: 'Refund claim (not yet enabled)', executable: false },
+  { key: 'refund_finalise', label: 'Refund finalise (not yet enabled)', executable: false },
+  { key: 'plan_renewal', label: 'Plan renewal (not yet enabled)', executable: false },
+  { key: 'dispute_reconciliation', label: 'Dispute reconciliation (not yet enabled)', executable: false },
+  { key: 'financial_reconciliation', label: 'Financial reconciliation (not yet enabled)', executable: false },
+  { key: 'evidence_review_release', label: 'Evidence-review release (not yet enabled)', executable: false },
 ];
+
+// Per-record outcome badge styling (Stage 3C2-A earning-release ledger).
+const OUTCOME_STYLE: Record<string, string> = {
+  released: 'bg-emerald-100 text-emerald-700', already_payable: 'bg-sky-100 text-sky-700',
+  not_found: 'bg-stone-200 text-stone-600', not_yet_eligible: 'bg-amber-100 text-amber-700',
+  issue_held: 'bg-amber-100 text-amber-700', evidence_held: 'bg-amber-100 text-amber-700',
+  reversed: 'bg-red-100 text-red-700', transfer_already_started: 'bg-sky-100 text-sky-700',
+  invalid_state: 'bg-red-100 text-red-700', failed: 'bg-red-100 text-red-700',
+};
 
 // Severity mapping for readiness counts — calm operational language.
 const SEVERITY: Record<string, 'info' | 'warning' | 'critical'> = {
@@ -71,6 +82,15 @@ export default function InternalOperations() {
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
+
+  // Selected recent-run per-record detail (Stage 3C2-A ledger).
+  const [detail, setDetail] = useState<RunDetail | null>(null);
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const loadDetail = useCallback(async (runId: string) => {
+    if (detailId === runId) { setDetail(null); setDetailId(null); return; }   // toggle
+    setDetailId(runId); setDetail(null);
+    try { setDetail(await getOperationRunDetail(runId)); } catch { setDetail(null); }
+  }, [detailId]);
 
   const load = useCallback(async () => {
     setError(null); setData(null);
@@ -213,12 +233,36 @@ export default function InternalOperations() {
           ) : (
             <ul className="space-y-1">
               {data.recentRuns.map((r) => (
-                <li key={r.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-stone-200 px-3 py-2 text-sm">
-                  <span className="font-medium text-stone-700">{r.operationType.replace(/_/g, ' ')}</span>
-                  <span className="rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-600">{r.executionMode}</span>
-                  <span className="rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-600">{r.state}</span>
-                  {r.dryRun && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700">dry-run</span>}
-                  <span className="ml-auto text-xs text-stone-400">examined {r.rowsExamined} · eligible {r.rowsEligible}</span>
+                <li key={r.id}>
+                  <button type="button" onClick={() => void loadDetail(r.id)}
+                    className="flex w-full flex-wrap items-center gap-2 rounded-lg border border-stone-200 px-3 py-2 text-left text-sm hover:border-stone-300">
+                    <span className="font-medium text-stone-700">{r.operationType.replace(/_/g, ' ')}</span>
+                    <span className="rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-600">{r.executionMode}</span>
+                    <span className="rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-600">{r.state}</span>
+                    {r.dryRun && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700">dry-run</span>}
+                    <span className="ml-auto text-xs text-stone-400">examined {r.rowsExamined} · eligible {r.rowsEligible}</span>
+                  </button>
+                  {detailId === r.id && (
+                    <div className="mt-1 rounded-lg border border-stone-200 bg-stone-50 p-3 text-xs">
+                      {detail === null ? (
+                        <span className="text-stone-400">Loading record results…</span>
+                      ) : detail.items.length === 0 ? (
+                        <span className="text-stone-500">No per-record results (preview or not yet executed).</span>
+                      ) : (
+                        <ul className="space-y-1">
+                          {detail.items.map((it) => (
+                            <li key={it.recordId} className="flex flex-wrap items-center gap-2">
+                              <span className="text-stone-400">#{it.ordinal}</span>
+                              <span className="font-mono text-stone-600">{it.recordId.slice(0, 8)}…</span>
+                              <span className={`rounded-full px-2 py-0.5 ${OUTCOME_STYLE[it.outcome] ?? 'bg-stone-200 text-stone-600'}`}>{it.outcome}</span>
+                              {it.reasonCode && <span className="text-stone-500">{it.reasonCode}</span>}
+                              <span className="ml-auto text-stone-400">{it.beforeState ?? '—'} → {it.afterState ?? '—'}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>
