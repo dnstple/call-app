@@ -8056,6 +8056,40 @@ describe.skipIf(!enabled)('Stage 3C2-A scoped earning release (requires live Sup
     } finally { await setControl('disabled'); }
   }, 60_000);
 
+  it('H1. the executor, its context fn and the classifier are NOT client-reachable (app_private, revoked)', async () => {
+    const f = await makeEligible();
+    // PostgREST exposes only public; these app_private functions are additionally
+    // revoked from every client role, so an authenticated support client cannot
+    // invoke the executor directly, forge the execution context, or run the classifier.
+    for (const fnName of ['execute_scoped_earning_release', 'begin_scoped_operation_execution', 'classify_earning_release']) {
+      const r = await rpc(cOps, fnName, fnName === 'begin_scoped_operation_execution'
+        ? { p_run_id: f.earningId, p_operation_type: 'earning_release' }
+        : (fnName === 'classify_earning_release' ? { p_earning: f.earningId } : { p_run_id: f.earningId }));
+      expect(r.error, `${fnName} must be unreachable`).not.toBeNull();
+    }
+    // The earning was never touched by these rejected calls.
+    expect(await stateOf(f.earningId)).toBe('pending_completion');
+  }, 60_000);
+
+  it('H2. preview and execution assign the SAME per-id classification (single authority)', async () => {
+    const elig = await makeEligible();
+    const iss = await makeEligible();
+    await cAdmin.from('conversation_issues').insert({ booking_id: iss.bookingId, reporter_account_id: coordAcct, category: 'audio_video_problem', state: 'open', idempotency_key: `3c2-par-${iss.bookingId}` });
+    const early = await makeEarning();                                // <12h → not_yet_eligible
+    try {
+      await setControl('scoped_execution');
+      const rq = await reqRun([elig.earningId, iss.earningId, early.earningId]);
+      const prev = await rpc(cOps, 'support_preview_operation_run', { p_run_id: rq.data.run_id });
+      const prows = prev.data.rows as Array<{ id: string; outcome: string }>;
+      await rpc(cOps, 'support_confirm_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
+      await rpc(cOps, 'support_execute_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
+      const items = await itemsOf(rq.data.run_id);
+      for (const p of prows) {
+        expect(items.find((i) => i.record_id === p.id)!.outcome, `parity ${p.id}`).toBe(p.outcome);
+      }
+    } finally { await setControl('disabled'); }
+  }, 120_000);
+
   it('25. two concurrent executions of ONE run produce exactly one execution result', async () => {
     const f = await makeEligible();
     try {
