@@ -8304,8 +8304,34 @@ describe.skipIf(!enabled)('Stage 3C2-B scoped plan renewal (requires live Supaba
   const allowancesMade: string[] = [];
   const membersMade: string[] = [];
   const runIdsMade: string[] = [];
+  const offersMade: string[] = [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const rpc = (c: SupabaseClient, fn: string, args: Record<string, unknown>) => (c as any).rpc(fn, args);
+
+  // AUTHORITATIVE 30-minute plan rate: create_conversation_plan resolves its price
+  // through app_private.plan_unit_price = the companion's ACTIVE conversation_offers
+  // row with offer_type='single' and duration_minutes=30 (same canonical setup as
+  // the passing 2G5B fixture). A fresh Companion has no offers, so without this the
+  // plan RPC raises price_unavailable. Owner-inserted, asserted, idempotent.
+  async function ensureCompanionThirtyMinuteRate(companionClient: SupabaseClient, profileId: string): Promise<void> {
+    const existing = await cAdmin.from('conversation_offers').select('id')
+      .eq('companion_profile_id', profileId).eq('offer_type', 'single').eq('duration_minutes', 30).eq('active', true);
+    if ((existing.data ?? []).length > 0) return;   // idempotent within the fixture
+    const ins = await companionClient.from('conversation_offers').insert({
+      companion_profile_id: profileId, offer_type: 'single',
+      duration_minutes: 30, price_minor: 1000, supported_methods: ['in_app'],
+    }).select('id, companion_profile_id, offer_type, duration_minutes, price_minor, active').single();
+    expect(ins.error, `30-min rate insert: ${JSON.stringify(ins.error)}`).toBeNull();
+    expect(ins.data!.companion_profile_id, 'rate belongs to the fresh Companion').toBe(profileId);
+    expect(ins.data!.duration_minutes, 'duration is 30').toBe(30);
+    expect(ins.data!.price_minor, 'price is positive').toBeGreaterThan(0);
+    expect(ins.data!.active, 'offer is active').toBe(true);
+    offersMade.push(ins.data!.id as string);
+    // Safe read confirming the plan RPC's exact lookup (plan_unit_price filter) resolves.
+    const resolvable = await cAdmin.from('conversation_offers').select('price_minor')
+      .eq('companion_profile_id', profileId).eq('offer_type', 'single').eq('active', true).eq('duration_minutes', 30);
+    expect((resolvable.data ?? []).length, 'plan_unit_price can resolve the 30-min rate').toBeGreaterThan(0);
+  }
 
   // A fresh recurring plan (fresh member per plan — one live plan per pair).
   // funded='credit' → the coordinator with a large account credit (credit-covered);
@@ -8323,7 +8349,15 @@ describe.skipIf(!enabled)('Stage 3C2-B scoped plan renewal (requires live Supaba
       p_member: member, p_companion: companionProfile, p_frequency: slots.length || 1,
       p_duration: 30, p_method: 'in_app', p_slots: slots.length ? slots : [{ day: 1, time: '10:00' }],
     });
-    if (plan.error) throw new Error(`3c2b plan: ${JSON.stringify(plan.error)}`);
+    if (plan.error) {
+      // Diagnostic: which active rates exist for this Companion? (No secrets —
+      // offers hold only duration/price/active, never payment-method data.)
+      const rates = (await cAdmin.from('conversation_offers')
+        .select('offer_type, duration_minutes, price_minor, active')
+        .eq('companion_profile_id', companionProfile)).data ?? [];
+      throw new Error(`3c2b plan create failed: companion=${companionProfile} requestedDuration=30 ` +
+        `activeRates=${JSON.stringify(rates)} rpcError=${JSON.stringify(plan.error)}`);
+    }
     const planId = plan.data.id as string; plansMade.push(planId);
     allowancesMade.push(plan.data.allowance_purchase_id as string);
     // Server-faithful fixture states via admin (fresh rows only): activate + billing.
@@ -8377,6 +8411,9 @@ describe.skipIf(!enabled)('Stage 3C2-B scoped plan renewal (requires live Supaba
       p_profile: companionProfile, p_timezone: 'Europe/London',
       p_rules: [1, 2, 3, 4, 5, 6, 7].map((day) => ({ day, start: '09:00', end: '18:00' })),
     })).error) throw new Error('availability');
+    // The authoritative 30-minute plan rate MUST exist before the first mkPlan —
+    // the shared Companion serves BOTH the credit-covered and card-funded fixtures.
+    await ensureCompanionThirtyMinuteRate(cCompanion, companionProfile);
     if ((await cAdmin.from('support_admins').upsert({ account_id: opsAcct }, { onConflict: 'account_id', ignoreDuplicates: true })).error) throw new Error('support');
     // Large credit for the credit-covered coordinator ONLY (card coordinator has none).
     const cr = await rpc(cAdmin, 'issue_account_credit', {
@@ -8404,6 +8441,8 @@ describe.skipIf(!enabled)('Stage 3C2-B scoped plan renewal (requires live Supaba
     for (const acct of [creditAcct, cardAcct]) await cAdmin.from('credit_ledger').delete().eq('coordinator_account_id', acct);
     for (const p of plansMade) await cAdmin.from('conversation_plans').delete().eq('id', p);
     for (const a of allowancesMade) await cAdmin.from('package_purchases').delete().eq('id', a);
+    // The 30-min rate is removed only AFTER every plan is gone (afterAll, never mid-suite).
+    for (const o of offersMade) await cAdmin.from('conversation_offers').delete().eq('id', o);
     await cAdmin.from('profile_access').delete().in('profile_id', membersMade);
     for (const m of membersMade) await cAdmin.from('profiles').delete().eq('id', m);
     await cAdmin.from('support_admins').delete().eq('account_id', opsAcct);
