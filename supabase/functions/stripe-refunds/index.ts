@@ -54,6 +54,10 @@ Deno.serve(async (req) => {
 
   await admin.rpc('recover_stale_refunds', { p_minutes: 30 });
 
+  // Stage 3C1: claim_payment_refunds + recover_stale_refunds are now kill-switch
+  // enforced in the DB. While the 'refund_claim' control is not 'enabled' they are
+  // clean no-ops and this settlement pass initiates no refund — the control is the
+  // authoritative gate. finalize_refund_* below record provider outcomes (ungated).
   const claimed = await admin.rpc('claim_payment_refunds', { p_limit: limit, p_ids: ids });
   if (claimed.error) return json({ error: 'claim_failed' }, 500);
   const items = (claimed.data ?? []) as Claim[];

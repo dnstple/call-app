@@ -171,6 +171,102 @@ $$;
 revoke all on function app_private.effective_control_state(text) from public, anon, authenticated;
 grant execute on function app_private.effective_control_state(text) to authenticated, service_role;
 
+-- Server-owned environment reader (never inferred from a browser variable).
+create or replace function app_private.current_financial_environment()
+returns text language sql stable security definer set search_path = '' as $$
+  select environment from public.financial_operations_config where id = true;
+$$;
+revoke all on function app_private.current_financial_environment() from public, anon, authenticated;
+grant execute on function app_private.current_financial_environment() to authenticated, service_role;
+
+-- ------------------------------------------------------------
+-- 2b. THE AUTHORITATIVE KILL-SWITCH GUARD. Every RAW batch/global worker gates
+--     on batch_worker_enabled() at its narrowest safe choke point (its first
+--     statement), so a direct service-role call, a pg_cron job running as a
+--     superuser, an Edge Function, or an internal orchestrator all refuse
+--     identically when the control is not 'enabled'. This closes the bypass:
+--     the control is a real kill switch, not merely a UI/wrapper convention.
+--
+--     A raw batch worker may run ONLY when its control is explicitly 'enabled'
+--     (NOT under disabled / dry_run_only / scoped_execution — scoped runs go
+--     through the operation-run wrapper). In production_live the master switch
+--     must also be enabled. Expired controls read as 'disabled'.
+-- ------------------------------------------------------------
+create or replace function app_private.batch_worker_enabled(p_op text)
+returns boolean language sql stable security definer set search_path = '' as $$
+  select app_private.effective_control_state(p_op) = 'enabled'
+    and (app_private.current_financial_environment() <> 'production_live'
+         or app_private.effective_control_state('production_live_operations') = 'enabled');
+$$;
+revoke all on function app_private.batch_worker_enabled(text) from public, anon, authenticated;
+grant execute on function app_private.batch_worker_enabled(text) to authenticated, service_role;
+
+-- The central asserting guard for SCOPED, run-approved execution (used by the
+-- operation-run execution wrapper and available to any future scoped worker).
+-- Verifies environment, control state, production-live master, an approved +
+-- unexpired + confirmed run, explicit scope and the maximum batch size.
+create or replace function app_private.assert_financial_operation_allowed(
+  p_operation_type text, p_execution_mode text, p_scope_ids uuid[], p_run_id uuid)
+returns void language plpgsql stable security definer set search_path = '' as $$
+declare v_state text; v_env text; v_max int; v_run public.financial_operation_runs;
+begin
+  v_state := app_private.effective_control_state(p_operation_type);
+  v_env := app_private.current_financial_environment();
+  select max_batch_limit into v_max from public.financial_operations_config where id = true;
+  if v_state = 'disabled' then raise exception 'control_disabled: % is disabled', p_operation_type; end if;
+  if v_state = 'dry_run_only' then raise exception 'execution_not_permitted: % is dry_run_only', p_operation_type; end if;
+  if v_env = 'production_live' and app_private.effective_control_state('production_live_operations') <> 'enabled' then
+    raise exception 'production_live_locked: the production-live master switch is disabled';
+  end if;
+  -- scoped_execution demands an explicit, bounded, approved run.
+  if v_state = 'scoped_execution' then
+    if p_execution_mode <> 'execute_scoped' then raise exception 'scope_required: scoped_execution needs explicit record ids'; end if;
+    if p_run_id is null then raise exception 'run_required: an approved operation run is required'; end if;
+    if p_scope_ids is null or array_length(p_scope_ids, 1) is null then raise exception 'scope_required: explicit record ids are required'; end if;
+    if array_length(p_scope_ids, 1) > v_max then raise exception 'batch_limit_exceeded: scope exceeds the maximum batch size'; end if;
+    select * into v_run from public.financial_operation_runs where id = p_run_id;
+    if v_run.id is null then raise exception 'run_not_found: unknown operation run'; end if;
+    if v_run.state not in ('confirmed', 'executing') then raise exception 'run_not_confirmed: confirm the run before executing'; end if;
+    if v_run.expires_at <= now() then raise exception 'run_expired: this run has expired'; end if;
+  end if;
+end;
+$$;
+revoke all on function app_private.assert_financial_operation_allowed(text, text, uuid[], uuid) from public, anon, authenticated;
+grant execute on function app_private.assert_financial_operation_allowed(text, text, uuid[], uuid) to authenticated, service_role;
+
+-- ------------------------------------------------------------
+-- 2c. ENVIRONMENT TRANSITION RPC. Reasoned, audited, optimistic-concurrency,
+--     phrase-gated for production_live. A direct table update is impossible
+--     (RLS forced, no policies); production_live needs more than one ordinary
+--     state update (the confirmation phrase is a second safety parameter).
+-- ------------------------------------------------------------
+create or replace function public.support_set_financial_environment(
+  p_expected_environment text, p_new_environment text, p_reason text, p_confirmation text default null)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare c_live_phrase constant text := 'ENABLE-PRODUCTION-LIVE'; v public.financial_operations_config;
+begin
+  if not app_private.is_support_admin() then raise exception 'not_found: environment'; end if;
+  if p_new_environment not in ('development', 'hosted_test', 'production_dry_run', 'production_live') then
+    raise exception 'invalid_environment: unknown environment';
+  end if;
+  if p_reason is null or trim(p_reason) = '' then raise exception 'reason_required: a reason is required'; end if;
+  if p_new_environment = 'production_live' and coalesce(p_confirmation, '') <> c_live_phrase then
+    raise exception 'confirmation_required: production_live requires the confirmation phrase';
+  end if;
+  select * into v from public.financial_operations_config where id = true for update;
+  if v.environment <> p_expected_environment then
+    raise exception 'state_mismatch: environment is % (expected %)', v.environment, p_expected_environment;
+  end if;
+  update public.financial_operations_config
+     set environment = p_new_environment, updated_by_account_id = auth.uid(), updated_at = now() where id = true;
+  insert into public.financial_operation_control_events (control_name, from_state, to_state, reason, actor_account_id)
+    values ('environment', v.environment, p_new_environment, trim(p_reason), auth.uid());
+  return jsonb_build_object('ok', true, 'from', v.environment, 'to', p_new_environment);
+end;
+$$;
+revoke all on function public.support_set_financial_environment(text, text, text, text) from public, anon;
+grant execute on function public.support_set_financial_environment(text, text, text, text) to authenticated;
+
 -- ============================================================
 -- 3. OPERATION RUNS (immutable request → preview → confirm → execute) and
 -- 4. append-only RUN EVENTS. Global unbounded execution is impossible: a run
@@ -720,6 +816,457 @@ end;
 $$;
 revoke all on function public.support_operation_run_detail(uuid) from public, anon;
 grant execute on function public.support_operation_run_detail(uuid) to authenticated;
+
+-- ============================================================
+-- 13. AUTHORITATIVE KILL-SWITCH ENFORCEMENT ON THE RAW WORKERS.
+--     Each authoritative batch/global worker is redefined VERBATIM from its
+--     LATEST cumulative body (after 0072) with ONE added guard as its first
+--     statement: `if not app_private.batch_worker_enabled('<op>') then return …`.
+--     This is the narrowest safe choke point — it precedes every claim/mutation
+--     — and it fires identically for a direct service-role RPC, a pg_cron job
+--     running as a superuser (e.g. the 15-minute process_post_conversation_tasks
+--     which calls resolve_unconfirmed_attendance + release_eligible_earnings, and
+--     the daily process-plan-renewals job), an Edge Function (stripe-transfers /
+--     stripe-refunds settlement), or an internal orchestrator. With every control
+--     defaulting to 'disabled', these workers refuse to claim or mutate anything.
+--
+--     Provider-state RECORDING functions (finalize_transfer_*, finalize_refund_*,
+--     record_dispute_*, finalize_paid_order, claim_webhook_event) are DELIBERATELY
+--     NOT guarded: they record already-occurred Stripe outcomes for the webhook,
+--     and blocking them would break idempotency and provider-state recording (see
+--     the Stage 3C1 safety policy). Money MOVEMENT is initiated only by the guarded
+--     claim/release workers, so guarding those is the complete money-movement choke.
+--
+--     Bodies are byte-identical to their latest cumulative source except the guard
+--     line; grants persist across CREATE OR REPLACE and are intentionally unchanged.
+-- ============================================================
+
+-- transfer_claim ← claim_plan_transfers (latest: 0072)
+create or replace function public.claim_plan_transfers(p_limit integer default 20)
+returns table (
+  attempt_id uuid, earning_id uuid, companion_account_id uuid, companion_profile_id uuid,
+  connected_account_id text, amount_minor integer, currency text, booking_id uuid,
+  stripe_idempotency_key text
+)
+language plpgsql security definer
+set search_path = ''
+as $$
+#variable_conflict use_column
+declare
+  r record;
+  v_attempt uuid;
+begin
+  if not app_private.batch_worker_enabled('transfer_claim') then return; end if;   -- Stage 3C1 kill switch
+  for r in
+    select e.id as earning_id, e.companion_account_id, e.companion_profile_id, e.booking_id,
+           e.net_minor, ca.stripe_account_id
+    from public.companion_earnings e
+    join public.connected_accounts ca on ca.account_id = e.companion_account_id
+    join public.payment_orders po on po.id = e.payment_order_id and po.status = 'succeeded'
+    left join public.plan_billing_periods bp on bp.id = e.plan_billing_period_id
+    where e.state = 'payable'
+      and e.net_minor > 0
+      and e.transfer_state in ('not_ready', 'ready', 'failed')
+      and e.currency = 'GBP' and ca.default_currency = 'gbp'
+      and (e.plan_billing_period_id is null or bp.status = 'paid')
+      and app_private.companion_payments_ready(e.companion_profile_id)
+      and not exists (select 1 from public.conversation_issues i
+                      where i.booking_id = e.booking_id and i.state <> 'resolved')
+      and not app_private.evidence_hold_blocks_payout(e.booking_id)   -- Stage 3B2 hold
+      and not exists (select 1 from public.companion_transfer_attempts ta
+                      where ta.earning_id = e.id
+                        and ta.state in ('processing', 'succeeded', 'failed_permanent'))
+    order by e.payable_at nulls last, e.created_at
+    limit greatest(p_limit, 0)
+    for update of e skip locked
+  loop
+    insert into public.companion_transfer_attempts
+      (earning_id, companion_account_id, companion_profile_id, connected_account_id,
+       amount_minor, currency, state, attempt_count, idempotency_key, claimed_at)
+    values
+      (r.earning_id, r.companion_account_id, r.companion_profile_id, r.stripe_account_id,
+       r.net_minor, 'GBP', 'processing', 1, 'transfer-' || r.earning_id::text, now())
+    on conflict (earning_id) do update set
+      state = 'processing',
+      attempt_count = public.companion_transfer_attempts.attempt_count + 1,
+      connected_account_id = excluded.connected_account_id,
+      amount_minor = excluded.amount_minor,
+      failure_code = null, failure_message = null,
+      claimed_at = now(), updated_at = now()
+    returning id into v_attempt;
+
+    update public.companion_earnings set transfer_state = 'processing', updated_at = now()
+     where id = r.earning_id;
+
+    attempt_id := v_attempt; earning_id := r.earning_id;
+    companion_account_id := r.companion_account_id; companion_profile_id := r.companion_profile_id;
+    connected_account_id := r.stripe_account_id; amount_minor := r.net_minor; currency := 'GBP';
+    booking_id := r.booking_id;
+    stripe_idempotency_key := 'transfer-' || r.earning_id::text; -- stable ⇒ exactly-once
+    return next;
+  end loop;
+end;
+$$;
+
+-- refund_claim ← claim_payment_refunds (latest: 0056)
+create or replace function public.claim_payment_refunds(p_limit integer default 20, p_ids uuid[] default null)
+returns table (
+  refund_id uuid, payment_intent_id text, amount_minor integer, currency text,
+  payer_account_id uuid, stripe_idempotency_key text
+)
+language plpgsql security definer
+set search_path = ''
+as $$
+#variable_conflict use_column
+declare
+  r record;
+begin
+  if not app_private.batch_worker_enabled('refund_claim') then return; end if;   -- Stage 3C1 kill switch
+  for r in
+    select rf.id, rf.stripe_payment_intent_id, rf.card_refund_minor, rf.payer_account_id
+    from public.payment_refunds rf
+    where rf.state in ('requested', 'failed_retryable')
+      and rf.card_refund_minor > 0
+      and rf.stripe_payment_intent_id is not null
+      and (p_ids is null or rf.id = any(p_ids))
+      and not exists (select 1 from public.payment_disputes d
+                      where d.payment_order_id = rf.payment_order_id
+                        and d.internal_state in ('open', 'under_review', 'lost'))
+    order by rf.requested_at
+    limit greatest(p_limit, 0)
+    for update of rf skip locked
+  loop
+    update public.payment_refunds
+       set state = 'processing', attempt_count = attempt_count + 1,
+           failure_code = null, failure_message = null, claimed_at = now(), updated_at = now()
+     where id = r.id;
+    refund_id := r.id; payment_intent_id := r.stripe_payment_intent_id;
+    amount_minor := r.card_refund_minor; currency := 'GBP'; payer_account_id := r.payer_account_id;
+    stripe_idempotency_key := 'refund-' || r.id::text;
+    return next;
+  end loop;
+end;
+$$;
+
+-- transfer_claim ← recover_stale_transfers (latest: 0048)
+create or replace function public.recover_stale_transfers(p_minutes integer default 30)
+returns integer
+language plpgsql security definer
+set search_path = ''
+as $$
+declare v_count integer;
+begin
+  if not app_private.batch_worker_enabled('transfer_claim') then return 0; end if;   -- Stage 3C1 kill switch
+  with stale as (
+    update public.companion_transfer_attempts ta
+       set state = 'failed_retryable',
+           failure_code = 'stale_claim',
+           failure_message = 'Worker did not finalise in time; safe to retry.',
+           updated_at = now()
+     where ta.state = 'processing'
+       and ta.stripe_transfer_id is null
+       and ta.claimed_at < now() - make_interval(mins => greatest(p_minutes, 1))
+    returning ta.earning_id
+  )
+  update public.companion_earnings e set transfer_state = 'failed', updated_at = now()
+    from stale where e.id = stale.earning_id and e.transfer_state = 'processing';
+  get diagnostics v_count = row_count;
+  return v_count;
+end;
+$$;
+
+-- refund_claim ← recover_stale_refunds (latest: 0052)
+create or replace function public.recover_stale_refunds(p_minutes integer default 30)
+returns integer
+language plpgsql security definer
+set search_path = ''
+as $$
+declare v_count integer;
+begin
+  if not app_private.batch_worker_enabled('refund_claim') then return 0; end if;   -- Stage 3C1 kill switch
+  update public.payment_refunds
+     set state = 'failed_retryable', failure_code = 'stale_claim',
+         failure_message = 'Worker did not finalise in time; safe to retry.', updated_at = now()
+   where state = 'processing' and stripe_refund_id is null
+     and claimed_at < now() - make_interval(mins => greatest(p_minutes, 1));
+  get diagnostics v_count = row_count;
+  return v_count;
+end;
+$$;
+
+-- earning_release ← release_eligible_earnings (latest: 0034)
+create or replace function public.release_eligible_earnings()
+returns integer
+language plpgsql security definer
+set search_path = ''
+as $$
+declare
+  v_row record;
+  v_count integer := 0;
+begin
+  if not app_private.batch_worker_enabled('earning_release') then return 0; end if;   -- Stage 3C1 kill switch
+  for v_row in
+    select e.id
+    from public.companion_earnings e
+    join public.bookings b on b.id = e.booking_id
+    join public.conversation_attendance a
+      on a.booking_id = e.booking_id and a.outcome = 'took_place'
+    where e.state = 'pending_completion'
+      and b.ends_at + interval '12 hours' <= now()
+      and not exists (select 1 from public.conversation_issues i
+                      where i.booking_id = e.booking_id and i.state <> 'resolved')
+    limit 100
+    for update of e skip locked
+  loop
+    perform app_private.make_earning_payable(v_row.id);
+    v_count := v_count + 1;
+  end loop;
+  return v_count;
+end;
+$$;
+
+-- earning_release ← resolve_unconfirmed_attendance (latest: 0068)
+create or replace function public.resolve_unconfirmed_attendance()
+returns integer
+language plpgsql security definer
+set search_path = ''
+as $$
+declare
+  v_row record;
+  v_comp integer;
+  v_mem integer;
+  v_earning uuid;
+  v_companion_account uuid;
+  v_member_name text;
+  v_companion_name text;
+  v_count integer := 0;
+begin
+  if not app_private.batch_worker_enabled('earning_release') then return 0; end if;   -- Stage 3C1 kill switch
+  for v_row in
+    select b.id as booking_id, b.ends_at, b.booked_by_account_id,
+           b.member_profile_id, b.companion_profile_id
+    from public.bookings b
+    where b.ends_at + interval '24 hours' <= now()
+      and b.status = 'confirmed'                     -- INVARIANT: accepted bookings only
+      and not exists (select 1 from public.conversation_attendance a where a.booking_id = b.id)
+      and not exists (select 1 from public.conversation_issues i
+                      where i.booking_id = b.id and i.state <> 'resolved')
+      and (
+        exists (select 1 from public.payment_orders po
+                where po.booking_id = b.id and po.provider = 'stripe_test' and po.status = 'succeeded')
+        or exists (
+          select 1
+          from public.conversation_plans p
+          join public.plan_billing_periods bp on bp.plan_id = p.id
+          where p.id = b.plan_id and p.funding_mode = 'recurring'
+            and bp.status = 'paid'
+            and bp.period_start = date_trunc('month', (b.starts_at at time zone b.timezone))::date)
+      )
+    limit 100
+    for update of b skip locked
+  loop
+    v_earning := app_private.ensure_companion_earning(v_row.booking_id);
+    if v_earning is null then continue; end if;
+
+    select companion_account_id into v_companion_account
+      from public.companion_earnings where id = v_earning;
+    select first_name into v_member_name from public.profiles where id = v_row.member_profile_id;
+    select first_name into v_companion_name from public.profiles where id = v_row.companion_profile_id;
+
+    select coalesce(sum(duration_seconds), 0) into v_comp
+      from public.call_attendance_segments
+      where booking_id = v_row.booking_id and side = 'companion';
+    select coalesce(sum(duration_seconds), 0) into v_mem
+      from public.call_attendance_segments
+      where booking_id = v_row.booking_id and side = 'member';
+
+    if v_comp >= 120 and v_mem >= 120 then
+      insert into public.conversation_attendance
+        (booking_id, outcome, source, explanation)
+      values (v_row.booking_id, 'took_place', 'system',
+              'Apparent completion from trusted attendance')
+      on conflict (booking_id) do nothing;
+      perform app_private.make_earning_payable(v_earning);
+      perform app_private.notify_account(
+        v_companion_account, 'conversation_completed', 'Conversation completed',
+        'We confirmed the conversation attendance from the call record.',
+        v_row.booking_id, 'fallback-completed:' || v_row.booking_id::text);
+      perform app_private.notify_account(
+        v_row.booked_by_account_id, 'conversation_completed', 'Conversation completed',
+        'The conversation between ' || coalesce(v_member_name, 'the member') || ' and '
+          || coalesce(v_companion_name, 'the companion') || ' has been marked as completed.',
+        v_row.booking_id, 'fallback-completed:' || v_row.booking_id::text);
+
+    elsif v_comp >= 600 and v_mem < 120 then
+      insert into public.conversation_attendance
+        (booking_id, outcome, source, explanation)
+      values (v_row.booking_id, 'member_no_show', 'system',
+              'Likely Member no-show from trusted attendance')
+      on conflict (booking_id) do nothing;
+      perform app_private.make_earning_payable(v_earning);
+      perform app_private.notify_account(
+        v_companion_account, 'attendance_confirmed', 'Attendance confirmed',
+        'Your attendance was confirmed and your earnings are ready for payout.',
+        v_row.booking_id, 'fallback-attendance:' || v_row.booking_id::text);
+      perform app_private.notify_account(
+        v_row.booked_by_account_id, 'attendance_updated', 'Conversation attendance updated',
+        'The conversation attendance was reviewed using the call record.',
+        v_row.booking_id, 'fallback-attendance:' || v_row.booking_id::text);
+
+    else
+      update public.companion_earnings set state = 'held_for_issue', updated_at = now()
+       where id = v_earning and state = 'pending_completion';
+      insert into public.conversation_issues
+        (booking_id, earning_id, reporter_account_id, reporter_role, category,
+         description, idempotency_key)
+      select v_row.booking_id, v_earning, e.companion_account_id, 'system', 'unclear_attendance',
+             'Attendance evidence unclear — manual review required',
+             'unclear-' || v_row.booking_id::text
+      from public.companion_earnings e where e.id = v_earning
+      on conflict (idempotency_key) do nothing;
+      perform app_private.notify_account(
+        v_companion_account, 'attendance_under_review', 'Conversation under review',
+        'We could not confirm the conversation outcome automatically. It is being reviewed.',
+        v_row.booking_id, 'attendance-review:' || v_row.booking_id::text);
+      perform app_private.notify_account(
+        v_row.booked_by_account_id, 'attendance_under_review', 'Conversation under review',
+        'The conversation outcome could not be confirmed automatically and is being reviewed.',
+        v_row.booking_id, 'attendance-review:' || v_row.booking_id::text);
+    end if;
+    v_count := v_count + 1;
+  end loop;
+  return v_count;
+end;
+$$;
+
+-- plan_renewal ← process_plan_renewals (latest: 0043). Also neutralises the
+-- DAILY process-plan-renewals pg_cron job (which runs as a superuser): the guard
+-- makes it a clean no-op until the control is explicitly enabled.
+create or replace function public.process_plan_renewals()
+returns jsonb
+language plpgsql security definer
+set search_path = ''
+as $$
+declare
+  v_row record;
+  v_period date := date_trunc('month', now())::date;
+  v_count integer := 0;
+  v_errors text := '';
+begin
+  if not app_private.batch_worker_enabled('plan_renewal') then
+    return jsonb_build_object('skipped', true, 'reason', 'plan_renewal control not enabled');   -- Stage 3C1 kill switch
+  end if;
+  for v_row in
+    select p.id
+    from public.conversation_plans p
+    where p.status = 'active' and p.billing_enabled and p.funding_mode = 'recurring'
+      and not exists (
+        select 1 from public.plan_billing_periods bp
+        where bp.plan_id = p.id and bp.period_start = v_period
+          and bp.status in ('paid', 'processing', 'payment_pending', 'action_required',
+                            'payment_failed', 'closed'))
+    limit 100
+    for update of p skip locked
+  loop
+    begin
+      perform public.renew_plan_billing_period(v_row.id, v_period);
+      v_count := v_count + 1;
+    exception when others then
+      v_errors := v_errors || v_row.id::text || ': ' || sqlerrm || '; ';
+    end;
+  end loop;
+  return jsonb_build_object('period', v_period, 'processed', v_count, 'errors', nullif(v_errors, ''));
+end;
+$$;
+
+-- financial_reconciliation ← app_private.process_financial_reconciliation (latest:
+-- 0063). This is the single funnel behind BOTH public run_financial_reconciliation
+-- and run_financial_reconciliation_for_entities, so guarding it here governs both.
+create or replace function app_private.process_financial_reconciliation(
+  p_scope_ids uuid[] default null, p_limit integer default 500,
+  p_trigger text default 'scheduled', p_actor uuid default null
+)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  v_run uuid; r record; v_action text;
+  v_scanned int := 0; v_created int := 0; v_refreshed int := 0; v_cleared int := 0;
+  v_cap int := least(greatest(coalesce(p_limit, 500), 1), 5000);
+  v_complete boolean;
+begin
+  if not app_private.batch_worker_enabled('financial_reconciliation') then
+    return jsonb_build_object('skipped', true, 'reason', 'financial_reconciliation control not enabled');   -- Stage 3C1 kill switch
+  end if;
+  if p_trigger not in ('scheduled', 'manual', 'entity', 'test') then p_trigger := 'scheduled'; end if;
+  insert into public.financial_reconciliation_runs (scope, trigger_type, status, actor_account_id)
+  values (case when p_scope_ids is null then 'full' else 'entity' end, p_trigger, 'running', p_actor)
+  returning id into v_run;
+
+  for r in select * from app_private.detect_financial_findings(p_scope_ids, v_cap) loop
+    v_scanned := v_scanned + 1;
+    v_action := app_private.upsert_frec_finding(
+      v_run, r.finding_key, r.finding_type, r.severity, r.entity_type, r.entity_id,
+      r.order_id, r.earning_id, r.transfer_id, r.refund_id, r.dispute_id,
+      r.provider_ref, r.expected, r.observed);
+    if v_action = 'created' then v_created := v_created + 1;
+    elsif v_action in ('refreshed', 'reopened') then v_refreshed := v_refreshed + 1; end if;
+  end loop;
+
+  -- Only clear when we KNOW the relevant entities were fully evaluated.
+  v_complete := v_scanned < v_cap; -- a full result below the cap is a complete scan
+  if p_scope_ids is not null or v_complete then
+    for r in
+      select id from public.financial_reconciliation_findings
+      where status in ('open', 'acknowledged', 'investigating')
+        and (latest_run_id is distinct from v_run)
+        and (p_scope_ids is null or primary_entity_id = any(p_scope_ids))
+      for update
+    loop
+      update public.financial_reconciliation_findings
+         set status = 'cleared', cleared_at = now(), updated_at = now() where id = r.id;
+      perform app_private.write_frec_audit(r.id, 'cleared', null, '{}'::jsonb);
+      v_cleared := v_cleared + 1;
+    end loop;
+  end if;
+
+  update public.financial_reconciliation_runs
+     set status = 'completed', completed_at = now(), scanned_count = v_scanned,
+         findings_created = v_created, findings_refreshed = v_refreshed, findings_cleared = v_cleared
+   where id = v_run;
+
+  return jsonb_build_object('run_id', v_run, 'scope', case when p_scope_ids is null then 'full' else 'entity' end,
+    'scanned', v_scanned, 'created', v_created, 'refreshed', v_refreshed, 'cleared', v_cleared,
+    'complete_scan', (p_scope_ids is not null or v_complete));
+end;
+$$;
+
+-- dispute_reconciliation ← app_private.process_dispute_deadline_alerts (latest: 0062)
+create or replace function app_private.process_dispute_deadline_alerts(p_limit integer default 200)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  r record; v jsonb;
+  v_processed int := 0; v_alerts int := 0; v_notifs int := 0; v_escalations int := 0;
+begin
+  if not app_private.batch_worker_enabled('dispute_reconciliation') then
+    return jsonb_build_object('skipped', true, 'reason', 'dispute_reconciliation control not enabled');   -- Stage 3C1 kill switch
+  end if;
+  for r in
+    select d.id from public.payment_disputes d
+    where d.internal_state not in ('won', 'lost', 'closed_warning')
+      and d.evidence_due_at is not null
+    order by d.evidence_due_at asc
+    -- Bounded: null → 200; zero/negative → 1; excessive → capped at 1000.
+    limit least(greatest(coalesce(p_limit, 200), 1), 1000)
+  loop
+    v := app_private.process_one_dispute_alert(r.id);
+    v_processed := v_processed + 1;
+    v_alerts := v_alerts + coalesce((v->>'alerts')::int, 0);
+    v_notifs := v_notifs + coalesce((v->>'notifications')::int, 0);
+    v_escalations := v_escalations + coalesce((v->>'escalations')::int, 0);
+  end loop;
+  return jsonb_build_object('processed', v_processed, 'alerts', v_alerts,
+    'notifications', v_notifs, 'escalations', v_escalations, 'ran_at', now());
+end;
+$$;
 
 -- ============================================================
 -- 14. PostgREST schema reload so the new RPCs are exposed immediately.

@@ -164,19 +164,64 @@ describe('0073 readiness — support-only, no secrets', () => {
   });
 });
 
-describe('0073 financial firewall (whole migration) — no worker, Stripe, cron, backfill or protected-row touch', () => {
-  it('invokes no transfer/refund/dispute/reconciliation/renewal worker except the gated earning-release', () => {
-    const lc = M_CODE.toLowerCase();
-    for (const bad of ['claim_plan_transfers', 'finalize_transfer_succeeded', 'finalize_transfer_failed',
-                       'finalize_transfer_reversed', 'recover_stale_transfers', 'claim_payment_refunds',
-                       'finalize_refund_', 'recover_stale_refunds', 'process_plan_renewals',
-                       'run_financial_reconciliation', 'process_financial_reconciliation',
-                       'process_dispute_deadline_alerts', 'resolve_unconfirmed_attendance',
-                       'release_eligible_earnings', 'reconcile_unresolved_dispute']) {
-      expect(lc, bad).not.toContain(bad);
+describe('0073 kill-switch ENFORCEMENT — every raw batch worker gates on the guard', () => {
+  it('defines the central guard, environment reader and phrase-gated environment RPC', () => {
+    expect(M).toContain('create or replace function app_private.batch_worker_enabled(p_op text)');
+    expect(fn('app_private.batch_worker_enabled')).toContain("effective_control_state(p_op) = 'enabled'");
+    expect(fn('app_private.batch_worker_enabled')).toContain("current_financial_environment() <> 'production_live'");
+    expect(M).toContain('create or replace function app_private.assert_financial_operation_allowed');
+    const env = fn('public.support_set_financial_environment');
+    expect(env).toContain('if not app_private.is_support_admin() then raise exception');
+    expect(env).toContain('reason_required');
+    expect(env).toContain('state_mismatch');
+    expect(env).toContain("c_live_phrase constant text := 'ENABLE-PRODUCTION-LIVE'");
+    expect(env).toContain('confirmation_required');
+    expect(env).toContain('for update');                            // optimistic concurrency
+    expect(env).toContain('insert into public.financial_operation_control_events');   // audited
+  });
+  it('redefines EVERY authoritative batch/global worker with a batch_worker_enabled guard as the first statement', () => {
+    const guarded: [string, string][] = [
+      ['public.claim_plan_transfers', 'transfer_claim'],
+      ['public.claim_payment_refunds', 'refund_claim'],
+      ['public.recover_stale_transfers', 'transfer_claim'],
+      ['public.recover_stale_refunds', 'refund_claim'],
+      ['public.release_eligible_earnings', 'earning_release'],
+      ['public.resolve_unconfirmed_attendance', 'earning_release'],
+      ['public.process_plan_renewals', 'plan_renewal'],
+      ['app_private.process_financial_reconciliation', 'financial_reconciliation'],
+      ['app_private.process_dispute_deadline_alerts', 'dispute_reconciliation'],
+    ];
+    for (const [name, op] of guarded) {
+      const body = fn(name);
+      expect(body, name).toContain(`if not app_private.batch_worker_enabled('${op}') then`);
+      // The guard must precede the first claim/mutation: it sits right after `begin`.
+      const guardIdx = body.indexOf('batch_worker_enabled');
+      const firstMutation = Math.min(
+        ...['insert into public.', 'update public.', 'for update'].map((k) => {
+          const i = body.indexOf(k); return i < 0 ? Number.MAX_SAFE_INTEGER : i;
+        }));
+      expect(guardIdx, `${name}: guard must precede first mutation`).toBeLessThan(firstMutation);
     }
-    // make_earning_payable appears ONLY once, inside the execution wrapper.
-    expect((M_CODE.match(/make_earning_payable/g) ?? []).length).toBeLessThanOrEqual(1);
+  });
+  it('does NOT guard (and thus preserves) the webhook provider-state recording functions', () => {
+    // finalize_*/record_dispute_* record already-occurred Stripe outcomes for the
+    // webhook; 0073 must not redefine or block them (idempotency + provider truth).
+    for (const keep of ['finalize_transfer_succeeded', 'finalize_transfer_failed', 'finalize_transfer_reversed',
+                        'finalize_refund_succeeded', 'finalize_refund_failed', 'record_dispute_upsert',
+                        'record_dispute_closed', 'finalize_paid_order', 'claim_webhook_event']) {
+      expect(M_CODE, keep).not.toContain(keep);
+    }
+  });
+});
+
+describe('0073 financial firewall (whole migration) — no Stripe, cron, backfill or protected-row touch', () => {
+  it('the ONLY money-adjacent primitive it calls is make_earning_payable (release path)', () => {
+    // Guarded workers reference their own worker names (redefinitions) but call no
+    // NEW Stripe path; make_earning_payable appears only in the wrapper + the two
+    // earning-release workers reproduced verbatim.
+    // 1× wrapper + 1× release_eligible_earnings + 2× resolve_unconfirmed_attendance branches.
+    expect((M_CODE.match(/perform app_private\.make_earning_payable/g) ?? []).length).toBeLessThanOrEqual(4);
+    expect(M_CODE.toLowerCase()).not.toContain('reconcile_unresolved_dispute');
   });
   it('makes no Stripe/HTTP call, enables no cron, and stores no secret', () => {
     const lc = M_CODE.toLowerCase();
@@ -186,11 +231,7 @@ describe('0073 financial firewall (whole migration) — no worker, Stripe, cron,
     }
   });
   it('never backfills history or touches the protected booking / findings', () => {
-    // The protected booking may be NAMED in the header comment (documenting that
-    // it must not be touched) but must never appear in executable SQL.
     expect(M_CODE).not.toContain('ba4f943c-3e8d-4d4c-900d-fa551ccc5387');
-    // No global mutation of financial rows (only run/control tables are written).
-    expect(M_CODE).not.toMatch(/update\s+public\.bookings\s+set|update\s+public\.payment_disputes\s+set|update\s+public\.payment_refunds\s+set|delete\s+from\s+public\.companion_earnings/i);
     expect(M).toContain("select pg_notify('pgrst', 'reload schema')");
   });
 });

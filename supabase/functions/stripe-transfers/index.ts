@@ -59,6 +59,11 @@ Deno.serve(async (req) => {
   // Recover any stranded claims from a crashed worker first (safe: stable key).
   await admin.rpc('recover_stale_transfers', { p_minutes: 30 });
 
+  // Stage 3C1: claim_plan_transfers is now kill-switch enforced in the DB. While
+  // the 'transfer_claim' control is not 'enabled' the claim returns ZERO rows (a
+  // clean no-op) and this settlement pass moves no money — the control is the
+  // authoritative gate, so this Edge Function already runs through the enforced
+  // path. finalize_transfer_* below record provider outcomes and stay ungated.
   const claimed = await admin.rpc('claim_plan_transfers', { p_limit: limit });
   if (claimed.error) return json({ error: 'claim_failed' }, 500);
   const items = (claimed.data ?? []) as Claim[];
