@@ -240,71 +240,12 @@ $$;
 revoke all on function app_private.batch_worker_enabled(text) from public, anon, authenticated;
 grant execute on function app_private.batch_worker_enabled(text) to authenticated, service_role;
 
--- Establish the transaction-local approved-run context. Callable only by a scoped
--- wrapper (service_role / definer). It re-validates EVERYTHING before granting the
--- context: an approved + confirmed + unexpired run, matching operation + scope,
--- production_live, the op control and the master control. In any non-production
--- environment it refuses, so the context can never be established under 3C1.
-create or replace function app_private.begin_scoped_execution(p_run_id uuid, p_op text)
-returns void language plpgsql security definer set search_path = '' as $$
-declare v_run public.financial_operation_runs; v_max int;
-begin
-  select max_batch_limit into v_max from public.financial_operations_config where id = true;
-  if app_private.current_financial_environment() <> 'production_live' then
-    raise exception 'not_production_live: scoped worker execution is only available in production_live';
-  end if;
-  if app_private.effective_control_state(p_op) not in ('scoped_execution', 'enabled') then
-    raise exception 'control_disabled: % is not executable', p_op;
-  end if;
-  if app_private.effective_control_state('production_live_operations') <> 'enabled' then
-    raise exception 'production_live_locked: the master control is disabled';
-  end if;
-  select * into v_run from public.financial_operation_runs where id = p_run_id for update;
-  if v_run.id is null then raise exception 'run_not_found'; end if;
-  if v_run.operation_type <> p_op then raise exception 'run_operation_mismatch'; end if;
-  if v_run.state not in ('confirmed', 'executing') then raise exception 'run_not_confirmed'; end if;
-  if v_run.expires_at <= now() then raise exception 'run_expired'; end if;
-  if v_run.scope_type <> 'record_ids' or array_length(v_run.scoped_ids, 1) is null then raise exception 'scope_required'; end if;
-  if array_length(v_run.scoped_ids, 1) > v_max then raise exception 'batch_limit_exceeded'; end if;
-  perform set_config('app.financial_scope_op', p_op, true);          -- transaction-local (is_local)
-  perform set_config('app.financial_scope_run', p_run_id::text, true);
-end;
-$$;
-revoke all on function app_private.begin_scoped_execution(uuid, text) from public, anon, authenticated;
-grant execute on function app_private.begin_scoped_execution(uuid, text) to service_role;
-
--- The central asserting guard for SCOPED, run-approved execution (used by the
--- operation-run execution wrapper and available to any future scoped worker).
--- Verifies environment, control state, production-live master, an approved +
--- unexpired + confirmed run, explicit scope and the maximum batch size.
-create or replace function app_private.assert_financial_operation_allowed(
-  p_operation_type text, p_execution_mode text, p_scope_ids uuid[], p_run_id uuid)
-returns void language plpgsql stable security definer set search_path = '' as $$
-declare v_state text; v_env text; v_max int; v_run public.financial_operation_runs;
-begin
-  v_state := app_private.effective_control_state(p_operation_type);
-  v_env := app_private.current_financial_environment();
-  select max_batch_limit into v_max from public.financial_operations_config where id = true;
-  if v_state = 'disabled' then raise exception 'control_disabled: % is disabled', p_operation_type; end if;
-  if v_state = 'dry_run_only' then raise exception 'execution_not_permitted: % is dry_run_only', p_operation_type; end if;
-  if v_env = 'production_live' and app_private.effective_control_state('production_live_operations') <> 'enabled' then
-    raise exception 'production_live_locked: the production-live master switch is disabled';
-  end if;
-  -- scoped_execution demands an explicit, bounded, approved run.
-  if v_state = 'scoped_execution' then
-    if p_execution_mode <> 'execute_scoped' then raise exception 'scope_required: scoped_execution needs explicit record ids'; end if;
-    if p_run_id is null then raise exception 'run_required: an approved operation run is required'; end if;
-    if p_scope_ids is null or array_length(p_scope_ids, 1) is null then raise exception 'scope_required: explicit record ids are required'; end if;
-    if array_length(p_scope_ids, 1) > v_max then raise exception 'batch_limit_exceeded: scope exceeds the maximum batch size'; end if;
-    select * into v_run from public.financial_operation_runs where id = p_run_id;
-    if v_run.id is null then raise exception 'run_not_found: unknown operation run'; end if;
-    if v_run.state not in ('confirmed', 'executing') then raise exception 'run_not_confirmed: confirm the run before executing'; end if;
-    if v_run.expires_at <= now() then raise exception 'run_expired: this run has expired'; end if;
-  end if;
-end;
-$$;
-revoke all on function app_private.assert_financial_operation_allowed(text, text, uuid[], uuid) from public, anon, authenticated;
-grant execute on function app_private.assert_financial_operation_allowed(text, text, uuid[], uuid) to authenticated, service_role;
+-- NOTE (dependency order): app_private.begin_scoped_execution and
+-- app_private.assert_financial_operation_allowed declare a
+-- `public.financial_operation_runs%` row variable, so they are DEFINED IN
+-- SECTION 4b BELOW — immediately after the financial_operation_runs /
+-- financial_operation_run_events tables are created — never here (nothing in this
+-- migration calls them before that point). Their logic is unchanged.
 
 -- ------------------------------------------------------------
 -- 2c. ENVIRONMENT TRANSITION RPC. Reasoned, audited, optimistic-concurrency,
@@ -404,6 +345,78 @@ create table if not exists public.financial_operation_run_events (
 create index if not exists fin_run_events_idx on public.financial_operation_run_events (run_id, created_at);
 alter table public.financial_operation_run_events enable row level security;
 alter table public.financial_operation_run_events force row level security;
+
+-- ============================================================
+-- 4b. SCOPED-EXECUTION CONTEXT + CENTRAL ASSERTING GUARD. Defined HERE (not in
+--     section 2b) because they declare a public.financial_operation_runs row
+--     variable, which only now exists. Logic is identical to the original 2b
+--     definitions — the scoped-execution isolation guarantees are unchanged.
+-- ============================================================
+-- Establish the transaction-local approved-run context. Callable only by a scoped
+-- wrapper (service_role / definer). It re-validates EVERYTHING before granting the
+-- context: an approved + confirmed + unexpired run, matching operation + scope,
+-- production_live, the op control and the master control. In any non-production
+-- environment it refuses, so the context can never be established under 3C1.
+create or replace function app_private.begin_scoped_execution(p_run_id uuid, p_op text)
+returns void language plpgsql security definer set search_path = '' as $$
+declare v_run public.financial_operation_runs; v_max int;
+begin
+  select max_batch_limit into v_max from public.financial_operations_config where id = true;
+  if app_private.current_financial_environment() <> 'production_live' then
+    raise exception 'not_production_live: scoped worker execution is only available in production_live';
+  end if;
+  if app_private.effective_control_state(p_op) not in ('scoped_execution', 'enabled') then
+    raise exception 'control_disabled: % is not executable', p_op;
+  end if;
+  if app_private.effective_control_state('production_live_operations') <> 'enabled' then
+    raise exception 'production_live_locked: the master control is disabled';
+  end if;
+  select * into v_run from public.financial_operation_runs where id = p_run_id for update;
+  if v_run.id is null then raise exception 'run_not_found'; end if;
+  if v_run.operation_type <> p_op then raise exception 'run_operation_mismatch'; end if;
+  if v_run.state not in ('confirmed', 'executing') then raise exception 'run_not_confirmed'; end if;
+  if v_run.expires_at <= now() then raise exception 'run_expired'; end if;
+  if v_run.scope_type <> 'record_ids' or array_length(v_run.scoped_ids, 1) is null then raise exception 'scope_required'; end if;
+  if array_length(v_run.scoped_ids, 1) > v_max then raise exception 'batch_limit_exceeded'; end if;
+  perform set_config('app.financial_scope_op', p_op, true);          -- transaction-local (is_local)
+  perform set_config('app.financial_scope_run', p_run_id::text, true);
+end;
+$$;
+revoke all on function app_private.begin_scoped_execution(uuid, text) from public, anon, authenticated;
+grant execute on function app_private.begin_scoped_execution(uuid, text) to service_role;
+
+-- The central asserting guard for SCOPED, run-approved execution (used by the
+-- operation-run execution wrapper and available to any future scoped worker).
+-- Verifies environment, control state, production-live master, an approved +
+-- unexpired + confirmed run, explicit scope and the maximum batch size.
+create or replace function app_private.assert_financial_operation_allowed(
+  p_operation_type text, p_execution_mode text, p_scope_ids uuid[], p_run_id uuid)
+returns void language plpgsql stable security definer set search_path = '' as $$
+declare v_state text; v_env text; v_max int; v_run public.financial_operation_runs;
+begin
+  v_state := app_private.effective_control_state(p_operation_type);
+  v_env := app_private.current_financial_environment();
+  select max_batch_limit into v_max from public.financial_operations_config where id = true;
+  if v_state = 'disabled' then raise exception 'control_disabled: % is disabled', p_operation_type; end if;
+  if v_state = 'dry_run_only' then raise exception 'execution_not_permitted: % is dry_run_only', p_operation_type; end if;
+  if v_env = 'production_live' and app_private.effective_control_state('production_live_operations') <> 'enabled' then
+    raise exception 'production_live_locked: the production-live master switch is disabled';
+  end if;
+  -- scoped_execution demands an explicit, bounded, approved run.
+  if v_state = 'scoped_execution' then
+    if p_execution_mode <> 'execute_scoped' then raise exception 'scope_required: scoped_execution needs explicit record ids'; end if;
+    if p_run_id is null then raise exception 'run_required: an approved operation run is required'; end if;
+    if p_scope_ids is null or array_length(p_scope_ids, 1) is null then raise exception 'scope_required: explicit record ids are required'; end if;
+    if array_length(p_scope_ids, 1) > v_max then raise exception 'batch_limit_exceeded: scope exceeds the maximum batch size'; end if;
+    select * into v_run from public.financial_operation_runs where id = p_run_id;
+    if v_run.id is null then raise exception 'run_not_found: unknown operation run'; end if;
+    if v_run.state not in ('confirmed', 'executing') then raise exception 'run_not_confirmed: confirm the run before executing'; end if;
+    if v_run.expires_at <= now() then raise exception 'run_expired: this run has expired'; end if;
+  end if;
+end;
+$$;
+revoke all on function app_private.assert_financial_operation_allowed(text, text, uuid[], uuid) from public, anon, authenticated;
+grant execute on function app_private.assert_financial_operation_allowed(text, text, uuid[], uuid) to authenticated, service_role;
 
 -- ============================================================
 -- 5. REQUEST a run. Validates scope + batch, snapshots the environment, mints

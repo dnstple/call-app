@@ -8,12 +8,13 @@
  * NO transfer / refund / dispute / reconciliation worker, calls no Stripe/HTTP,
  * enables no cron, and never touches the protected booking or the 177 findings.
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const ROOT = join(__dirname, '..', '..', '..');
-const M = readFileSync(join(ROOT, 'supabase', 'migrations', '0073_financial_operations_control_plane.sql'), 'utf-8');
+const MIGRATIONS_DIR = join(ROOT, 'supabase', 'migrations');
+const M = readFileSync(join(MIGRATIONS_DIR, '0073_financial_operations_control_plane.sql'), 'utf-8');
 const APP = readFileSync(join(ROOT, 'src', 'App.tsx'), 'utf-8');
 
 const stripSql = (s: string): string => s.replace(/--.*$/gm, '');
@@ -254,6 +255,61 @@ describe('0073 financial firewall (whole migration) — no Stripe, cron, backfil
   it('never backfills history or touches the protected booking / findings', () => {
     expect(M_CODE).not.toContain('ba4f943c-3e8d-4d4c-900d-fa551ccc5387');
     expect(M).toContain("select pg_notify('pgrst', 'reload schema')");
+  });
+});
+
+describe('0073 migration dependency order — every table precedes the functions that use its row type', () => {
+  const at = (needle: string): number => {
+    const i = M.indexOf(needle);
+    expect(i, `0073 must contain: ${needle}`).toBeGreaterThanOrEqual(0);
+    return i;
+  };
+  it('CREATE TABLE financial_operation_runs appears BEFORE CREATE FUNCTION begin_scoped_execution (the failed statement)', () => {
+    expect(at('create table if not exists public.financial_operation_runs'))
+      .toBeLessThan(at('create or replace function app_private.begin_scoped_execution'));
+  });
+  it('every function that declares a 0073 table row-type is defined after that CREATE TABLE', () => {
+    // (table CREATE, list of functions that declare `v public.<table>`)
+    const deps: [string, string[]][] = [
+      ['public.financial_operations_config', [
+        'app_private.financial_config', 'public.support_set_financial_environment', 'public.support_request_operation_run',
+        'public.support_financial_readiness']],
+      ['public.financial_operation_controls', ['public.support_set_financial_control']],
+      ['public.financial_operation_runs', [
+        'app_private.begin_scoped_execution', 'app_private.assert_financial_operation_allowed',
+        'public.support_request_operation_run', 'public.support_preview_operation_run',
+        'public.support_confirm_operation_run', 'public.support_cancel_operation_run',
+        'public.support_execute_operation_run', 'public.support_operation_run_detail']],
+    ];
+    for (const [table, funcs] of deps) {
+      const tableAt = at(`create table if not exists ${table}`);
+      for (const f of funcs) {
+        expect(at(`create or replace function ${f}`), `${f} must be defined after ${table}`).toBeGreaterThan(tableAt);
+      }
+    }
+  });
+  it('the relocated guards keep their exact scoped-execution isolation logic', () => {
+    const b = fn('app_private.begin_scoped_execution');
+    expect(b).toContain('declare v_run public.financial_operation_runs');
+    expect(b).toContain('not_production_live');
+    expect(b).toContain("effective_control_state(p_op) not in ('scoped_execution', 'enabled')");
+    expect(b).toContain("effective_control_state('production_live_operations') <> 'enabled'");
+    expect(b).toContain('run_not_confirmed');
+    expect(b).toContain('run_expired');
+    expect(b).toContain('scope_required');
+    expect(b).toContain('batch_limit_exceeded');
+    expect(b).toContain("perform set_config('app.financial_scope_op', p_op, true)");
+    const a = fn('app_private.assert_financial_operation_allowed');
+    expect(a).toContain('declare v_state text; v_env text; v_max int; v_run public.financial_operation_runs');
+    expect(a).toContain('control_disabled');
+    expect(a).toContain('run_not_confirmed');
+  });
+  it('no migration 0074 exists (0073 is corrected in place)', () => {
+    const has0074 = readdirSync(MIGRATIONS_DIR).some((f) => f.startsWith('0074'));
+    expect(has0074, 'must not create 0074').toBe(false);
+    // 0073 is still the highest-numbered migration.
+    const nums = readdirSync(MIGRATIONS_DIR).filter((f) => /^\d{4}_.*\.sql$/.test(f)).map((f) => f.slice(0, 4)).sort();
+    expect(nums[nums.length - 1]).toBe('0073');
   });
 });
 
