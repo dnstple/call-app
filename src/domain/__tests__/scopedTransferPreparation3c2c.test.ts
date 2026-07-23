@@ -8,8 +8,9 @@
  *   - ONE classifier (classify_scoped_transfer) shared by preview and execution;
  *   - processing + NULL provider id maps to provider_lookup_required — never
  *     retryable, never eligible for a new transfer (null provider id ≠ absence);
- *   - the only mutation is a 'queued' attempt (no earning change, no processing
- *     reset, no second attempt, no finalisation call, no worker, no provider);
+ *   - execution is READ-ONLY towards financial rows: NO attempt is created (a
+ *     queued attempt would be provider-consumable via the global claim upsert),
+ *     no earning change, no processing reset, no finalisation call, no worker;
  *   - the protected historical ids appear nowhere in migration or fixtures;
  *   - earning_release and plan_renewal branches are unchanged.
  */
@@ -108,16 +109,31 @@ describe('0077 moves NO money — the complete provider/worker firewall', () => 
       expect(lc, bad).not.toContain(bad);
     }
   });
-  it('never resets processing, never touches an earning row, never sets a provider id or success state', () => {
-    const e = fn(M, 'app_private.execute_scoped_transfer_preparation');
-    const lc = stripSql(e).toLowerCase();
-    expect(lc).not.toMatch(/update\s+public\.companion_earnings/);
+  it('C1 is READ-ONLY towards financial rows: no INSERT/UPDATE/DELETE on attempts, no earning mutation anywhere in 0077', () => {
+    const lc = M_CODE.toLowerCase();
+    expect(lc).not.toMatch(/insert\s+into\s+public\.companion_transfer_attempts/);
     expect(lc).not.toMatch(/update\s+public\.companion_transfer_attempts/);
-    expect(lc).not.toMatch(/set\s+state\s*=\s*'(processing|succeeded|failed_retryable)'/);
+    expect(lc).not.toMatch(/delete\s+from\s+public\.companion_transfer_attempts/);
+    expect(lc).not.toMatch(/update\s+public\.companion_earnings/);
+    expect(lc).not.toMatch(/insert\s+into\s+public\.companion_earnings/);
     expect(lc).not.toContain('stripe_transfer_id =');
-    // The ONLY attempt write is the queued insert with attempt_count 0 + stable key.
-    expect(e).toContain("'queued', 0, 'transfer-' || v_rec.id::text");
-    expect(e).toContain('on conflict (earning_id) do nothing');
+    // No queued attempt (or any worker-consumable state) is ever created; the
+    // stable key is derivable, never persisted.
+    expect(lc).not.toContain("'queued',");
+    expect(M).toContain("'stable_key_derivable', true");
+  });
+  it("REGRESSION (the audited blocker): the global claim treats 'queued' as NON-TERMINAL — its exclusion list omits queued and its upsert flips ANY conflicting attempt to processing. THIS is why C1 creates no queued attempts.", () => {
+    const M73 = readFileSync(join(MIG, '0073_financial_operations_control_plane.sql'), 'utf-8');
+    const claim = fn(M73, 'public.claim_plan_transfers');
+    // The claim's not-exists list excludes ONLY processing/succeeded/failed_permanent…
+    expect(claim).toContain("ta.state in ('processing', 'succeeded', 'failed_permanent')");
+    expect(claim.slice(claim.indexOf('not exists'), claim.indexOf('order by'))).not.toContain("'queued'");
+    // …so a queued attempt does NOT protect its earning, and the upsert would
+    // consume it: on conflict (earning_id) → state 'processing' → returned to the
+    // Edge Function, which POSTs the provider transfer.
+    expect(claim).toContain("on conflict (earning_id) do update set");
+    expect(claim).toContain("state = 'processing'");
+    expect(claim).toContain('return next');
   });
   it('protected historical identifiers appear nowhere in the migration', () => {
     const lc = M_CODE.toLowerCase();
@@ -186,7 +202,7 @@ describe('0077 per-item containment, outcomes and events', () => {
     expect(e.indexOf('execution_context_required')).toBeLessThan(loopIdx);
   });
   it('full outcome vocabulary present; unique item per (run, record); event dedupe + idempotent repeat', () => {
-    for (const o of ['prepared_for_provider', 'provider_lookup_required', 'already_processing',
+    for (const o of ['eligible_provider_action_required', 'provider_lookup_required', 'already_processing',
                      'already_transferred', 'not_payable', 'held_for_issue', 'evidence_held',
                      'connect_not_ready', 'zero_amount', 'retryable_failure', 'permanent_failure',
                      'reversed', 'not_found', 'invalid_state', 'failed']) {
@@ -196,8 +212,13 @@ describe('0077 per-item containment, outcomes and events', () => {
     expect(e).toContain("ev.run_id = p_run_id and ev.action = 'execution_started'");
     expect(e).toContain("if v_run.executed_at is not null or v_run.state = 'completed' or v_run.state = 'failed' then");
     expect(M).toContain("'item_provider_lookup_required'");
-    // No event vocabulary claims a provider transfer was created.
+    // Eligible earnings record REVIEW-required — never that work was staged/queued.
+    expect(M).toContain("'item_review_required'");
+    expect(e).toContain("when 'eligible_provider_action_required' then 'item_review_required'");
+    // No event vocabulary claims a provider transfer was created or prepared.
     expect(M_CODE.toLowerCase()).not.toContain('transfer_created');
+    const eLc = stripSql(e).toLowerCase();
+    expect(eLc).not.toContain("'item_prepared'");
   });
 });
 

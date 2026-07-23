@@ -8842,12 +8842,12 @@ describe.skipIf(!enabled)('Stage 3C2-C scoped transfer preparation (requires liv
       const { rid, ex } = await previewConfirmExecute([a.earningId, a.earningId, a.earningId]);
       expect(ex.error, JSON.stringify(ex.error)).toBeNull();
       expect(ex.data.requested_count).toBe(1);
-      expect(ex.data.prepared_count).toBe(1);
-      expect((await itemsOf(rid))[0].outcome).toBe('prepared_for_provider');
-      const atts = await attemptsOf(a.earningId);
-      expect(atts).toHaveLength(1);
-      expect(atts[0]).toMatchObject({ state: 'queued', attempt_count: 0, claimed_at: null, stripe_transfer_id: null, idempotency_key: `transfer-${a.earningId}` });
-      expect(await earningOf(a.earningId)).toMatchObject({ state: 'payable', transfer_state: 'not_ready' });   // NEVER touched
+      expect(ex.data.review_required_count).toBe(1);
+      expect((await itemsOf(rid))[0].outcome).toBe('eligible_provider_action_required');
+      // C1 is READ-ONLY: ZERO attempts (a queued attempt would be consumable by the
+      // global claim upsert) and the earning row is byte-for-byte unchanged.
+      expect(await attemptsOf(a.earningId)).toHaveLength(0);
+      expect(await earningOf(a.earningId)).toMatchObject({ state: 'payable', transfer_state: 'not_ready' });
       expect(await attemptsOf(b.earningId)).toHaveLength(0);                                                    // out of scope
     } finally { await setControl('disabled'); }
   }, 120_000);
@@ -8858,7 +8858,7 @@ describe.skipIf(!enabled)('Stage 3C2-C scoped transfer preparation (requires liv
     const prev = await rpc(cOps, 'support_preview_operation_run', { p_run_id: rq.data.run_id });
     expect(prev.error, JSON.stringify(prev.error)).toBeNull();
     const rows = prev.data.rows as Array<Record<string, unknown>>;
-    expect(rows.find((r) => r.id === f.earningId)!.outcome).toBe('eligible_for_preparation');
+    expect(rows.find((r) => r.id === f.earningId)!.outcome).toBe('eligible_provider_action_required');
     expect(rows.find((r) => r.id === '00000000-0000-0000-0000-000000000000')!.outcome).toBe('not_found');
     expect(await attemptsOf(f.earningId)).toHaveLength(0);   // preview claimed nothing
     expect(await earningOf(f.earningId)).toMatchObject({ state: 'payable', transfer_state: 'not_ready' });
@@ -8886,7 +8886,7 @@ describe.skipIf(!enabled)('Stage 3C2-C scoped transfer preparation (requires liv
       expect(ex.error, JSON.stringify(ex.error)).toBeNull();
       const items = await itemsOf(rid);
       const out = (id: string) => items.find((i) => i.record_id === id)!.outcome;
-      expect(out(elig.earningId)).toBe('prepared_for_provider');
+      expect(out(elig.earningId)).toBe('eligible_provider_action_required');
       expect(out(held.earningId)).toBe('held_for_issue');
       expect(out(evd.earningId)).toBe('evidence_held');
       expect(out(nr.earningId)).toBe('connect_not_ready');
@@ -8895,8 +8895,9 @@ describe.skipIf(!enabled)('Stage 3C2-C scoped transfer preparation (requires liv
       expect(out(done.earningId)).toBe('already_transferred');
       expect(out(procId.earningId)).toBe('already_processing');
       expect(out(procNoId.earningId)).toBe('provider_lookup_required');                    // null id ≠ retryable
-      // Nothing ineligible gained an attempt; processing rows untouched; ONE attempt each.
-      for (const f of [held, evd, nr, zero, rev]) expect(await attemptsOf(f.earningId)).toHaveLength(0);
+      // C1 created ZERO attempts anywhere (eligible + ineligible alike); the two
+      // pre-existing processing fixture attempts are byte-for-byte untouched.
+      for (const f of [elig, held, evd, nr, zero, rev]) expect(await attemptsOf(f.earningId)).toHaveLength(0);
       expect((await attemptsOf(procNoId.earningId))[0]).toMatchObject({ state: 'processing', stripe_transfer_id: null });
       expect(await attemptsOf(procId.earningId)).toHaveLength(1);
       expect(ex.data.lookup_required_count).toBe(1);
@@ -8915,8 +8916,9 @@ describe.skipIf(!enabled)('Stage 3C2-C scoped transfer preparation (requires liv
       await rpc(cOps, 'support_execute_operation_run', { p_run_id: rq.data.run_id, p_confirmation_token: rq.data.confirmation_token });
       const items = await itemsOf(rq.data.run_id);
       expect(items.find((i) => i.record_id === a.earningId)!.outcome).toBe('held_for_issue');
-      expect(items.find((i) => i.record_id === b.earningId)!.outcome).toBe('prepared_for_provider');
+      expect(items.find((i) => i.record_id === b.earningId)!.outcome).toBe('eligible_provider_action_required');
       expect(await attemptsOf(a.earningId)).toHaveLength(0);
+      expect(await attemptsOf(b.earningId)).toHaveLength(0);   // C1 never creates attempts
     } finally { await setControl('disabled'); }
   }, 120_000);
 
@@ -8958,8 +8960,9 @@ describe.skipIf(!enabled)('Stage 3C2-C scoped transfer preparation (requires liv
       await rpc(cOps, 'support_confirm_operation_run', { p_run_id: r2.data.run_id, p_confirmation_token: r2.data.confirmation_token });
       await rpc(cOps, 'support_execute_operation_run', { p_run_id: r2.data.run_id, p_confirmation_token: r2.data.confirmation_token });
       const items2 = await itemsOf(r2.data.run_id);
-      expect(items2[0]).toMatchObject({ outcome: 'prepared_for_provider', reason_code: 'already_prepared' });
-      expect(await attemptsOf(f.earningId)).toHaveLength(1);
+      expect(items2[0]).toMatchObject({ outcome: 'eligible_provider_action_required' });
+      // Racing runs each recorded their own review item; ZERO attempts exist.
+      expect(await attemptsOf(f.earningId)).toHaveLength(0);
       expect((await cAdmin.from('financial_operation_run_items').select('id').eq('run_id', rq.data.run_id)).data ?? []).toHaveLength(1);
     } finally { await setControl('disabled'); }
   }, 120_000);
@@ -8984,14 +8987,14 @@ describe.skipIf(!enabled)('Stage 3C2-C scoped transfer preparation (requires liv
   }, 120_000);
 
   it('33-41 + SENTINEL. no provider/worker side effects; controls disabled; env hosted_test; PROTECTED record byte-for-byte unchanged; findings untouched', async () => {
-    // No fixture attempt ever left 'queued'/original state toward provider work,
-    // no earning gained transfer_state 'processing' from this stage, and every
-    // prepared attempt still has a NULL provider id (nothing contacted Stripe).
+    // C1 created ZERO attempts: no fixture earning has a 'queued' attempt at all
+    // (the only attempts are the explicit admin-inserted processing/succeeded
+    // fixtures) and no attempt anywhere gained a provider id from this stage.
     for (const b of bookingsMade) {
       const eids = ((await cAdmin.from('companion_earnings').select('id').eq('booking_id', b)).data ?? []).map((e) => e.id as string);
       for (const eid of eids) {
         for (const att of await attemptsOf(eid)) {
-          if (att.state === 'queued') expect(att.stripe_transfer_id).toBeNull();
+          expect(att.state, `no queued attempt may exist (earning ${eid})`).not.toBe('queued');
         }
       }
     }

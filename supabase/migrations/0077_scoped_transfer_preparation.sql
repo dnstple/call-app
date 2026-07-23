@@ -1,51 +1,48 @@
 -- ============================================================================
--- 0077_scoped_transfer_preparation.sql  (Stage 3C2-C1)
+-- 0077_scoped_transfer_preparation.sql  (Stage 3C2-C1, corrected)
 --
--- Scoped TRANSFER PREPARATION — a safe operations workflow for explicit transfer
--- records WITHOUT moving money. This stage NEVER creates, retries, cancels or
--- reverses a provider transfer; it contains no Stripe/pg_net/HTTP/Edge/cron code.
--- Provider transfer creation is Stage 3C2-C2.
+-- Scoped TRANSFER REVIEW — a safe operations workflow for explicit transfer
+-- records WITHOUT moving money and WITHOUT creating any state an existing worker
+-- or provider path could later consume. This stage NEVER creates, retries,
+-- cancels or reverses a provider transfer and contains no Stripe/pg_net/HTTP/
+-- Edge/cron code. Provider transfer creation is Stage 3C2-C2.
+--
+-- WHY C1 CREATES NO ATTEMPT ROW (audited, corrected): claim_plan_transfers
+-- excludes an earning only when an attempt exists in
+-- ('processing','succeeded','failed_permanent') — a 'queued' attempt does NOT
+-- exclude it, and the claim's `on conflict (earning_id) do update` flips ANY
+-- existing attempt (including queued) to 'processing' and returns it to the
+-- stripe-transfers Edge Function, which POSTs /v1/transfers. So a queued row IS
+-- provider-consumable once transfer_claim runs in production_live. Therefore C1
+-- performs NO INSERT/UPDATE/DELETE on companion_transfer_attempts and NO mutation
+-- of companion_earnings: its only durable output is the
+-- financial_operation_run_items review ledger. The stable idempotency key
+-- ('transfer-<earning>') is DERIVABLE deterministically and is NOT persisted.
+--
+-- C2 must later perform, in one tightly controlled scoped flow: fresh local
+-- reclassification → immediate read-only provider lookup → creation/claim of the
+-- local attempt → provider request with the stable key → local finalisation or a
+-- durable reconciliation-required state.
 --
 -- ADDITIVE ONLY (0001–0076 immutable). This migration:
 --   * additively extends the item-outcome and event-action vocabularies;
 --   * adds ONE read-only classifier app_private.classify_scoped_transfer
---     (earning-scoped; used by BOTH preview and execution). It never infers
---     provider absence from a NULL local stripe_transfer_id: a processing
---     attempt without a provider id classifies as provider_lookup_required —
---     never retryable, never eligible for a new transfer;
+--     (earning-scoped; shared by preview and execution). It never infers provider
+--     absence from a NULL local stripe_transfer_id: processing without a provider
+--     id classifies as provider_lookup_required — never retryable, never eligible
+--     for a new transfer;
 --   * adds app_private.execute_scoped_transfer_preparation(p_run_id) — the
---     record-scoped executor (hardened 3C2-A/B architecture: transaction-local
---     run+operation context, independent revalidation, one p_as_of per run,
---     per-earning locks, per-item savepoints, durable items, idempotent repeat).
---     Its ONLY mutation is the narrowest safe local preparation: for a fully
---     eligible earning with NO existing attempt it inserts a
---     companion_transfer_attempts row in state 'queued' (attempt_count 0,
---     claimed_at NULL, deterministic idempotency key 'transfer-<earning>').
---     AUDITED SAFE: no worker consumes 'queued' — the provider path starts only
---     at claim_plan_transfers (kill-switch-gated, selects EARNINGS not queued
---     attempts) and the only reader of 'queued' is the read-only 0063
---     reconciliation detector. The earning row itself is NEVER touched. It never
---     resets a processing attempt, never creates a second attempt (unique
---     earning_id is the DB boundary), never overrides a permanent failure and
---     never calls a finalisation RPC;
+--     record-scoped executor (hardened 3C2-A/B architecture) whose execution is
+--     READ-ONLY towards every financial row: it locks each scoped earning purely
+--     for deterministic classification and records one durable review item;
 --   * redefines public.support_execute_operation_run from the EXACT applied 0076
 --     body, adding ONLY the transfer_claim branch (context then delegate);
 --   * redefines public.support_preview_operation_run from the EXACT applied 0076
 --     body, adding ONLY a transfer_claim branch built from the shared classifier.
 --
--- CANONICAL SCOPE (audited): the earning UUID. companion_transfer_attempts is
--- 1:1 with earnings (unique earning_id) with unique idempotency_key and unique
--- stripe_transfer_id; attempt states queued/processing/succeeded/failed_retryable/
--- failed_permanent/reversed; earning transfer_state not_ready/ready/
--- transfer_pending/processing/transferred/failed/reversed. The provider path:
--- 0049 cron → stripe-transfers Edge Fn → recover_stale_transfers +
--- claim_plan_transfers (batch_worker_enabled-gated) → POST /v1/transfers with the
--- stable idempotency key → finalize_transfer_* ; webhook transfer.* events attach
--- missing provider ids via metadata. None of that is invoked here.
---
--- PROTECTED HISTORICAL STATE: this migration references no historical row; the
--- protected booking/earning/attempt (processing with NULL provider id) is exactly
--- why processing-without-provider-id maps to provider_lookup_required and is left
+-- PROTECTED HISTORICAL STATE: no historical row is referenced; the protected
+-- attempt (processing, NULL provider id) is exactly why
+-- processing-without-provider-id maps to provider_lookup_required and is left
 -- byte-for-byte unchanged by every path in this stage.
 -- ============================================================================
 
@@ -69,13 +66,14 @@ alter table public.financial_operation_run_items
     'renewed_credit_covered', 'renewal_prepared', 'closed_zero_occurrences',
     'already_renewed', 'action_required_existing', 'payment_failed_existing',
     'plan_not_active', 'plan_paused', 'plan_ended', 'billing_not_enabled', 'not_recurring',
-    -- Stage 3C2-C1 transfer preparation
-    'prepared_for_provider', 'provider_lookup_required', 'already_processing',
+    -- Stage 3C2-C1 transfer review (database-read-only; no provider-consumable state)
+    'eligible_provider_action_required', 'provider_lookup_required', 'already_processing',
     'already_transferred', 'not_payable', 'held_for_issue', 'connect_not_ready',
     'zero_amount', 'retryable_failure', 'permanent_failure'));
 
 -- ============================================================
--- 2. ADDITIVE event-action vocabulary extension (superset).
+-- 2. ADDITIVE event-action vocabulary extension (superset). item_review_required
+--    records an eligible earning WITHOUT claiming any work was staged or queued.
 -- ============================================================
 alter table public.financial_operation_run_events
   drop constraint if exists financial_operation_run_events_action_check;
@@ -85,16 +83,15 @@ alter table public.financial_operation_run_events
     'record_claimed', 'record_skipped', 'record_succeeded', 'record_failed',
     'cancelled', 'expired', 'control_blocked',
     'item_released', 'item_skipped', 'item_failed',
-    'item_renewed', 'item_prepared', 'item_provider_lookup_required',
+    'item_renewed', 'item_prepared', 'item_provider_lookup_required', 'item_review_required',
     'execution_succeeded', 'execution_partially_succeeded', 'execution_failed'));
 
 -- ============================================================
--- 3. SINGLE TRANSFER-PREPARATION AUTHORITY (read-only classifier). Earning-
---    scoped; shared by preview and execution. It mirrors the claim_plan_transfers
---    eligibility predicate for the LOCAL side, and treats provider state with
---    maximum caution: a NULL local provider id NEVER means the provider transfer
---    is absent. Exposes only support-safe facts — no destination account id, no
---    idempotency key value, no provider payloads, no bank/card/token data.
+-- 3. SINGLE TRANSFER-REVIEW AUTHORITY (read-only classifier). Earning-scoped;
+--    shared by preview and execution. Local eligibility mirrors the audited
+--    claim_plan_transfers predicate; provider state is treated with maximum
+--    caution. Exposes only support-safe facts — no destination account id, no
+--    idempotency-key value, no provider payloads, no bank/card/token data.
 -- ============================================================
 create or replace function app_private.classify_scoped_transfer(p_earning_id uuid, p_as_of timestamptz default now())
 returns jsonb language plpgsql stable security definer set search_path = '' as $$
@@ -102,7 +99,6 @@ declare
   e public.companion_earnings;
   ta public.companion_transfer_attempts;
   v_order_ok boolean; v_period_ok boolean; v_connect_ok boolean; v_currency_ok boolean;
-  v_issue boolean; v_hold boolean;
   v_outcome text; v_reason text; v_eligible boolean := false; v_lookup boolean := false;
   v_reasons text[] := '{}';
 begin
@@ -139,6 +135,11 @@ begin
     -- C1 boundary: no retry-state change, no re-claim. The provider retry (with
     -- a fresh pre-creation lookup) is Stage 3C2-C2.
     v_outcome := 'retryable_failure'; v_reason := 'retry_deferred_to_provider_stage';
+  elsif ta.id is not null and ta.state = 'queued' then
+    -- A queued attempt (from any earlier path) is PROVIDER-CONSUMABLE by the
+    -- global claim upsert, so it is treated as awaiting the C2 controlled flow —
+    -- C1 neither creates nor mutates such rows.
+    v_outcome := 'eligible_provider_action_required'; v_reason := 'existing_queued_attempt';
   elsif e.state = 'held_for_issue' then
     v_outcome := 'held_for_issue'; v_reason := 'earning_held_for_issue';
   elsif exists (select 1 from public.conversation_issues i
@@ -168,16 +169,15 @@ begin
       v_outcome := 'connect_not_ready'; v_reason := 'billing_period_unpaid';
     elsif not v_connect_ok or e.currency <> 'GBP' then
       v_outcome := 'connect_not_ready'; v_reason := 'destination_not_ready';
-    elsif ta.id is not null and ta.state = 'queued' then
-      v_outcome := 'prepared_for_provider'; v_reason := 'already_prepared';   -- idempotent repeat
     else
-      v_outcome := 'eligible_for_preparation'; v_eligible := true; v_reason := 'ready_for_local_preparation';
+      -- Fully eligible. C1 records the review outcome ONLY — it does not create
+      -- an attempt, queue provider work or stage anything for a worker.
+      v_outcome := 'eligible_provider_action_required'; v_eligible := true;
+      v_reason := 'ready_for_provider_stage';
     end if;
   end if;
 
-  if not v_eligible and v_outcome <> 'prepared_for_provider' then
-    v_reasons := array_append(v_reasons, v_outcome);
-  end if;
+  if not v_eligible then v_reasons := array_append(v_reasons, v_outcome); end if;
 
   return jsonb_build_object(
     'id', p_earning_id, 'found', true, 'outcome', v_outcome, 'eligible', v_eligible,
@@ -188,11 +188,10 @@ begin
     'destination_ready', app_private.companion_payments_ready(e.companion_profile_id),
     'provider_id_present', (ta.id is not null and ta.stripe_transfer_id is not null),
     'idempotency_key_present', (ta.id is not null),
+    'stable_key_derivable', true,           -- 'transfer-<earning>' is deterministic; NOT persisted in C1
     'provider_lookup_required', v_lookup,
     'reason_code', v_reason,
-    'expected_next_state', case when v_eligible then 'queued_attempt'
-                                when v_outcome = 'prepared_for_provider' then 'queued_attempt'
-                                else e.transfer_state end,
+    'expected_next_state', case when v_eligible then 'provider_stage_required' else e.transfer_state end,
     'blocking_reasons', to_jsonb(v_reasons),
     'blocked_by_open_issue', (v_reason = 'open_conversation_issue'),
     'blocked_by_dispute', false,
@@ -203,9 +202,12 @@ revoke all on function app_private.classify_scoped_transfer(uuid, timestamptz) f
 grant execute on function app_private.classify_scoped_transfer(uuid, timestamptz) to service_role;
 
 -- ============================================================
--- 4. THE RECORD-SCOPED TRANSFER-PREPARATION EXECUTOR. Database-only; NEVER calls
---    a provider, worker or finalisation RPC. Inert without the wrapper's
---    transaction-local context. Revoked from every client role AND service_role.
+-- 4. THE RECORD-SCOPED TRANSFER-REVIEW EXECUTOR. READ-ONLY towards every
+--    financial row: it performs NO INSERT/UPDATE/DELETE on
+--    companion_transfer_attempts and NO mutation of companion_earnings. Its only
+--    durable output is the run-item review ledger + deduplicated events. Inert
+--    without the wrapper's transaction-local context; revoked from every client
+--    role AND service_role.
 -- ============================================================
 create or replace function app_private.execute_scoped_transfer_preparation(p_run_id uuid)
 returns jsonb language plpgsql security definer set search_path = '' as $$
@@ -213,9 +215,9 @@ declare
   v_run public.financial_operation_runs;
   v_env text; v_ctrl text; v_max int;
   v_as_of timestamptz;
-  v_rec record; v_cls jsonb; e public.companion_earnings; v_dest text; v_ins uuid;
-  v_outcome text; v_reason text; v_before text; v_after text; v_details jsonb; v_event text;
-  v_requested int := 0; v_prepared int := 0; v_lookup int := 0; v_already int := 0;
+  v_rec record; v_cls jsonb; v_before text;
+  v_outcome text; v_reason text; v_details jsonb; v_event text;
+  v_requested int := 0; v_review int := 0; v_lookup int := 0; v_already int := 0;
   v_skipped int := 0; v_failed int := 0;
   v_run_state text; v_summary_action text;
 begin
@@ -264,7 +266,7 @@ begin
     insert into public.financial_operation_run_events (run_id, action, actor_account_id) values (p_run_id, 'execution_started', auth.uid());
   end if;
 
-  -- --- PER-EARNING execution over the DEDUPLICATED, explicitly-scoped ids ONLY.
+  -- --- PER-EARNING review over the DEDUPLICATED, explicitly-scoped ids ONLY.
   for v_rec in
     select id, row_number() over (order by first_pos) as ordinal
     from (select u.id, min(u.pos) as first_pos
@@ -272,57 +274,34 @@ begin
            group by u.id) d
   loop
     v_requested := v_requested + 1;
-    v_outcome := null; v_reason := null; v_before := null; v_after := null; v_details := '{}'::jsonb;
+    v_outcome := null; v_reason := null; v_before := null; v_details := '{}'::jsonb;
     begin
-      -- Lock the earning (serialises racing runs); classify UNDER the lock.
-      select * into e from public.companion_earnings where id = v_rec.id for update;
-      v_before := case when e.id is null then null else e.state || '/' || e.transfer_state end;
+      -- Lock the earning ONLY for deterministic classification (no mutation).
+      perform 1 from public.companion_earnings where id = v_rec.id for update;
+      select e.state || '/' || e.transfer_state into v_before from public.companion_earnings e where e.id = v_rec.id;
       v_cls := app_private.classify_scoped_transfer(v_rec.id, v_as_of);
       v_outcome := v_cls->>'outcome';
       v_reason  := v_cls->>'reason_code';
 
-      if v_outcome = 'eligible_for_preparation' then
-        -- THE narrow safe C1 mutation: one 'queued' attempt with the deterministic
-        -- idempotency key. unique(earning_id) is the final concurrency boundary:
-        -- a race loser inserts nothing and reclassifies. NO earning mutation, NO
-        -- processing reset, NO second attempt, NO provider/finalisation call.
-        select ca.stripe_account_id into v_dest
-          from public.connected_accounts ca where ca.account_id = e.companion_account_id;
-        insert into public.companion_transfer_attempts
-          (earning_id, companion_account_id, companion_profile_id, connected_account_id,
-           amount_minor, currency, state, attempt_count, idempotency_key)
-        values (v_rec.id, e.companion_account_id, e.companion_profile_id, v_dest,
-                e.net_minor, 'GBP', 'queued', 0, 'transfer-' || v_rec.id::text)
-        on conflict (earning_id) do nothing
-        returning id into v_ins;
-        if v_ins is null then
-          -- Raced: an attempt appeared between classify and insert — reclassify.
-          v_cls := app_private.classify_scoped_transfer(v_rec.id, v_as_of);
-          v_outcome := v_cls->>'outcome'; v_reason := v_cls->>'reason_code';
-        else
-          v_outcome := 'prepared_for_provider'; v_reason := 'queued_attempt_created';
-        end if;
-      end if;
-
-      select case when e2.id is null then null else e2.state || '/' || e2.transfer_state end
-        into v_after from public.companion_earnings e2 where e2.id = v_rec.id;
+      -- Safe review details only: proposed money facts + readiness booleans +
+      -- lookup requirement + key derivability. NO key value, NO destination id,
+      -- and NOTHING is persisted into the live transfer-attempt table.
       v_details := jsonb_build_object(
-        'attempt_id', coalesce(v_ins, (v_cls->>'attempt_id')::uuid),
-        'attempt_state', coalesce((select ta.state from public.companion_transfer_attempts ta where ta.earning_id = v_rec.id), null),
-        'amount_minor', v_cls->'amount_minor', 'currency', v_cls->>'currency',
-        'transfer_state', v_cls->>'transfer_state',
+        'proposed_amount_minor', v_cls->'amount_minor', 'currency', v_cls->>'currency',
+        'transfer_state', v_cls->>'transfer_state', 'attempt_state', v_cls->>'attempt_state',
+        'destination_ready', v_cls->'destination_ready',
         'provider_id_present', v_cls->'provider_id_present',
         'provider_lookup_required', v_cls->'provider_lookup_required',
         'idempotency_key_present', v_cls->'idempotency_key_present',
-        'destination_ready', v_cls->'destination_ready');
+        'stable_key_derivable', v_cls->'stable_key_derivable');
 
       insert into public.financial_operation_run_items
         (run_id, operation_type, record_id, ordinal, outcome, reason_code, before_state, after_state, attempted_at, completed_at, safe_details)
-      values (p_run_id, 'transfer_claim', v_rec.id, v_rec.ordinal, v_outcome, v_reason, v_before, v_after, now(), now(), v_details)
+      values (p_run_id, 'transfer_claim', v_rec.id, v_rec.ordinal, v_outcome, v_reason, v_before, v_before, now(), now(), v_details)
       on conflict (run_id, record_id) do nothing;
 
       v_event := case v_outcome
-        when 'prepared_for_provider' then 'item_prepared'
+        when 'eligible_provider_action_required' then 'item_review_required'
         when 'provider_lookup_required' then 'item_provider_lookup_required'
         when 'failed' then 'item_failed'
         else 'item_skipped' end;
@@ -339,36 +318,35 @@ begin
       insert into public.financial_operation_run_events (run_id, action, record_id, actor_account_id, detail)
       values (p_run_id, 'item_failed', v_rec.id, auth.uid(), jsonb_build_object('outcome', 'failed', 'reason_code', v_reason));
     end;
-    v_ins := null;
 
-    if v_outcome = 'prepared_for_provider' and v_reason = 'queued_attempt_created' then v_prepared := v_prepared + 1;
+    if v_outcome = 'eligible_provider_action_required' then v_review := v_review + 1;
     elsif v_outcome = 'provider_lookup_required' then v_lookup := v_lookup + 1;
-    elsif v_outcome in ('already_transferred', 'already_processing', 'prepared_for_provider') then v_already := v_already + 1;
+    elsif v_outcome in ('already_transferred', 'already_processing') then v_already := v_already + 1;
     elsif v_outcome = 'failed' then v_failed := v_failed + 1;
     else v_skipped := v_skipped + 1;
     end if;
   end loop;
 
-  v_run_state := case when v_failed > 0 and v_prepared = 0 and v_already = 0 and v_lookup = 0 then 'failed' else 'completed' end;
+  v_run_state := case when v_failed > 0 and v_review = 0 and v_already = 0 and v_lookup = 0 then 'failed' else 'completed' end;
   v_summary_action := case
-    when v_failed > 0 and v_prepared = 0 and v_already = 0 and v_lookup = 0 then 'execution_failed'
+    when v_failed > 0 and v_review = 0 and v_already = 0 and v_lookup = 0 then 'execution_failed'
     when v_failed > 0 or v_skipped > 0 or v_lookup > 0 then 'execution_partially_succeeded'
     else 'execution_succeeded' end;
   update public.financial_operation_runs
      set state = v_run_state, executed_at = now(), completed_at = now(),
-         rows_examined = v_requested, rows_eligible = v_prepared,
-         rows_claimed = v_prepared, rows_succeeded = v_prepared + v_already, rows_failed = v_failed,
+         rows_examined = v_requested, rows_eligible = v_review,
+         rows_claimed = 0, rows_succeeded = v_review + v_already, rows_failed = v_failed,
          result_summary = jsonb_build_object('executed_at', now(), 'as_of', v_as_of,
-           'requested_count', v_requested, 'prepared_count', v_prepared, 'lookup_required_count', v_lookup,
+           'requested_count', v_requested, 'review_required_count', v_review, 'lookup_required_count', v_lookup,
            'already_done_count', v_already, 'skipped_count', v_skipped, 'failed_count', v_failed)
    where id = p_run_id;
   insert into public.financial_operation_run_events (run_id, action, actor_account_id, detail)
     values (p_run_id, v_summary_action, auth.uid(),
-            jsonb_build_object('prepared', v_prepared, 'lookup_required', v_lookup, 'already', v_already,
+            jsonb_build_object('review_required', v_review, 'lookup_required', v_lookup, 'already', v_already,
                                'skipped', v_skipped, 'failed', v_failed));
 
   return jsonb_build_object('ok', v_failed = 0, 'executed', true, 'run_id', p_run_id, 'operation_type', 'transfer_claim',
-    'state', v_run_state, 'requested_count', v_requested, 'prepared_count', v_prepared,
+    'state', v_run_state, 'requested_count', v_requested, 'review_required_count', v_review,
     'lookup_required_count', v_lookup, 'already_done_count', v_already,
     'skipped_count', v_skipped, 'failed_count', v_failed);
 end;
@@ -430,8 +408,8 @@ begin
     perform app_private.begin_scoped_operation_execution(p_run_id, 'plan_renewal');
     return app_private.execute_scoped_plan_renewal(p_run_id);
   end if;
-  -- Stage 3C2-C1: transfer PREPARATION (database-only; no provider call). Every
-  -- other operation type remains deferred to a later stage.
+  -- Stage 3C2-C1: transfer REVIEW (database-read-only; no provider-consumable
+  -- state). Every other operation type remains deferred to a later stage.
   if v_control = 'transfer_claim' then
     perform app_private.begin_scoped_operation_execution(p_run_id, 'transfer_claim');
     return app_private.execute_scoped_transfer_preparation(p_run_id);
