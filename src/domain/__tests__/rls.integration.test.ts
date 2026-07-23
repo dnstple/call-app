@@ -7285,6 +7285,21 @@ describe.skipIf(!enabled)('Stage 3C1 financial operations control plane (require
     const earningId = requireUuid((await cAdmin.from('companion_earnings').select('id').eq('booking_id', bookingId).single()).data!.id, '3c1 earning');
     return { bookingId, earningId, orderId };
   }
+  // A MATURE, genuinely releasable earning under the authoritative 0075 model:
+  // took_place is declared while the booking is still <12h old (so the earning
+  // stays pending_completion), THEN the booking is aged so it ended >12h ago.
+  // Both timestamps move together to honour bookings' (starts_at < ends_at) AND
+  // (ends_at = starts_at + duration) check constraints — updating ends_at ALONE is
+  // rejected by those constraints and silently leaves the booking immature, which
+  // is exactly why the pre-fix "eligible" fixtures classified as not_yet_eligible.
+  async function makeEligibleEarning(): Promise<{ bookingId: string; earningId: string; orderId: string }> {
+    const f = await makeEarning();
+    const end = new Date(Date.now() - 13 * 3600_000);
+    const start = new Date(end.getTime() - 30 * 60_000);
+    const upd = await cAdmin.from('bookings').update({ starts_at: start.toISOString(), ends_at: end.toISOString() }).eq('id', f.bookingId).select('id');
+    if (upd.error || (upd.data ?? []).length !== 1) throw new Error(`3c1 maturation failed: ${JSON.stringify(upd.error)}`);
+    return f;
+  }
   async function request(c: SupabaseClient, args: Record<string, unknown>) { return rpc(c, 'support_request_operation_run', args); }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const track = (r: any): any => { if (r?.data?.run_id) runIdsMade.push(r.data.run_id); return r; };
@@ -7390,7 +7405,7 @@ describe.skipIf(!enabled)('Stage 3C1 financial operations control plane (require
 
   // ---- previews (11–20, 43) ----
   it('11+12+13+14+43. preview creates no financial mutation, claims nothing, and reports eligibility', async () => {
-    const f = await makeEarning();
+    const f = await makeEligibleEarning();   // genuinely eligible under the authoritative 0075 model
     const beforeE = (await cAdmin.from('companion_earnings').select('state, updated_at').eq('id', f.earningId).single()).data!;
     const req = track(await request(cOps, { p_operation_type: 'earning_release', p_execution_mode: 'preview', p_scope_type: 'record_ids', p_scoped_ids: [f.earningId], p_batch_limit: null, p_reason: 'preview check' }));
     expect(req.error, JSON.stringify(req.error)).toBeNull();
@@ -7547,22 +7562,27 @@ describe.skipIf(!enabled)('Stage 3C1 financial operations control plane (require
 
   it('34+36. scoped_execution runs one fixture earning; repeated execution is idempotent; server_filter is out of scope', async () => {
     controlsTouched.add('earning_release');
-    await rpc(cOps, 'support_set_financial_control', { p_control: 'earning_release', p_expected_state: 'disabled', p_new_state: 'scoped_execution', p_reason: 'fixture run' });
-    const f = await makeEarning();
-    const req = track(await request(cOps, { p_operation_type: 'earning_release', p_execution_mode: 'execute_scoped', p_scope_type: 'record_ids', p_scoped_ids: [f.earningId], p_batch_limit: null, p_reason: 'fixture' }));
-    await rpc(cOps, 'support_preview_operation_run', { p_run_id: req.data.run_id });
-    expect((await rpc(cOps, 'support_confirm_operation_run', { p_run_id: req.data.run_id, p_confirmation_token: req.data.confirmation_token })).error).toBeNull();
-    const ex1 = await rpc(cOps, 'support_execute_operation_run', { p_run_id: req.data.run_id, p_confirmation_token: req.data.confirmation_token });
-    expect(ex1.error, JSON.stringify(ex1.error)).toBeNull();
-    expect(ex1.data.succeeded).toBe(1);
-    expect((await cAdmin.from('companion_earnings').select('state').eq('id', f.earningId).single()).data!.state).toBe('payable');
-    const ex2 = await rpc(cOps, 'support_execute_operation_run', { p_run_id: req.data.run_id, p_confirmation_token: req.data.confirmation_token });
-    expect(ex2.data.already_executed).toBe(true);
-    const sf = track(await request(cOps, { p_operation_type: 'earning_release', p_execution_mode: 'execute_batch', p_scope_type: 'server_filter', p_scoped_ids: [], p_batch_limit: 5, p_reason: 'x' }));
-    await rpc(cOps, 'support_preview_operation_run', { p_run_id: sf.data.run_id });
-    await rpc(cOps, 'support_confirm_operation_run', { p_run_id: sf.data.run_id, p_confirmation_token: sf.data.confirmation_token });
-    expect(JSON.stringify((await rpc(cOps, 'support_execute_operation_run', { p_run_id: sf.data.run_id, p_confirmation_token: sf.data.confirmation_token })).error)).toMatch(/scope_required/);
-    await rpc(cOps, 'support_set_financial_control', { p_control: 'earning_release', p_expected_state: 'scoped_execution', p_new_state: 'disabled', p_reason: 'reset' });
+    const f = await makeEligibleEarning();   // MATURE: released only if the control permits (not because it's ineligible)
+    try {
+      await rpc(cOps, 'support_set_financial_control', { p_control: 'earning_release', p_expected_state: 'disabled', p_new_state: 'scoped_execution', p_reason: 'fixture run' });
+      const req = track(await request(cOps, { p_operation_type: 'earning_release', p_execution_mode: 'execute_scoped', p_scope_type: 'record_ids', p_scoped_ids: [f.earningId], p_batch_limit: null, p_reason: 'fixture' }));
+      await rpc(cOps, 'support_preview_operation_run', { p_run_id: req.data.run_id });
+      expect((await rpc(cOps, 'support_confirm_operation_run', { p_run_id: req.data.run_id, p_confirmation_token: req.data.confirmation_token })).error).toBeNull();
+      const ex1 = await rpc(cOps, 'support_execute_operation_run', { p_run_id: req.data.run_id, p_confirmation_token: req.data.confirmation_token });
+      expect(ex1.error, JSON.stringify(ex1.error)).toBeNull();
+      // 0075 result shape: released_count (the 0074 alias `succeeded` was renamed; the
+      // production repository reads `released_count ?? succeeded`, so this is test-only).
+      expect(ex1.data.released_count).toBe(1);
+      expect((await cAdmin.from('companion_earnings').select('state').eq('id', f.earningId).single()).data!.state).toBe('payable');
+      const ex2 = await rpc(cOps, 'support_execute_operation_run', { p_run_id: req.data.run_id, p_confirmation_token: req.data.confirmation_token });
+      expect(ex2.data.already_executed).toBe(true);
+      const sf = track(await request(cOps, { p_operation_type: 'earning_release', p_execution_mode: 'execute_batch', p_scope_type: 'server_filter', p_scoped_ids: [], p_batch_limit: 5, p_reason: 'x' }));
+      await rpc(cOps, 'support_preview_operation_run', { p_run_id: sf.data.run_id });
+      await rpc(cOps, 'support_confirm_operation_run', { p_run_id: sf.data.run_id, p_confirmation_token: sf.data.confirmation_token });
+      expect(JSON.stringify((await rpc(cOps, 'support_execute_operation_run', { p_run_id: sf.data.run_id, p_confirmation_token: sf.data.confirmation_token })).error)).toMatch(/scope_required/);
+    } finally {
+      await rpc(cOps, 'support_set_financial_control', { p_control: 'earning_release', p_expected_state: 'scoped_execution', p_new_state: 'disabled', p_reason: 'reset' });
+    }
   });
 
   it('35. transfer/refund/renewal/reconciliation execution remains stage_not_enabled (scoped impl is Stage 3C2)', async () => {
@@ -7579,6 +7599,13 @@ describe.skipIf(!enabled)('Stage 3C1 financial operations control plane (require
   });
 
   it('ENV. enabling any control is rejected outside production_live; the env + master RPCs are phrase-gated', async () => {
+    // Begin from a KNOWN-disabled control via the sanctioned RPC rather than trusting
+    // a previous test to have cleaned up (cause C: a failed earlier test could leave
+    // earning_release in scoped_execution). Restore only if needed; never set enabled.
+    const cur = (await cAdmin.from('financial_operation_controls').select('state').eq('control_name', 'earning_release').single()).data!.state as string;
+    if (cur !== 'disabled') {
+      await rpc(cOps, 'support_set_financial_control', { p_control: 'earning_release', p_expected_state: cur, p_new_state: 'disabled', p_reason: 'env test reset' });
+    }
     // Point 6: enabled is rejected in hosted_test. Point 1: no test ever enables a control.
     expect(JSON.stringify((await rpc(cOps, 'support_set_financial_control', { p_control: 'earning_release', p_expected_state: 'disabled', p_new_state: 'enabled', p_reason: 'x' })).error)).toMatch(/enabled_requires_production_live/);
     expect((await cAdmin.from('financial_operation_controls').select('state').eq('control_name', 'earning_release').single()).data!.state, 'control unchanged').toBe('disabled');
@@ -7712,26 +7739,31 @@ describe.skipIf(!enabled)('Stage 3C1 financial operations control plane (require
   });
 
   it('SCOPE: an approved run scoped to earning A releases A only; earning B is never touched; expired control blocks', async () => {
-    const a = await makeEarning(); const b = await makeEarning();
-    await setControl('earning_release', 'scoped_execution');
-    const run = track(await request(cOps, { p_operation_type: 'earning_release', p_execution_mode: 'execute_scoped', p_scope_type: 'record_ids', p_scoped_ids: [a.earningId], p_batch_limit: null, p_reason: 'scope A' }));
-    await rpc(cOps, 'support_preview_operation_run', { p_run_id: run.data.run_id });
-    await rpc(cOps, 'support_confirm_operation_run', { p_run_id: run.data.run_id, p_confirmation_token: run.data.confirmation_token });
-    await rpc(cOps, 'support_execute_operation_run', { p_run_id: run.data.run_id, p_confirmation_token: run.data.confirmation_token });
-    expect((await cAdmin.from('companion_earnings').select('state').eq('id', b.earningId).single()).data!.state, 'B out of scope').toBe('pending_completion');
-    expect((await cAdmin.from('companion_earnings').select('state').eq('id', a.earningId).single()).data!.state, 'A released via approved run').toBe('payable');
-    // Expiry: a scoped_execution control with a PAST expiry reads as 'disabled', so a
-    // subsequent approved run's execution is refused (control_disabled). No 'enabled' used.
-    await cAdmin.from('financial_operation_controls').update({ expires_at: new Date(Date.now() - 60_000).toISOString() }).eq('control_name', 'earning_release');
-    const c = await makeEarning();
-    const run2 = track(await request(cOps, { p_operation_type: 'earning_release', p_execution_mode: 'execute_scoped', p_scope_type: 'record_ids', p_scoped_ids: [c.earningId], p_batch_limit: null, p_reason: 'expired' }));
-    await rpc(cOps, 'support_preview_operation_run', { p_run_id: run2.data.run_id });
-    await rpc(cOps, 'support_confirm_operation_run', { p_run_id: run2.data.run_id, p_confirmation_token: run2.data.confirmation_token });
-    const exExpired = await rpc(cOps, 'support_execute_operation_run', { p_run_id: run2.data.run_id, p_confirmation_token: run2.data.confirmation_token });
-    expect(exExpired.data?.code, 'expired control ⇒ structured control_disabled block').toBe('control_disabled');
-    expect((await cAdmin.from('companion_earnings').select('state').eq('id', c.earningId).single()).data!.state).toBe('pending_completion');
-    // Clear the past expiry back to a clean disabled control.
-    await cAdmin.from('financial_operation_controls').update({ state: 'disabled', expires_at: null }).eq('control_name', 'earning_release');
+    // BOTH A and B are genuinely eligible so scope isolation (not ineligibility) is
+    // what leaves B untouched; C is eligible so the EXPIRED CONTROL is what blocks it.
+    const a = await makeEligibleEarning(); const b = await makeEligibleEarning();
+    try {
+      await setControl('earning_release', 'scoped_execution');
+      const run = track(await request(cOps, { p_operation_type: 'earning_release', p_execution_mode: 'execute_scoped', p_scope_type: 'record_ids', p_scoped_ids: [a.earningId], p_batch_limit: null, p_reason: 'scope A' }));
+      await rpc(cOps, 'support_preview_operation_run', { p_run_id: run.data.run_id });
+      await rpc(cOps, 'support_confirm_operation_run', { p_run_id: run.data.run_id, p_confirmation_token: run.data.confirmation_token });
+      await rpc(cOps, 'support_execute_operation_run', { p_run_id: run.data.run_id, p_confirmation_token: run.data.confirmation_token });
+      expect((await cAdmin.from('companion_earnings').select('state').eq('id', b.earningId).single()).data!.state, 'B out of scope').toBe('pending_completion');
+      expect((await cAdmin.from('companion_earnings').select('state').eq('id', a.earningId).single()).data!.state, 'A released via approved run').toBe('payable');
+      // Expiry: a scoped_execution control with a PAST expiry reads as 'disabled', so a
+      // subsequent approved run's execution is refused (control_disabled). No 'enabled' used.
+      await cAdmin.from('financial_operation_controls').update({ expires_at: new Date(Date.now() - 60_000).toISOString() }).eq('control_name', 'earning_release');
+      const c = await makeEligibleEarning();   // genuinely eligible ⇒ only the expired control blocks it
+      const run2 = track(await request(cOps, { p_operation_type: 'earning_release', p_execution_mode: 'execute_scoped', p_scope_type: 'record_ids', p_scoped_ids: [c.earningId], p_batch_limit: null, p_reason: 'expired' }));
+      await rpc(cOps, 'support_preview_operation_run', { p_run_id: run2.data.run_id });
+      await rpc(cOps, 'support_confirm_operation_run', { p_run_id: run2.data.run_id, p_confirmation_token: run2.data.confirmation_token });
+      const exExpired = await rpc(cOps, 'support_execute_operation_run', { p_run_id: run2.data.run_id, p_confirmation_token: run2.data.confirmation_token });
+      expect(exExpired.data?.code, 'expired control ⇒ structured control_disabled block').toBe('control_disabled');
+      expect((await cAdmin.from('companion_earnings').select('state').eq('id', c.earningId).single()).data!.state).toBe('pending_completion');
+    } finally {
+      // Clear the past expiry back to a clean disabled control.
+      await cAdmin.from('financial_operation_controls').update({ state: 'disabled', expires_at: null }).eq('control_name', 'earning_release');
+    }
   });
 
   it('THROW-SAFETY: a run that throws mid-flight leaves NO control enabled and every control disabled', async () => {
@@ -7848,14 +7880,83 @@ describe.skipIf(!enabled)('Stage 3C2-A scoped earning release (requires live Sup
     const earningId = requireUuid((await cAdmin.from('companion_earnings').select('id').eq('booking_id', bookingId).single()).data!.id, '3c2 earning');
     return { bookingId, earningId, orderId };
   }
-  // An ELIGIBLE pending earning: age the booking past the 12h payable wait (the
-  // earning is still pending_completion because submit ran while <12h).
-  async function makeEligible(): Promise<{ bookingId: string; earningId: string; orderId: string }> {
+  // A fully mature, genuinely releasable earning under the authoritative 0075
+  // classifier: confirmed booking, ended >12h ago, took_place declaration, earning
+  // pending_completion, no open issue, no evidence hold, no transfer.
+  //
+  // took_place is declared while the booking is still <12h old (so submit does NOT
+  // auto-release it and it stays pending_completion), THEN both timestamps are aged
+  // together so the booking ended >12h ago. Moving ends_at ALONE violates bookings'
+  // (starts_at < ends_at) AND (ends_at = starts_at + duration) check constraints and
+  // is REJECTED — which silently left the old fixture immature (⇒ not_yet_eligible).
+  async function makeEligibleEarningFixture3c2a(): Promise<{ bookingId: string; earningId: string; orderId: string }> {
     const f = await makeEarning();
-    await cAdmin.from('bookings').update({ ends_at: new Date(Date.now() - 13 * 3600_000).toISOString() }).eq('id', f.bookingId);
+    const end = new Date(Date.now() - 13 * 3600_000);
+    const start = new Date(end.getTime() - 30 * 60_000);
+    const upd = await cAdmin.from('bookings').update({ starts_at: start.toISOString(), ends_at: end.toISOString() }).eq('id', f.bookingId).select('id');
+    if (upd.error || (upd.data ?? []).length !== 1) throw new Error(`3c2 maturation failed: ${JSON.stringify(upd.error)}`);
+    return f;
+  }
+  const makeEligible = makeEligibleEarningFixture3c2a;   // alias used across this block
+  // Derived helpers. issue/evidence FIRST satisfy the wait + declaration (mature),
+  // THEN add the hold — otherwise not_yet_eligible correctly precedes and the test
+  // would not actually prove the issue/evidence condition.
+  async function makeIssueHeldEligibleEarningFixture() {
+    const f = await makeEligibleEarningFixture3c2a();
+    const r = await cAdmin.from('conversation_issues').insert({ booking_id: f.bookingId, reporter_account_id: coordAcct, category: 'audio_video_problem', state: 'open', idempotency_key: `3c2-iss-${f.bookingId}` }).select('booking_id');
+    if (r.error || !(r.data ?? []).length) throw new Error(`issue fixture insert failed: ${JSON.stringify(r.error)}`);
+    return f;
+  }
+  async function makeEvidenceHeldEligibleEarningFixture() {
+    const f = await makeEligibleEarningFixture3c2a();
+    const r = await cAdmin.from('companion_evidence_payout_reviews').insert({ booking_id: f.bookingId, conflict_code: 'companion_not_observed', state: 'active', support_touched: false, first_detected_at: new Date().toISOString(), last_detected_at: new Date().toISOString() }).select('booking_id');
+    if (r.error || !(r.data ?? []).length) throw new Error(`evidence fixture insert failed: ${JSON.stringify(r.error)}`);
+    return f;
+  }
+  const makeBeforeWaitEarningFixture = makeEarning;   // <12h, took_place ⇒ not_yet_eligible
+  async function makeMissingDeclarationEarningFixture() {
+    // Mature booking but NO took_place declaration ⇒ not_yet_eligible. Build the
+    // pending earning first (needs a declaration), then remove the attendance row and
+    // age the booking so only the missing declaration keeps it ineligible.
+    const f = await makeEligibleEarningFixture3c2a();
+    await cAdmin.from('conversation_attendance').delete().eq('booking_id', f.bookingId);
+    return f;
+  }
+  async function makeAlreadyPayableEarningFixture() {
+    const f = await makeEligibleEarningFixture3c2a();
+    await cAdmin.from('companion_earnings').update({ state: 'payable', payable_at: new Date().toISOString() }).eq('id', f.earningId);
+    return f;
+  }
+  async function makeReversedEarningFixture() {
+    const f = await makeEligibleEarningFixture3c2a();
+    await cAdmin.from('companion_earnings').update({ state: 'reversed', transfer_state: 'reversed' }).eq('id', f.earningId);
+    return f;
+  }
+  async function makeTransferStartedEarningFixture() {
+    const f = await makeEligibleEarningFixture3c2a();
+    await cAdmin.from('companion_earnings').update({ state: 'payable', transfer_state: 'processing', payable_at: new Date().toISOString() }).eq('id', f.earningId);
     return f;
   }
   const stateOf = async (id: string) => (await cAdmin.from('companion_earnings').select('state').eq('id', id).single()).data!.state as string;
+  // Diagnostic: dump the full eligibility picture for an earning expected to release,
+  // INCLUDING the classifier's verdict via the sanctioned preview path (the classifier
+  // is app_private/service-only and never granted to browser roles). Never hides
+  // reason codes or database errors.
+  async function dumpEligibility(label: string, bookingId: string, earningId: string): Promise<string> {
+    const bk = (await cAdmin.from('bookings').select('status, starts_at, ends_at').eq('id', bookingId).single()).data;
+    const nowIso = new Date().toISOString();
+    const att = (await cAdmin.from('conversation_attendance').select('outcome, source').eq('booking_id', bookingId)).data ?? [];
+    const e = (await cAdmin.from('companion_earnings').select('state, transfer_state').eq('id', earningId).single()).data;
+    const issues = (await cAdmin.from('conversation_issues').select('state').eq('booking_id', bookingId)).data ?? [];
+    const rq = await rpc(cOps, 'support_request_operation_run', { p_operation_type: 'earning_release', p_execution_mode: 'preview', p_scope_type: 'record_ids', p_scoped_ids: [earningId], p_batch_limit: null, p_reason: 'diag' });
+    if (rq.data?.run_id) runIdsMade.push(rq.data.run_id);
+    const prev = rq.data?.run_id ? await rpc(cOps, 'support_preview_operation_run', { p_run_id: rq.data.run_id }) : { data: null, error: rq.error };
+    const row = (prev.data?.rows as Array<Record<string, unknown>> | undefined)?.[0];
+    return `\n[eligibility:${label}] booking.status=${bk?.status} ends_at=${bk?.ends_at} now=${nowIso} ` +
+      `attendance=${JSON.stringify(att)} earning.state=${e?.state} transfer_state=${e?.transfer_state} ` +
+      `openIssues=${issues.filter((i) => (i as { state: string }).state !== 'resolved').length} ` +
+      `classify=${JSON.stringify(row)} previewError=${JSON.stringify(prev.error)}`;
+  }
   async function reqRun(ids: string[], mode: 'preview' | 'execute_scoped' = 'execute_scoped') {
     const r = await rpc(cOps, 'support_request_operation_run', { p_operation_type: 'earning_release', p_execution_mode: mode, p_scope_type: 'record_ids', p_scoped_ids: ids, p_batch_limit: null, p_reason: '3c2 test' });
     if (r.data?.run_id) runIdsMade.push(r.data.run_id);
@@ -7928,26 +8029,27 @@ describe.skipIf(!enabled)('Stage 3C2-A scoped earning release (requires live Sup
 
   it('2+6. support requests a run with one fixture earning; duplicate ids are deterministically deduplicated', async () => {
     const f = await makeEligible();
-    await setControl('scoped_execution');
-    const { ex } = await previewConfirmExecute([f.earningId, f.earningId, f.earningId]);   // 3 dups → 1 distinct
-    expect(ex.error, JSON.stringify(ex.error)).toBeNull();
-    expect(ex.data.requested_count).toBe(1);
-    expect(ex.data.released_count).toBe(1);
-    await setControl('disabled');
+    try {
+      await setControl('scoped_execution');
+      const { ex } = await previewConfirmExecute([f.earningId, f.earningId, f.earningId]);   // 3 dups → 1 distinct
+      expect(ex.error, JSON.stringify(ex.error)).toBeNull();
+      expect(ex.data.requested_count).toBe(1);
+      expect(ex.data.released_count, await dumpEligibility('2+6', f.bookingId, f.earningId)).toBe(1);
+    } finally {
+      await setControl('disabled');
+    }
   }, 60_000);
 
   it('7+8+9+10. preview reports per-id eligibility (eligible / not_found / issue_held / evidence_held) with NO mutation', async () => {
     const elig = await makeEligible();
-    const iss = await makeEligible();
-    await cAdmin.from('conversation_issues').insert({ booking_id: iss.bookingId, reporter_account_id: coordAcct, category: 'audio_video_problem', state: 'open', idempotency_key: `3c2-iss-${iss.bookingId}` });
-    const ev = await makeEligible();
-    await cAdmin.from('companion_evidence_payout_reviews').insert({ booking_id: ev.bookingId, conflict_code: 'companion_not_observed', state: 'active', support_touched: false, first_detected_at: new Date().toISOString(), last_detected_at: new Date().toISOString() });
+    const iss = await makeIssueHeldEligibleEarningFixture();   // mature THEN open issue
+    const ev = await makeEvidenceHeldEligibleEarningFixture(); // mature THEN evidence hold
     const before = await Promise.all([elig, iss, ev].map((x) => stateOf(x.earningId)));
     const rq = await reqRun([elig.earningId, iss.earningId, ev.earningId, '00000000-0000-0000-0000-000000000000'], 'preview');
     const prev = await rpc(cOps, 'support_preview_operation_run', { p_run_id: rq.data.run_id });
     const rows = prev.data.rows as Array<{ id: string; eligible: boolean; blocking_reasons: string[]; blocked_by_open_issue: boolean; blocked_by_evidence_hold: boolean; found: boolean }>;
     const byId = (id: string) => rows.find((r) => r.id === id)!;
-    expect(byId(elig.earningId).eligible).toBe(true);
+    expect(byId(elig.earningId).eligible, await dumpEligibility('7+8+9+10', elig.bookingId, elig.earningId)).toBe(true);
     expect(byId(iss.earningId).blocked_by_open_issue).toBe(true);
     expect(byId(ev.earningId).blocked_by_evidence_hold).toBe(true);
     expect(byId('00000000-0000-0000-0000-000000000000').found).toBe(false);
@@ -7986,25 +8088,25 @@ describe.skipIf(!enabled)('Stage 3C2-A scoped earning release (requires live Sup
   it('14+15+16+17+18+19+20+21+22. scoped execution records accurate per-item outcomes and touches only scoped, eligible earnings', async () => {
     const elig = await makeEligible();
     const outB = await makeEligible();                                // eligible but OUT OF SCOPE
-    const iss = await makeEligible();
-    await cAdmin.from('conversation_issues').insert({ booking_id: iss.bookingId, reporter_account_id: coordAcct, category: 'audio_video_problem', state: 'open', idempotency_key: `3c2-iss2-${iss.bookingId}` });
-    const ev = await makeEligible();
-    await cAdmin.from('companion_evidence_payout_reviews').insert({ booking_id: ev.bookingId, conflict_code: 'companion_not_observed', state: 'active', support_touched: false, first_detected_at: new Date().toISOString(), last_detected_at: new Date().toISOString() });
-    const early = await makeEarning();                                // <12h → not_yet_eligible
-    const payable = await makeEligible(); await cAdmin.from('companion_earnings').update({ state: 'payable', payable_at: new Date().toISOString() }).eq('id', payable.earningId);
-    const reversed = await makeEligible(); await cAdmin.from('companion_earnings').update({ state: 'reversed', transfer_state: 'reversed' }).eq('id', reversed.earningId);
-    const transferring = await makeEligible(); await cAdmin.from('companion_earnings').update({ state: 'payable', transfer_state: 'processing', payable_at: new Date().toISOString() }).eq('id', transferring.earningId);
+    const iss = await makeIssueHeldEligibleEarningFixture();          // mature THEN open issue
+    const ev = await makeEvidenceHeldEligibleEarningFixture();        // mature THEN evidence hold
+    const early = await makeBeforeWaitEarningFixture();               // <12h → not_yet_eligible
+    const noDecl = await makeMissingDeclarationEarningFixture();      // mature but no took_place → not_yet_eligible
+    const payable = await makeAlreadyPayableEarningFixture();
+    const reversed = await makeReversedEarningFixture();
+    const transferring = await makeTransferStartedEarningFixture();
     try {
       await setControl('scoped_execution');
-      const scope = [elig.earningId, iss.earningId, ev.earningId, early.earningId, payable.earningId, reversed.earningId, transferring.earningId];
+      const scope = [elig.earningId, iss.earningId, ev.earningId, early.earningId, noDecl.earningId, payable.earningId, reversed.earningId, transferring.earningId];
       const { rid, ex } = await previewConfirmExecute(scope);
       expect(ex.error, JSON.stringify(ex.error)).toBeNull();
       const items = await itemsOf(rid);
       const out = (id: string) => items.find((i) => i.record_id === id)!.outcome;
-      expect(out(elig.earningId)).toBe('released');
+      expect(out(elig.earningId), await dumpEligibility('mixed-elig', elig.bookingId, elig.earningId)).toBe('released');
       expect(out(iss.earningId)).toBe('issue_held');
       expect(out(ev.earningId)).toBe('evidence_held');
       expect(out(early.earningId)).toBe('not_yet_eligible');
+      expect(out(noDecl.earningId)).toBe('not_yet_eligible');
       expect(out(payable.earningId)).toBe('already_payable');
       expect(out(reversed.earningId)).toBe('reversed');
       expect(out(transferring.earningId)).toBe('transfer_already_started');
@@ -8073,9 +8175,8 @@ describe.skipIf(!enabled)('Stage 3C2-A scoped earning release (requires live Sup
 
   it('H2. preview and execution assign the SAME per-id classification (single authority)', async () => {
     const elig = await makeEligible();
-    const iss = await makeEligible();
-    await cAdmin.from('conversation_issues').insert({ booking_id: iss.bookingId, reporter_account_id: coordAcct, category: 'audio_video_problem', state: 'open', idempotency_key: `3c2-par-${iss.bookingId}` });
-    const early = await makeEarning();                                // <12h → not_yet_eligible
+    const iss = await makeIssueHeldEligibleEarningFixture();          // mature THEN open issue
+    const early = await makeBeforeWaitEarningFixture();               // <12h → not_yet_eligible
     try {
       await setControl('scoped_execution');
       const rq = await reqRun([elig.earningId, iss.earningId, early.earningId]);
