@@ -14,6 +14,7 @@ import { describe, expect, it } from 'vitest';
 
 const ROOT = join(__dirname, '..', '..', '..');
 const M80 = readFileSync(join(ROOT, 'supabase', 'migrations', '0080_durable_customer_payment_recovery.sql'), 'utf-8');
+const M81 = readFileSync(join(ROOT, 'supabase', 'migrations', '0081_finalisation_projection_trigger.sql'), 'utf-8');
 const FN = readFileSync(join(ROOT, 'supabase', 'functions', 'stripe-payments', 'index.ts'), 'utf-8');
 const WH = readFileSync(join(ROOT, 'supabase', 'functions', 'stripe-webhook', 'index.ts'), 'utf-8');
 const BILL = readFileSync(join(ROOT, 'supabase', 'functions', 'stripe-billing', 'index.ts'), 'utf-8');
@@ -196,6 +197,38 @@ describe('stripe-webhook 3D-B1 projection', () => {
   });
   it('no direct finalize call remains in payment handlers (single shared path)', () => {
     expect(WH).not.toContain("rpc('finalize_paid_order'");
+  });
+});
+
+describe('0081 sustains the durable projection on the synchronous finalise path', () => {
+  it('is purely additive — no destructive statements, no rewrite of the finaliser or reconcile', () => {
+    expect(M81).not.toMatch(/drop\s+table/i);
+    expect(M81).not.toMatch(/drop\s+column/i);
+    expect(M81).not.toMatch(/alter\s+column/i);
+    // Must NOT redefine the exactly-once core functions.
+    expect(M81).not.toMatch(/function\s+public\.finalize_paid_order/i);
+    expect(M81).not.toMatch(/function\s+app_private\.reconcile_payment_order/i);
+  });
+  it('installs a BEFORE INSERT/UPDATE trigger that fires ONLY at the pending default', () => {
+    expect(M81).toContain('create trigger trg_maintain_payment_order_projection');
+    expect(M81).toMatch(/before insert or update on public\.payment_orders/);
+    // The guard that keeps it inert on the reconcile/card path (local already
+    // advanced off 'pending' before any terminal flip).
+    expect(M81).toContain("new.local_finalisation_status = 'pending'");
+    expect(M81).toMatch(/new\.status in \('succeeded', 'failed', 'expired', 'credited',\s*'partially_refunded', 'refunded', 'disputed'\)/);
+  });
+  it('derives provider state by the SAME safe-minimum rule as the 0080 backfill', () => {
+    // credit-only -> none; providerless -> unknown; provider evidence -> status-derived.
+    expect(M81).toContain("when new.card_amount_minor = 0 then 'none'");
+    expect(M81).toMatch(/when new\.stripe_payment_intent_id is null\s*and new\.stripe_checkout_session_id is null then 'unknown'/);
+    expect(M81).toContain("new.local_finalisation_status := 'completed'");
+    expect(M81).toContain("new.finalised_at := coalesce(new.finalised_at, now())");
+  });
+  it('carries a one-time, idempotent repair for orders created between 0080 and 0081', () => {
+    expect(M81).toMatch(/update public\.payment_orders[\s\S]{0,600}where local_finalisation_status = 'pending'\s*and status in/);
+  });
+  it('the trigger function is locked down (no client execute grants)', () => {
+    expect(M81).toContain('revoke all on function app_private.maintain_payment_order_projection() from public, anon, authenticated');
   });
 });
 
