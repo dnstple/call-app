@@ -54,8 +54,20 @@ alter table public.payment_orders
   check (local_finalisation_status <> 'reconciliation_required'
          or reconciliation_code is not null);
 
--- Backfill existing rows once (historically terminal orders are complete;
--- credit-only orders never had a provider object).
+-- Backfill existing rows once. SAFE-MINIMUM PROVIDER RULE (Gate 2B): a
+-- provider payment state is asserted ONLY where provider evidence is stored.
+--   * card_amount_minor = 0            → 'none'   (no provider object exists);
+--   * NO stored PaymentIntent/Session  → 'unknown' — even when the legacy
+--     local status is 'succeeded'. (Hosted test fixtures legitimately call
+--     finalize_paid_order(..., p_intent := null) via the service role to
+--     build funded bookings without contacting Stripe; their local
+--     completion is real, their provider state is unknowable.)
+--   * stored provider identifier       → project from the terminal status.
+-- Local finalisation remains derived from the legacy status alone: terminal
+-- orders (and their downstream booking/ledger effects) prove local
+-- completion, so they are 'completed' — NEVER reconciliation_required merely
+-- because provider evidence is absent — and, with provider <> 'succeeded',
+-- they can never enter the pending-paid support queue.
 update public.payment_orders
    set local_finalisation_status = case
          when status in ('succeeded', 'failed', 'expired', 'credited',
@@ -67,6 +79,8 @@ update public.payment_orders
            then updated_at else null end,
        provider_payment_status = case
          when card_amount_minor = 0 then 'none'
+         when stripe_payment_intent_id is null
+          and stripe_checkout_session_id is null then 'unknown'
          when status in ('succeeded', 'credited', 'partially_refunded',
                          'refunded', 'disputed') then 'succeeded'
          when status = 'failed' then 'failed'

@@ -40,6 +40,23 @@ describe('0080 durable projection schema', () => {
     expect(M80).toContain('create index if not exists payment_orders_pending_paid_idx');
     expect(M80).toMatch(/where \(provider_payment_status = 'succeeded'[\s\S]{0,120}reconciliation_required'/);
   });
+  it('Gate-2B safe-minimum backfill: provider states are asserted ONLY from stored evidence', () => {
+    // The providerless-identifier branch must precede every status-derived
+    // branch, so a succeeded card order WITHOUT a stored PaymentIntent /
+    // Checkout Session id (e.g. hosted fixtures finalised with
+    // p_intent := null) backfills to provider 'unknown' — never 'succeeded'.
+    const backfill = M80.slice(M80.indexOf('update public.payment_orders'), M80.indexOf('create index if not exists payment_orders_pending_paid_idx'));
+    const noneIdx = backfill.indexOf("when card_amount_minor = 0 then 'none'");
+    const unknownIdx = backfill.indexOf('when stripe_payment_intent_id is null');
+    const succeededIdx = backfill.indexOf("'refunded', 'disputed') then 'succeeded'");
+    expect(noneIdx).toBeGreaterThan(-1);
+    expect(unknownIdx).toBeGreaterThan(noneIdx);
+    expect(succeededIdx).toBeGreaterThan(unknownIdx);
+    expect(backfill).toContain('and stripe_checkout_session_id is null');
+    // Local completion is still derived from the legacy terminal status alone
+    // (never reconciliation_required merely for absent provider evidence).
+    expect(backfill).not.toContain('reconciliation_required');
+  });
   it('stores no secrets: no client_secret, sk_ keys or raw provider payloads', () => {
     expect(M80).not.toMatch(/client_secret/i);
     expect(M80).not.toMatch(/sk_(test|live)_/);
