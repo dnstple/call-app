@@ -17,7 +17,9 @@
  *                baseline deltas, projection health, Stage 3C sentinels.
  *   --report     read-only convenience dump of fixture-suffix orders.
  *
- * SAFETY: refuses any sk_live_ env value and never reads STRIPE_SECRET_KEY;
+ * SAFETY: refuses any sk_live_ env value; STRIPE_SECRET_KEY is optional,
+ * sk_test_-only, and read ONLY for --verify provider assertions and the
+ * --plan-fixture Checkout URL;
  * requires hosted_test + every financial control disabled + ceiling 0 before
  * doing anything; touches ONLY rows carrying the run's unique suffix; never
  * mutates historical orders, controls, the ceiling or Stage 3C records.
@@ -42,7 +44,10 @@ const say = (o) => console.log(typeof o === 'string' ? o : JSON.stringify(o, nul
 for (const [k, v] of Object.entries(process.env)) {
   if (typeof v === 'string' && v.startsWith('sk_live_')) fail(`live key material in env ${k}`);
 }
-if (process.env.STRIPE_SECRET_KEY) fail('STRIPE_SECRET_KEY must not be present locally.');
+// STRIPE_SECRET_KEY is OPTIONAL and used ONLY by --verify (provider-side
+// livemode/amount/metadata assertions) and --plan-fixture. TEST keys only.
+const STRIPE_KEY = process.env.STRIPE_SECRET_KEY ?? '';
+if (STRIPE_KEY && !STRIPE_KEY.startsWith('sk_test_')) fail('STRIPE_SECRET_KEY must be sk_test_ (test mode only).');
 if (argOf('--confirm') !== PHRASE) fail(`requires --confirm "${PHRASE}"`);
 const URL_ = process.env.SUPABASE_URL ?? '';
 const SVC = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
@@ -240,8 +245,76 @@ async function verify() {
     .select('state, stripe_transfer_id, amount_minor').eq('id', '080b51bb-3391-49e1-9562-930b2ed68a08').single(), 'sentinel attempt');
   check('protected attempt unchanged', att.state === 'failed_permanent' && att.stripe_transfer_id === null && att.amount_minor === 950);
 
+  // Provider-side assertions via the Stripe TEST API (sk_test_ enforced).
+  if (STRIPE_KEY) {
+    const withIntent = orders.filter((o) => o.stripe_payment_intent_id);
+    let live = 0, amountBad = 0, metaBad = 0, currencyBad = 0;
+    for (const o of withIntent) {
+      const pi = await stripeGet(`payment_intents/${o.stripe_payment_intent_id}`);
+      if (pi.livemode !== false) live += 1;
+      if (pi.currency !== 'gbp') currencyBad += 1;
+      if (pi.amount !== o.card_amount_minor) amountBad += 1;
+      if ((pi.metadata?.payment_order_id ?? null) !== o.id) metaBad += 1;
+    }
+    check(`every fixture intent livemode=false (${withIntent.length} checked)`, live === 0);
+    check('every fixture intent amount matches its order snapshot', amountBad === 0);
+    check('every fixture intent currency is gbp', currencyBad === 0);
+    check('every fixture intent metadata.payment_order_id matches', metaBad === 0);
+  } else {
+    console.log('NOTE: STRIPE_SECRET_KEY (sk_test_) not set — provider livemode/amount/metadata proven via Dashboard visual check instead.');
+  }
+  // Plan-period parity fixture assertions when present.
+  if (S.plan_order_id) {
+    const p = must(await admin.from('payment_orders')
+      .select('status, local_finalisation_status, stripe_payment_intent_id, booking_id, order_type')
+      .eq('id', S.plan_order_id).single(), 'plan order');
+    check('M9 plan-period order finalised exactly once via deployed return path',
+      p.order_type === 'plan_period' && p.status === 'succeeded'
+      && p.local_finalisation_status === 'completed' && p.stripe_payment_intent_id !== null
+      && p.booking_id === null);
+  }
   console.log(`VERIFY RESULT pass=${pass} fail=${failCount}`);
   process.exit(failCount ? 1 : 0);
+}
+
+/* ---------------------- plan-period parity fixture --------------------- */
+// Synthetic ISOLATED plan_period order (no real plan/period touched): proves
+// the customer-facing complete_period -> hosted Checkout -> /payment/return
+// -> webhook-finalise chain exactly once. finalise marks the order succeeded;
+// with no linked billing period and no booking arm for plan_period orders,
+// nothing else in the plan engine is affected.
+async function planFixture() {
+  await assertSafeState();
+  if (!existsSync(SNAP_FILE)) fail('run --preflight first');
+  const S = JSON.parse(readFileSync(SNAP_FILE, 'utf-8'));
+  const order = must(await admin.from('payment_orders').insert({
+    coordinator_account_id: S.coordinator.account_id, order_type: 'plan_period',
+    subtotal_minor: 900, total_minor: 900, credit_applied_minor: 0, card_amount_minor: 900,
+    commission_rate_pct: 5, idempotency_key: `3dd-plan-${S.suffix}`, status: 'pending',
+  }).select('id').single(), 'plan order');
+  // Authenticated coordinator invoke of the DEPLOYED complete_period action.
+  const c = createClient(URL_, ANON, { auth: { persistSession: false } });
+  const si = await c.auth.signInWithPassword({ email: S.coordinator.email, password: S.coordinator.password });
+  if (si.error) fail(`fixture sign-in: ${si.error.message}`);
+  const { data, error } = await c.functions.invoke('stripe-billing', {
+    body: { action: 'complete_period', order_id: order.id, origin: 'http://localhost:5173' },
+  });
+  if (error || !data?.url) fail(`complete_period: ${error?.message ?? JSON.stringify(data)}`);
+  S.plan_order_id = order.id;
+  writeFileSync(SNAP_FILE, JSON.stringify(S, null, 2));
+  say({ step: 'plan_fixture_ready', plan_order_id: order.id });
+  say('OPEN THIS hosted Checkout URL in the fixture-coordinator browser session,');
+  say('pay with 4000 0025 0000 3155 (complete authentication), and confirm you');
+  say(`land on /#/payment/return?order=${order.id}&outcome=success :`);
+  say(data.url);
+}
+
+/* -------------------- provider-side (Stripe API) checks ----------------- */
+async function stripeGet(path) {
+  const r = await fetch(`https://api.stripe.com/v1/${path}`, {
+    headers: { Authorization: `Bearer ${STRIPE_KEY}` },
+  });
+  return r.json();
 }
 
 async function report() {
@@ -257,6 +330,7 @@ async function report() {
   if (args.includes('--preflight')) return preflight();
   if (args.includes('--mismatch')) return mismatch();
   if (args.includes('--verify')) return verify();
+  if (args.includes('--plan-fixture')) return planFixture();
   if (args.includes('--report')) return report();
-  fail('choose --preflight | --mismatch | --verify | --report');
+  fail('choose --preflight | --mismatch | --plan-fixture | --verify | --report');
 })().catch((e) => fail(e?.message ?? String(e)));
