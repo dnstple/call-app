@@ -33,6 +33,10 @@ payout transfers).
 
 Stage 3D-A audit (root causes, exactly-once matrix, target architecture and
 the 3D-B/C/D plan): see `docs/stage-3d-payment-reliability-audit.md`.
+Implementation status: 0080 + Edge recovery backend applied/deployed to
+hosted_test (3D-B); resilient return/resume/status frontend implemented
+(3D-C); hosted Stripe test-mode validation (3D-D) in progress. Customer-facing
+behaviour: `docs/CUSTOMER_PAYMENT_FLOW.md`.
 
 Observed issues:
 
