@@ -31,6 +31,9 @@ All product work below follows the established direction:
 Production launch blockers concerning **customer payments** (not Companion
 payout transfers).
 
+Stage 3D-A audit (root causes, exactly-once matrix, target architecture and
+the 3D-B/C/D plan): see `docs/stage-3d-payment-reliability-audit.md`.
+
 Observed issues:
 
 1. When bank authentication is required, the customer does not always see a
