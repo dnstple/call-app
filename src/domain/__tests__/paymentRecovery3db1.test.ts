@@ -15,6 +15,7 @@ import { describe, expect, it } from 'vitest';
 const ROOT = join(__dirname, '..', '..', '..');
 const M80 = readFileSync(join(ROOT, 'supabase', 'migrations', '0080_durable_customer_payment_recovery.sql'), 'utf-8');
 const M81 = readFileSync(join(ROOT, 'supabase', 'migrations', '0081_finalisation_projection_trigger.sql'), 'utf-8');
+const M82 = readFileSync(join(ROOT, 'supabase', 'migrations', '0082_reconcile_foreign_intent_containment.sql'), 'utf-8');
 const FN = readFileSync(join(ROOT, 'supabase', 'functions', 'stripe-payments', 'index.ts'), 'utf-8');
 const WH = readFileSync(join(ROOT, 'supabase', 'functions', 'stripe-webhook', 'index.ts'), 'utf-8');
 const BILL = readFileSync(join(ROOT, 'supabase', 'functions', 'stripe-billing', 'index.ts'), 'utf-8');
@@ -229,6 +230,40 @@ describe('0081 sustains the durable projection on the synchronous finalise path'
   });
   it('the trigger function is locked down (no client execute grants)', () => {
     expect(M81).toContain('revoke all on function app_private.maintain_payment_order_projection() from public, anon, authenticated');
+  });
+});
+
+describe('0082 superseded/foreign-intent containment (SCA finalisation fix)', () => {
+  it('redefines reconcile_payment_order additively (no destructive statements, core untouched)', () => {
+    expect(M82).toContain('create or replace function app_private.reconcile_payment_order');
+    expect(M82).not.toMatch(/drop\s+table|drop\s+column|alter\s+column/i);
+    expect(M82).not.toMatch(/function\s+app_private\.finalise_paid_order/i);
+  });
+  it('a FOREIGN terminal (failed/canceled) event is a benign no-op, never a failure or a flag', () => {
+    // The superseded off-session intent must not fail an order funded by the
+    // authoritative hosted intent (the M3 launch-blocker).
+    expect(M82).toMatch(/if p_provider_status in \('failed', 'canceled'\) then\s*\n\s*return jsonb_build_object\('ok', true, 'ignored', 'foreign_intent_terminal'/);
+  });
+  it('a FOREIGN success (two funding sources) still flags intent_mismatch', () => {
+    expect(M82).toContain("reconciliation_code = 'intent_mismatch'");
+    expect(M82).toMatch(/genuine reconciliation concern|second intent reporting success/i);
+  });
+  it('the authoritative failure path is unchanged (M4: real hosted-intent failure still fails)', () => {
+    expect(M82).toContain("case when v_status = 'canceled' then 'payment_cancelled' else 'failed' end");
+    expect(M82).toContain("perform app_private.finalise_paid_order(");
+  });
+});
+
+describe('stripe-payments records the hosted SCA session as authoritative funding (0082)', () => {
+  it('stores the session intent + id BEFORE returning, guarded so retries never clobber', () => {
+    expect(FN).toContain('stripe_checkout_session_id: session.id');
+    expect(FN).toContain('stripe_payment_intent_id: sessionIntent');
+    expect(FN).toContain(".is('stripe_payment_intent_id', null)");
+    // The requires-action path must store authoritative funding BEFORE
+    // cancelling the superseded direct intent (no race).
+    const ra = FN.slice(FN.indexOf("intent.status === 'requires_action'"), FN.indexOf('return json({ ok: true, orderId: order.order_id, state: \'requires_action\''));
+    expect(ra.indexOf('createAuthenticationSession()')).toBeGreaterThanOrEqual(0);
+    expect(ra.indexOf('createAuthenticationSession()')).toBeLessThan(ra.indexOf('paymentIntents.cancel'));
   });
 });
 

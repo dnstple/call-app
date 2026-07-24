@@ -249,8 +249,22 @@ Deno.serve(async (req) => {
           },
           { idempotencyKey: `order-session-${order.order_id}` },
         );
+        // 0082: record the hosted Checkout session's PaymentIntent as this
+        // order's AUTHORITATIVE funding BEFORE returning. The superseded
+        // off-session intent is still metadata-linked to the order; once an
+        // authoritative intent is stored, that stale intent's later
+        // canceled/failed webhook is treated as foreign and can no longer
+        // poison the order (see migration 0082). Guarded on a null intent so
+        // idempotent retries never clobber an already-authoritative funding.
+        const sessionIntent = typeof session.payment_intent === 'string'
+          ? session.payment_intent
+          : null;
+        await admin.from('payment_orders')
+          .update({ stripe_checkout_session_id: session.id, stripe_payment_intent_id: sessionIntent })
+          .eq('id', order.order_id)
+          .is('stripe_payment_intent_id', null);
         await admin.rpc('reconcile_payment_order', {
-          p_order: order.order_id, p_intent: null, p_provider_status: 'requires_action',
+          p_order: order.order_id, p_intent: sessionIntent, p_provider_status: 'requires_action',
           p_amount_minor: null, p_currency: null, p_event_at: null, p_metadata_order: null,
         });
         return session.url;
@@ -269,12 +283,14 @@ Deno.serve(async (req) => {
           { idempotencyKey: `order-${order.order_id}` },
         );
         if (intent.status === 'requires_action' || intent.status === 'requires_confirmation') {
-          // 3D-B1 uniform contract: EVERY authentication requirement returns
-          // a hosted continuation URL (audit §6.1). The superseded direct
-          // intent is cancelled so exactly one live provider object can fund
-          // this order.
-          try { await stripe.paymentIntents.cancel(intent.id); } catch { /* already terminal */ }
+          // 3D-B1 uniform contract: EVERY authentication requirement returns a
+          // hosted continuation URL (audit §6.1). ORDER MATTERS (0082): record
+          // the hosted session's intent as this order's authoritative funding
+          // FIRST, THEN cancel the superseded direct intent — so the cancel's
+          // webhook is already recognisable as a foreign/superseded terminal
+          // event (benign no-op) and can never race ahead to fail the order.
           const url = await createAuthenticationSession();
+          try { await stripe.paymentIntents.cancel(intent.id); } catch { /* already terminal */ }
           return json({ ok: true, orderId: order.order_id, state: 'requires_action', url });
         }
         // Server-observed projection (webhooks stay authoritative; a
