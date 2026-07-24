@@ -5,3 +5,4 @@ dist
 .env
 .env.local
 3dd-snapshot.local.json
+3dd-preflight.checkpoint.local.json

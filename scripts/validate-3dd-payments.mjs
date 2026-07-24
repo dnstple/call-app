@@ -57,6 +57,33 @@ if (!URL_.includes(PROJECT_REF)) fail(`not project ${PROJECT_REF}`);
 const admin = createClient(URL_, SVC, { auth: { persistSession: false } });
 const must = (r, w) => { if (r.error) fail(`${w}: ${JSON.stringify(r.error)}`); return r.data; };
 
+// STRICT UUID data-contract guard: every identifier handed to Supabase must
+// be the actual UUID string — never an object, array, envelope or free text.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const mustUuid = (value, label) => {
+  if (typeof value !== 'string' || !UUID_RE.test(value)) {
+    fail(`${label} is not a UUID (got ${Array.isArray(value) ? 'array' : typeof value}${
+      typeof value === 'string' ? `: ${value.slice(0, 40)}` : ''})`);
+  }
+  return value;
+};
+
+// Preflight creation ledger + on-disk checkpoint (safe test-fixture ids only;
+// gitignored) so a mid-run failure is always recoverable and enumerable.
+const CKPT_FILE = '3dd-preflight.checkpoint.local.json';
+const ledger = [];
+const checkpoint = (step, resource) => {
+  ledger.push({ step, ...resource });
+  writeFileSync(CKPT_FILE, JSON.stringify({ at: new Date().toISOString(), created: ledger }, null, 2));
+};
+const reportPartialAndFail = (step, err) => {
+  console.error(`PREFLIGHT FAILED at step: ${step}`);
+  console.error(`Resources created so far (also in ${CKPT_FILE}):`);
+  console.error(JSON.stringify(ledger, null, 2));
+  console.error('Recovery: node scripts/validate-3dd-payments.mjs --inspect-partial --confirm "VALIDATE-3DD-TEST-PAYMENTS"');
+  fail(`${step}: ${err}`);
+};
+
 let pass = 0, failCount = 0;
 const check = (name, cond, detail = '') => {
   if (cond) { pass += 1; console.log(`PASS ${name}`); }
@@ -103,41 +130,150 @@ async function preflight() {
   await assertSafeState();
   const snap = await snapshotCounts();
   const suffix = Date.now().toString(36);
-  const coord = await mkUser('coord', suffix);
-  const comp = await mkUser('comp', suffix);
-  // Coordinator + managed member via the sanctioned signup path.
-  const wc = must(await coord.client.rpc('complete_coordinator_signup', {
-    p_first_name: 'DdCoord', p_consent_confirmed: true, p_member_first_name: 'DdMember',
-  }), 'coordinator signup');
-  const memberProfile = wc.member_profile_id;
-  const xc = must(await comp.client.rpc('complete_companion_signup', {
-    p_first_name: 'DdCompanion', p_date_of_birth: '1980-01-01',
-  }), 'companion signup');
-  const companionProfile = xc.companion_profile_id ?? xc.profile_id ?? xc;
-  // Offers: trial + single (server-priced sources for the real checkout).
-  const offers = must(await admin.from('conversation_offers').insert([
-    { companion_profile_id: companionProfile, offer_type: 'trial', duration_minutes: 15, price_minor: 700 },
-    { companion_profile_id: companionProfile, offer_type: 'single', duration_minutes: 30, price_minor: 1600 },
-  ]).select('id, offer_type'), 'offers');
-  // Credit for the credit-only (full cover) and mixed (partial) scenarios.
-  must(await admin.rpc('issue_account_credit', {
-    p_account: coord.id, p_amount: 2100, p_source_type: 'support_adjustment',
-    p_source: null, p_reason: `3DD-${suffix} validation credit`, p_idempotency: `3dd-credit-${suffix}`,
-  }), 'issue credit');
-  const out = {
-    suffix,
-    baseline: snap,
-    coordinator: { email: coord.email, password: coord.pw, account_id: coord.id },
-    companion: { email: comp.email, account_id: comp.id },
-    member_profile_id: memberProfile,
-    companion_profile_id: companionProfile,
-    offers: offers,
-    credit_minor: 2100,
-    created_at: new Date().toISOString(),
-  };
-  writeFileSync(SNAP_FILE, JSON.stringify(out, null, 2));
-  say({ note: 'fixture ready — credentials below are TEST-ONLY hosted users', ...out });
-  say(`Snapshot + fixture ids saved to ${SNAP_FILE} (gitignored — do not commit).`);
+  let step = 'create coordinator user';
+  try {
+    const coord = await mkUser('coord', suffix);
+    mustUuid(coord.id, 'coordinator account id');
+    checkpoint(step, { type: 'auth_user+account', id: coord.id, email: coord.email });
+    step = 'create companion user';
+    const comp = await mkUser('comp', suffix);
+    mustUuid(comp.id, 'companion account id');
+    checkpoint(step, { type: 'auth_user+account', id: comp.id, email: comp.email });
+
+    step = 'coordinator signup (member profile)';
+    // complete_coordinator_signup returns a jsonb ENVELOPE with
+    // member_profile_id (see hosted 2G2 suite).
+    const wc = must(await coord.client.rpc('complete_coordinator_signup', {
+      p_first_name: 'DdCoord', p_consent_confirmed: true, p_member_first_name: 'DdMember',
+    }), 'coordinator signup');
+    const memberProfile = mustUuid(wc?.member_profile_id, 'complete_coordinator_signup().member_profile_id');
+    checkpoint(step, { type: 'member_profile', id: memberProfile });
+
+    step = 'companion signup (companion profile)';
+    // complete_companion_signup returns the full PROFILE ROW — the UUID is
+    // row.id (the hosted suite reads companion.data.id). Gate-3DD regression:
+    // never fall back to the whole object.
+    const xc = must(await comp.client.rpc('complete_companion_signup', {
+      p_first_name: 'DdCompanion', p_date_of_birth: '1980-01-01',
+    }), 'companion signup');
+    const companionProfile = mustUuid(xc?.id, 'complete_companion_signup().id');
+    checkpoint(step, { type: 'companion_profile', id: companionProfile });
+
+    step = 'create offers';
+    const offers = must(await admin.from('conversation_offers').insert([
+      { companion_profile_id: companionProfile, offer_type: 'trial', duration_minutes: 15, price_minor: 700 },
+      { companion_profile_id: companionProfile, offer_type: 'single', duration_minutes: 30, price_minor: 1600 },
+    ]).select('id, offer_type'), 'offers');
+    for (const o of offers) mustUuid(o.id, `offer ${o.offer_type} id`);
+    checkpoint(step, { type: 'conversation_offers', ids: offers.map((o) => o.id) });
+
+    step = 'issue validation credit';
+    must(await admin.rpc('issue_account_credit', {
+      p_account: coord.id, p_amount: 2100, p_source_type: 'support_adjustment',
+      p_source: null, p_reason: `3DD-${suffix} validation credit`, p_idempotency: `3dd-credit-${suffix}`,
+    }), 'issue credit');
+    checkpoint(step, { type: 'credit_ledger', idempotency_key: `3dd-credit-${suffix}` });
+
+    const out = {
+      suffix,
+      baseline: snap,
+      coordinator: { email: coord.email, password: coord.pw, account_id: coord.id },
+      companion: { email: comp.email, account_id: comp.id },
+      member_profile_id: memberProfile,
+      companion_profile_id: companionProfile,
+      offers: offers,
+      credit_minor: 2100,
+      created_at: new Date().toISOString(),
+    };
+    writeFileSync(SNAP_FILE, JSON.stringify(out, null, 2));
+    say({ note: 'fixture ready — credentials below are TEST-ONLY hosted users', ...out });
+    say(`Snapshot + fixture ids saved to ${SNAP_FILE} (gitignored — do not commit).`);
+  } catch (e) {
+    reportPartialAndFail(step, e?.message ?? String(e));
+  }
+}
+
+/* ------------------- partial-run inspection and cleanup ------------------ */
+// Candidates are matched ONLY by the strict Stage 3D-D fixture convention:
+// auth email ^3dd-(coord|comp)-<base36>@example\.com$ within the recent
+// window. Historical users, customers and financial rows can never match.
+const FIXTURE_EMAIL_RE = /^3dd-(coord|comp)-([a-z0-9]+)@example\.com$/;
+
+async function listFixtureUsers() {
+  const users = [];
+  let page = 1;
+  for (;;) {
+    const r = await admin.auth.admin.listUsers({ page, perPage: 200 });
+    if (r.error) fail(`listUsers: ${r.error.message}`);
+    users.push(...r.data.users.filter((u) => FIXTURE_EMAIL_RE.test(u.email ?? '')));
+    if (r.data.users.length < 200) break;
+    page += 1;
+  }
+  return users;
+}
+
+async function inspectPartial() {
+  const snap = existsSync(SNAP_FILE) ? JSON.parse(readFileSync(SNAP_FILE, 'utf-8')) : null;
+  const users = await listFixtureUsers();
+  const out = [];
+  for (const u of users) {
+    const suffix = (u.email ?? '').match(FIXTURE_EMAIL_RE)?.[2] ?? '?';
+    const orders = (await admin.from('payment_orders').select('id', { count: 'exact', head: true })
+      .eq('coordinator_account_id', u.id)).count ?? 0;
+    const credit = (await admin.from('credit_ledger').select('id', { count: 'exact', head: true })
+      .eq('coordinator_account_id', u.id)).count ?? 0;
+    out.push({
+      auth_user_id: u.id, email: u.email, suffix, created_at: u.created_at,
+      payment_orders: orders, credit_ledger_rows: credit,
+      in_current_snapshot: Boolean(snap && (snap.coordinator.account_id === u.id || snap.companion.account_id === u.id)),
+    });
+  }
+  say({ mode: 'inspect-partial (READ-ONLY)', candidates: out });
+  say('A failed-preflight candidate has in_current_snapshot=false. Partial rows');
+  say('are NON-FINANCIAL (users/profiles only — the failed run aborted before');
+  say('credit); cleanup is optional. To remove one exact run:');
+  say('  node scripts/validate-3dd-payments.mjs --cleanup-partial --suffix <suffix> --confirm-cleanup "CLEANUP-FAILED-3DD-PREFLIGHT" --confirm "VALIDATE-3DD-TEST-PAYMENTS"');
+}
+
+async function cleanupPartial() {
+  if (argOf('--confirm-cleanup') !== 'CLEANUP-FAILED-3DD-PREFLIGHT') {
+    fail('cleanup requires --confirm-cleanup "CLEANUP-FAILED-3DD-PREFLIGHT"');
+  }
+  const suffix = argOf('--suffix') ?? '';
+  if (!/^[a-z0-9]{6,16}$/.test(suffix)) fail('--suffix <base36 run suffix> required (from --inspect-partial)');
+  const snap = existsSync(SNAP_FILE) ? JSON.parse(readFileSync(SNAP_FILE, 'utf-8')) : null;
+  if (snap && snap.suffix === suffix) fail('refusing to clean the CURRENT snapshot run');
+  const users = (await listFixtureUsers()).filter(
+    (u) => (u.email ?? '').match(FIXTURE_EMAIL_RE)?.[2] === suffix);
+  if (users.length === 0) { say('nothing to clean for that suffix (idempotent no-op)'); return; }
+  for (const u of users) {
+    // Refuse anything with financial rows — those are not partial-preflight
+    // artifacts and are NEVER deleted.
+    const orders = (await admin.from('payment_orders').select('id', { count: 'exact', head: true })
+      .eq('coordinator_account_id', u.id)).count ?? 0;
+    const credit = (await admin.from('credit_ledger').select('id', { count: 'exact', head: true })
+      .eq('coordinator_account_id', u.id)).count ?? 0;
+    if (orders > 0 || credit > 0) fail(`refusing ${u.email}: has financial rows (orders=${orders} credit=${credit})`);
+  }
+  // Dependency order: offers -> profiles are left to FK-safe user deletion;
+  // we delete offers explicitly first (they reference profiles).
+  for (const u of users) {
+    const profs = must(await admin.from('profile_access')
+      .select('profile_id').eq('account_id', u.id), 'profile access') ?? [];
+    for (const p of profs) {
+      const del = await admin.from('conversation_offers').delete()
+        .eq('companion_profile_id', p.profile_id).select('id');
+      for (const row of del.data ?? []) say(`deleted conversation_offers ${row.id}`);
+    }
+  }
+  for (const u of users) {
+    const del = await admin.auth.admin.deleteUser(u.id);
+    if (del.error) say(`NOTE: auth user ${u.email} not deletable (${del.error.message}) — retained as a non-financial fixture, consistent with suite convention`);
+    else say(`deleted auth user ${u.email} (${u.id})`);
+  }
+  const remaining = (await listFixtureUsers()).filter(
+    (u) => (u.email ?? '').match(FIXTURE_EMAIL_RE)?.[2] === suffix);
+  say({ cleanup_complete: true, remaining_matching_users: remaining.length });
 }
 
 /* ------------------------------- mismatch ------------------------------ */
@@ -146,7 +282,7 @@ async function mismatch() {
   if (!existsSync(SNAP_FILE)) fail('run --preflight first');
   const S = JSON.parse(readFileSync(SNAP_FILE, 'utf-8'));
   const mk = async (key) => (must(await admin.from('payment_orders').insert({
-    coordinator_account_id: S.coordinator.account_id, order_type: 'one_off',
+    coordinator_account_id: mustUuid(S.coordinator.account_id, 'snapshot coordinator account_id'), order_type: 'one_off',
     subtotal_minor: 1600, total_minor: 1600, credit_applied_minor: 0, card_amount_minor: 1600,
     commission_rate_pct: 5, idempotency_key: `3dd-mm-${key}-${S.suffix}`, status: 'pending',
   }).select('id').single(), `order ${key}`)).id;
@@ -288,7 +424,7 @@ async function planFixture() {
   if (!existsSync(SNAP_FILE)) fail('run --preflight first');
   const S = JSON.parse(readFileSync(SNAP_FILE, 'utf-8'));
   const order = must(await admin.from('payment_orders').insert({
-    coordinator_account_id: S.coordinator.account_id, order_type: 'plan_period',
+    coordinator_account_id: mustUuid(S.coordinator.account_id, 'snapshot coordinator account_id'), order_type: 'plan_period',
     subtotal_minor: 900, total_minor: 900, credit_applied_minor: 0, card_amount_minor: 900,
     commission_rate_pct: 5, idempotency_key: `3dd-plan-${S.suffix}`, status: 'pending',
   }).select('id').single(), 'plan order');
@@ -330,7 +466,9 @@ async function report() {
   if (args.includes('--preflight')) return preflight();
   if (args.includes('--mismatch')) return mismatch();
   if (args.includes('--verify')) return verify();
+  if (args.includes('--inspect-partial')) return inspectPartial();
+  if (args.includes('--cleanup-partial')) return cleanupPartial();
   if (args.includes('--plan-fixture')) return planFixture();
   if (args.includes('--report')) return report();
-  fail('choose --preflight | --mismatch | --plan-fixture | --verify | --report');
+  fail('choose --preflight | --mismatch | --plan-fixture | --verify | --report | --inspect-partial | --cleanup-partial');
 })().catch((e) => fail(e?.message ?? String(e)));
