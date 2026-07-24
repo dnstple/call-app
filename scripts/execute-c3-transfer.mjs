@@ -101,7 +101,58 @@ async function setCeiling(v) {
   if (c.provider_transfer_amount_ceiling_minor !== v) fail(`ceiling verify failed (${c.provider_transfer_amount_ceiling_minor} != ${v})`);
 }
 
+async function replay() {
+  // GATE 10 — idempotency replay of the COMPLETED run. Controls stay disabled
+  // and the ceiling stays 0 for the whole replay: the completed-run idempotent
+  // branch in begin_scoped_provider_transfer_run returns BEFORE the expiry,
+  // control and ceiling gates, and the Edge returns before any item work, so
+  // nothing can execute. Same earning, same fixed key, no parameter changes.
+  await assertBaseline();   // resting state required: all disabled, ceiling 0
+  const pre = {
+    attempts: must(await admin.from('companion_transfer_attempts').select('id, state, stripe_transfer_id').eq('earning_id', EARNING), 'attempts'),
+    jobs: must(await admin.from('scoped_transfer_execution_jobs').select('id, state, provider_transfer_id').eq('earning_id', EARNING), 'jobs'),
+  };
+  if (pre.attempts.length !== 1 || pre.attempts[0].state !== 'succeeded') fail(`replay expects exactly one succeeded attempt (${JSON.stringify(pre.attempts)})`);
+  if (pre.jobs.length !== 1 || pre.jobs[0].state !== 'finalized_success') fail(`replay expects exactly one finalized job (${JSON.stringify(pre.jobs)})`);
+  const providerId = pre.attempts[0].stripe_transfer_id;
+  const ops = await opsClient();
+  // SAME fixed key -> the SAME completed run + its token (never a new run).
+  const rq = must(await ops.rpc('support_request_operation_run', {
+    p_operation_type: 'transfer_finalise', p_execution_mode: 'execute_scoped', p_scope_type: 'record_ids',
+    p_scoped_ids: [EARNING], p_batch_limit: null, p_reason: 'C3 idempotency replay (Gate 10)',
+    p_idempotency_key: `c3-exec-${EARNING}`,
+  }), 'request run');
+  if (rq.idempotent !== true) fail('expected the idempotent existing run, got a new one');
+  const runId = rq.run_id; const token = rq.confirmation_token;
+  const evBefore = must(await admin.from('financial_operation_run_events').select('id', { count: 'exact', head: true }).eq('run_id', runId), 'events before');
+  const res = await fetch(`${URL_.replace(/\/$/, '')}/functions/v1/scoped-stripe-transfers`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', apikey: SVC, Authorization: `Bearer ${SVC}`, 'x-billing-secret': BILLING },
+    body: JSON.stringify({ run_id: runId, confirmation_token: token }),
+  });
+  let j = null; try { j = await res.json(); } catch { j = null; }
+  const post = {
+    attempts: must(await admin.from('companion_transfer_attempts').select('id, state, stripe_transfer_id').eq('earning_id', EARNING), 'attempts after'),
+    jobs: must(await admin.from('scoped_transfer_execution_jobs').select('id, state, provider_transfer_id').eq('earning_id', EARNING), 'jobs after'),
+    run: must(await admin.from('financial_operation_runs').select('state, executed_at').eq('id', runId).single(), 'run after'),
+  };
+  const evAfter = must(await admin.from('financial_operation_run_events').select('id', { count: 'exact', head: true }).eq('run_id', runId), 'events after');
+  const cfg = must(await admin.from('financial_operations_config').select('environment, provider_transfer_amount_ceiling_minor').single(), 'config');
+  say({ step: 'replay_result', run_id: runId,
+    response: { status: res.status, ok: j?.ok, already_executed: j?.already_executed, error: j?.error },
+    attempts_count: post.attempts.length, jobs_count: post.jobs.length,
+    provider_id_stable: post.attempts[0]?.stripe_transfer_id === providerId,
+    job_provider_id_stable: post.jobs[0]?.provider_transfer_id === providerId,
+    run_state: post.run.state, event_count_delta: (evAfter.count ?? 0) - (evBefore.count ?? 0),
+    state: { environment: cfg.environment, ceiling: cfg.provider_transfer_amount_ceiling_minor } });
+  if (!(res.status === 200 && j?.already_executed === true)) fail('replay did not return already_executed');
+  if (post.attempts.length !== 1 || post.jobs.length !== 1) fail('replay changed attempt/job counts');
+  if (post.attempts[0].stripe_transfer_id !== providerId) fail('provider id changed');
+  say('REPLAY OK — idempotent, zero new provider/local state.');
+}
+
 (async () => {
+  if (args.includes('--replay')) { await replay(); return; }
   await assertBaseline();
   await fixtureClean();
   const ops = await opsClient();
