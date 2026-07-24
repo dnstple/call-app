@@ -373,3 +373,27 @@ DB defect → stop, disable transfer_finalise, ceiling 0, document; additive 008
 only after review. Edge defect → stop, restore safe state, fix offline,
 redeploy only the corrected scoped function, restart from Gate 5. Never weaken
 authentication, scope, matching or amount limits.
+
+### Stage 3C2-C3 closeout — COMPLETED 2026-07-24
+
+The controlled Stripe TEST-MODE rollout completed successfully. Facts of record
+(safe fields only): run f714f53d-110a-4e2b-9fae-59ec3186034f (execute_scoped
+transfer_finalise, scope exactly one earning
+d788368c-1989-4f76-95d3-9beae0aa9a6b, 950 minor GBP), Stripe test transfer
+tr_1TwhtXD8sYiWjL8NHWCp15pk to acct_1Twgq3D8sYj40rhj, livemode=false, no
+source_transaction, no transfer_group, exactly one transfer for the
+destination. Local state: one scoped job finalized_success (lookup_outcome
+not_found), one attempt succeeded referencing the same provider id, earning
+payable/transferred, run completed with finalized_count 1 and deduplicated
+saga events. Gate 9 verified provider and database agreement in full;
+Gate 10 replayed the completed run twice (same fixed idempotency key
+c3-exec-<earning>) with already_executed=true, zero event delta, stable
+counts and provider ids, controls disabled and ceiling 0 throughout. Baselines
+moved by exactly one: transfer attempts 147→148, scoped jobs +1; historical
+reconciliation findings unchanged; protected booking/earning/attempt
+byte-identical to the Gate-0 snapshot. Final resting state re-verified:
+environment hosted_test, provider_transfer_amount_ceiling_minor 0, every
+financial control disabled. The one-shot orchestrator
+(scripts/execute-c3-transfer.mjs) performed arming, single execution and
+hard-verified finally-restoration atomically; its --replay mode is the
+sanctioned idempotency probe. production_live remains fully inactive.
