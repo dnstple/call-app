@@ -55,6 +55,13 @@ if (!URL_ || !SVC || !ANON || !BILLING) fail('SUPABASE_URL, SUPABASE_SERVICE_ROL
 if (!URL_.includes(PROJECT_REF)) fail(`not project ${PROJECT_REF}`);
 const admin = createClient(URL_, SVC, { auth: { persistSession: false } });
 const must = (r, w) => { if (r.error) fail(`${w}: ${JSON.stringify(r.error)}`); return r.data; };
+// HEAD/count queries return { data: null, count } — never read .data for them.
+// A missing count is a HARD SAFE ABORT, never treated as zero.
+const safeCount = (r, w) => {
+  if (r.error) fail(`${w}: ${JSON.stringify(r.error)}`);
+  if (typeof r.count !== 'number') fail(`${w}: count unavailable (null response) — aborting safely`);
+  return r.count;
+};
 
 async function assertBaseline() {
   const cfg = must(await admin.from('financial_operations_config').select('environment, provider_transfer_amount_ceiling_minor').single(), 'config');
@@ -124,7 +131,7 @@ async function replay() {
   }), 'request run');
   if (rq.idempotent !== true) fail('expected the idempotent existing run, got a new one');
   const runId = rq.run_id; const token = rq.confirmation_token;
-  const evBefore = must(await admin.from('financial_operation_run_events').select('id', { count: 'exact', head: true }).eq('run_id', runId), 'events before');
+  const evBefore = safeCount(await admin.from('financial_operation_run_events').select('id', { count: 'exact', head: true }).eq('run_id', runId), 'events before');
   const res = await fetch(`${URL_.replace(/\/$/, '')}/functions/v1/scoped-stripe-transfers`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', apikey: SVC, Authorization: `Bearer ${SVC}`, 'x-billing-secret': BILLING },
@@ -136,14 +143,14 @@ async function replay() {
     jobs: must(await admin.from('scoped_transfer_execution_jobs').select('id, state, provider_transfer_id').eq('earning_id', EARNING), 'jobs after'),
     run: must(await admin.from('financial_operation_runs').select('state, executed_at').eq('id', runId).single(), 'run after'),
   };
-  const evAfter = must(await admin.from('financial_operation_run_events').select('id', { count: 'exact', head: true }).eq('run_id', runId), 'events after');
+  const evAfter = safeCount(await admin.from('financial_operation_run_events').select('id', { count: 'exact', head: true }).eq('run_id', runId), 'events after');
   const cfg = must(await admin.from('financial_operations_config').select('environment, provider_transfer_amount_ceiling_minor').single(), 'config');
   say({ step: 'replay_result', run_id: runId,
     response: { status: res.status, ok: j?.ok, already_executed: j?.already_executed, error: j?.error },
     attempts_count: post.attempts.length, jobs_count: post.jobs.length,
     provider_id_stable: post.attempts[0]?.stripe_transfer_id === providerId,
     job_provider_id_stable: post.jobs[0]?.provider_transfer_id === providerId,
-    run_state: post.run.state, event_count_delta: (evAfter.count ?? 0) - (evBefore.count ?? 0),
+    run_state: post.run.state, event_count_delta: evAfter - evBefore,
     state: { environment: cfg.environment, ceiling: cfg.provider_transfer_amount_ceiling_minor } });
   if (!(res.status === 200 && j?.already_executed === true)) fail('replay did not return already_executed');
   if (post.attempts.length !== 1 || post.jobs.length !== 1) fail('replay changed attempt/job counts');
