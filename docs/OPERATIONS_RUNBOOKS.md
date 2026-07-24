@@ -199,3 +199,177 @@ must follow this audited, one-record workflow — never a bulk backfill:
 The protected booking `ba4f943c-3e8d-4d4c-900d-fa551ccc5387` **must not** be used as a
 hosted fixture and **must not** be mutated. The 177 diagnostic findings **must not** be
 bulk-selected for execution.
+
+---
+
+## Runbook: Stage 3C2-C3 — controlled Stripe TEST-MODE transfer rollout
+
+Goal: deploy `scoped-stripe-transfers` and prove exactly ONE fresh, low-value
+Stripe test-mode transfer completes through the scoped provider saga
+(0078/0079), then return every safety control to its resting state. Operator
+console + `scripts/scoped-transfer-rollout.mjs` required. **Never** use an
+`sk_live` key, the legacy `stripe-transfers` worker, more than one earning, or
+any protected historical record (booking `ba4f943c-…`, earning `71ecc…`,
+attempt `080b…`, destination `acct_1Tuhb4DLUvn4PHJ4`, key `transfer-71ecc…`).
+
+### Gate 1 audit summary (source of truth: the function file)
+
+- Secrets read by the function: `STRIPE_SECRET_KEY` (must start `sk_test_` —
+  the function refuses a live key outside production_live), `SUPABASE_URL`,
+  `SUPABASE_SERVICE_ROLE_KEY` (platform-provided), `BILLING_WORKER_SECRET`.
+- Auth: `x-billing-secret` header AND `{run_id, confirmation_token}` (the
+  support run's single-use credential). Deploy with `--no-verify-jwt` (matches
+  the existing billing workers).
+- DB calls (public 0079 wrappers → app_private): begin_scoped_provider_transfer_run
+  → begin_scoped_provider_transfer_item → record_scoped_transfer_lookup →
+  authorize_scoped_transfer_create → finalize_scoped_transfer_success/uncertain/
+  rejected → complete_scoped_provider_transfer_run.
+- Stripe calls: `transfers.retrieve`, `transfers.list`, `transfers.create`
+  (stable key from the DB snapshot only). Ordering enforced: lookup ALWAYS
+  precedes create; DB authorisation (fresh ≤2-min not_found) immediately
+  precedes the single POST; livemode=false verified in hosted_test; batch ≤5;
+  production_live execution refused.
+
+### Gate 0 — verify the base
+
+```
+git branch --show-current            # stage-3c2c3-stripe-test-mode-rollout
+git log -5 --oneline
+npx supabase migration list          # 0001–0079 local == remote, none pending
+npx supabase db push --dry-run       # no pending migrations
+npx supabase functions list          # scoped-stripe-transfers NOT deployed yet
+npx supabase secrets list            # names only — never values
+```
+
+SQL (service console):
+
+```sql
+select environment, provider_transfer_amount_ceiling_minor
+  from public.financial_operations_config;                       -- hosted_test / 0
+select control_name, state, expires_at
+  from public.financial_operation_controls order by control_name; -- ALL disabled
+```
+
+Snapshot (store the output; compared again at Gate 11): protected booking /
+earning / attempt rows, their findings, `count(*)` of
+`financial_reconciliation_findings`, `scoped_transfer_execution_jobs`,
+`companion_transfer_attempts`. **Stop if any control is not disabled.**
+
+### Gate 2 — test provider requirements
+
+One fresh Stripe TEST connected account (NOT `acct_1Tuhb4DLUvn4PHJ4`): same
+test platform, `payouts_enabled`, `transfers_capability=active`,
+`details_submitted`, represented in `public.connected_accounts` for the fixture
+Companion account. Stop if none exists. Confirm the test platform has available
+GBP balance ≥ the fixture amount; use the smallest compatible amount (≤ £10
+gross → fixture net 950 = £9.50). Do not introduce `transfer_group` or
+`source_transaction`.
+
+### Gate 3 — secrets (Dashboard secret manager only)
+
+Set exactly: `STRIPE_SECRET_KEY` (sk_test_…), `BILLING_WORKER_SECRET` (new
+high-entropy value). Verify names with `npx supabase secrets list`. Never place
+values in the repo, a tracked file, terminal output or the report.
+
+### Gate 4 — deploy ONLY the scoped function
+
+```
+npx supabase functions deploy scoped-stripe-transfers --no-verify-jwt
+npx supabase functions list
+```
+
+Do not deploy all functions; do not touch legacy `stripe-transfers`.
+
+### Gate 5 — inert security probes
+
+```
+SUPABASE_URL=https://gwtunmoefapiiybwlelw.supabase.co \
+SUPABASE_SERVICE_ROLE_KEY=… BILLING_WORKER_SECRET=… \
+  node scripts/scoped-transfer-rollout.mjs --smoke
+```
+
+All probes must REJECT (403/400/409) and the scoped-job count must be unchanged
+from Gate 0. The script itself verifies project ref, hosted_test, zero enabled
+controls, and refuses any sk_live material in the environment.
+
+### Gate 6 — one fresh fixture
+
+Create via the authorised backend test helpers (the hosted suite's fixture
+family — fresh Coordinator/Member/Companion accounts, fresh connected-account
+row for the Gate-2 test destination, confirmed ended booking, succeeded order,
+took_place declaration → ONE payable earning, net 950 GBP, no issue/evidence
+hold/attempt/job). Do NOT use the customer payment UI (Stage 3D owns its
+defects). Then preview:
+
+```sql
+-- via support client: request preview run (transfer_finalise, [earning]) then
+-- support_preview_operation_run → row must show found=true, the earning UUID,
+-- amount 950/GBP, eligible_provider_action_required; and confirm zero rows in
+-- companion_transfer_attempts + scoped_transfer_execution_jobs for the earning.
+```
+
+### Gate 7 — one explicit run
+
+Request + preview + confirm `transfer_finalise` with `record_ids=[earning]`
+(support UI or RPC). Verify: exactly one scoped id; state `confirmed`;
+aggregate = 950; control still disabled; ceiling still 0; still no job/attempt.
+
+### Gate 8 — controlled execution (try/finally discipline)
+
+```sql
+-- BEFORE (sanctioned RPC only):
+select public.support_set_financial_control('transfer_finalise','disabled','scoped_execution','C3 rollout', null, null);
+update public.financial_operations_config set provider_transfer_amount_ceiling_minor = 950 where id = true;  -- exact fixture amount
+-- re-check: master disabled, test balance sufficient, destination test-mode, run has ONE earning.
+```
+
+```
+RUN_ID=<run uuid> CONFIRMATION_TOKEN=<token> SUPABASE_URL=… \
+SUPABASE_SERVICE_ROLE_KEY=… BILLING_WORKER_SECRET=… \
+  node scripts/scoped-transfer-rollout.mjs --execute --confirm "EXECUTE-ONE-TEST-MODE-TRANSFER"
+```
+
+Expected safe output: `finalized_count=1`, zero reconciliation/failed.
+
+```sql
+-- FINALLY (always, even on failure):
+select public.support_set_financial_control('transfer_finalise','scoped_execution','disabled','C3 rollout complete', null, null);
+update public.financial_operations_config set provider_transfer_amount_ceiling_minor = 0 where id = true;
+-- confirm: all controls disabled; environment hosted_test.
+```
+
+### Gate 9 — verify provider + local agreement
+
+Stripe test Dashboard → exactly ONE matching transfer: livemode=false, amount
+950, gbp, the Gate-2 destination, `metadata.earning_id`/`transfer_attempt_id`/
+booking/account/profile all matching, no duplicate related transfer, no
+transfer_group/source_transaction. Local:
+
+```sql
+select state, provider_transfer_id from public.scoped_transfer_execution_jobs where earning_id = :earning;  -- finalized_success
+select state, stripe_transfer_id, completed_at from public.companion_transfer_attempts where earning_id = :earning;  -- succeeded, id = Stripe id
+select transfer_state from public.companion_earnings where id = :earning;      -- transferred
+select outcome from public.financial_operation_run_items where run_id = :run;  -- provider_transfer_created_and_finalized
+```
+
+### Gate 10 — idempotency replay
+
+Re-run the Gate-8 `--execute` command with the SAME run/token. Require:
+`already_executed=true` (or `already_completed`), no second Stripe transfer, no
+second attempt/job, stable provider id, no duplicate terminal events.
+
+### Gate 11 — final sentinels
+
+All controls disabled; ceiling 0; environment hosted_test; master disabled;
+only sk_test secret names configured; the successful transfer livemode=false;
+protected booking/earning/attempt byte-identical to the Gate-0 snapshot;
+protected destination/key unused; findings count unchanged (177 untouched); no
+global worker/cron/unrelated mutation. Do NOT delete or reverse the test
+transfer.
+
+### Stop conditions
+
+DB defect → stop, disable transfer_finalise, ceiling 0, document; additive 0080
+only after review. Edge defect → stop, restore safe state, fix offline,
+redeploy only the corrected scoped function, restart from Gate 5. Never weaken
+authentication, scope, matching or amount limits.
