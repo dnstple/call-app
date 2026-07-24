@@ -11,11 +11,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
+  checkPaymentOrder,
   createPaidRequest,
   getPaymentOrderState,
   quotePaidRequest,
   type PaidRequestQuote,
 } from '../repositories/billingRepository';
+import { clearPaymentSession, savePaymentSession } from '../payments/paymentSession';
 import { ArrowLeft, CalendarDays, Loader2, Package, X } from 'lucide-react';
 import type { ConversationOfferRow } from '../supabase/database.types';
 import type { User } from '../types';
@@ -229,20 +231,31 @@ export function SupabaseBookingWizard({
       return;
     }
     if (result.state === 'requires_action' && result.url) {
+      // 3D-C: persist the durable recovery session BEFORE leaving the app so
+      // the banking-app/browser return (and any reload) can resume this exact
+      // order; navigate exactly once.
+      if (redirectedRef.current) return;
+      redirectedRef.current = true;
+      savePaymentSession({ orderId: result.orderId, kind: 'one_off', returnTo: '/conversations' });
       setPayState('redirecting');
       window.location.href = result.url; // Stripe-hosted authentication
       return;
     }
     if (result.state === 'failed') {
+      clearPaymentSession();
       setError('Your payment didn’t go through. No request was sent — please try again.');
       setSubmitting(false);
       return;
     }
-    // Poll the safe order state until the WEBHOOK confirms funding.
+    // Poll the safe order state until the WEBHOOK confirms funding (bounded;
+    // a timeout is DELAYED CONFIRMATION, never treated as failure).
+    savePaymentSession({ orderId: result.orderId, kind: 'one_off', returnTo: '/conversations' });
+    lastOrderRef.current = result.orderId;
     setPayState('confirming');
     for (let i = 0; i < 20; i += 1) {
       const status = await getPaymentOrderState(result.orderId);
       if (status === 'succeeded') {
+        clearPaymentSession();
         setPayState('succeeded');
         setSubmitting(false);
         setTimeout(() => {
@@ -252,6 +265,7 @@ export function SupabaseBookingWizard({
         return;
       }
       if (status === 'failed' || status === 'expired') {
+        clearPaymentSession();
         setPayState(null);
         setError('Your payment didn’t go through. No request was sent — please try again.');
         setSubmitting(false);
@@ -259,9 +273,39 @@ export function SupabaseBookingWizard({
       }
       await new Promise((r) => setTimeout(r, 1500));
     }
-    // Still pending: honest holding state (webhook may land shortly).
+    // Still pending: honest delayed-confirmation state with manual recovery
+    // (the durable session is KEPT — money may already have moved).
+    setPayState('delayed');
     setSubmitting(false);
   }, [selection, slot, member, companion.id, navigate, onClose]);
+
+  // 3D-C: single-navigation guard + last order for manual status checks.
+  const redirectedRef = useRef(false);
+  const lastOrderRef = useRef<string | null>(null);
+  const [checkingStatus, setCheckingStatus] = useState(false);
+  const checkStatusNow = useCallback(async () => {
+    const orderId = lastOrderRef.current;
+    if (!orderId || checkingStatus) return;
+    setCheckingStatus(true);
+    try {
+      const p = await checkPaymentOrder(orderId);
+      if (p.found && p.customerStatus === 'completed') {
+        clearPaymentSession();
+        setPayState('succeeded');
+        setTimeout(() => {
+          onClose();
+          navigate('/conversations');
+        }, 1600);
+      } else if (p.found && (p.customerStatus === 'failed' || p.customerStatus === 'cancelled')) {
+        clearPaymentSession();
+        setPayState(null);
+        setError('Your payment didn’t go through. No request was sent — please try again.');
+      }
+      // Any other state: stay in the honest delayed view; session kept.
+    } finally {
+      setCheckingStatus(false);
+    }
+  }, [checkingStatus, navigate, onClose]);
 
   const submit = useCallback(async () => {
     if (!selection || !slot || !member || submitting) return; // duplicate-click protection
@@ -492,7 +536,34 @@ export function SupabaseBookingWizard({
                 </p>
               )}
               {payState === 'confirming' && (
-                <p className="small" role="status" style={{ margin: '6px 0 0' }}>Payment is being confirmed.</p>
+                <p className="small" role="status" style={{ margin: '6px 0 0' }}>
+                  Your payment was received. We’re confirming your conversation.
+                </p>
+              )}
+              {payState === 'redirecting' && (
+                <p className="small" role="status" style={{ margin: '6px 0 0' }}>
+                  Your bank needs a quick security check. Taking you to their secure
+                  page now — you’ll come straight back here afterwards.
+                </p>
+              )}
+              {payState === 'delayed' && (
+                <div className="col" style={{ gap: 6, margin: '6px 0 0' }} role="status">
+                  <p className="small" style={{ margin: 0 }}>
+                    Your payment was received, but confirmation is taking longer than
+                    expected. You will not be charged again.
+                  </p>
+                  <div className="row" style={{ gap: 8 }}>
+                    <button className="btn" type="button" disabled={checkingStatus}
+                      onClick={() => void checkStatusNow()}>
+                      {checkingStatus ? 'Checking…' : 'Check payment status'}
+                    </button>
+                    {lastOrderRef.current && (
+                      <Link className="btn" to={`/payment/return?order=${lastOrderRef.current}`}>
+                        Open payment status page
+                      </Link>
+                    )}
+                  </div>
+                </div>
               )}
               {payState === 'succeeded' && (
                 <p className="small" role="status" style={{ margin: '6px 0 0', color: 'var(--color-success-text)' }}>

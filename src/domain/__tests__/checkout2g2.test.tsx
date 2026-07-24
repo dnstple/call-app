@@ -48,7 +48,8 @@ describe('checkout UI contract', () => {
   });
 
   it('success waits for WEBHOOK-confirmed state and says waiting for the Companion', () => {
-    expect(WIZ).toContain('Payment is being confirmed.');
+    // 3D-C approved copy replaced the terse confirming line.
+    expect(WIZ).toContain('Your payment was received. We’re confirming your conversation.');
     expect(WIZ).toContain('Payment received. Waiting for the Companion’s response.');
     expect(WIZ).toContain('getPaymentOrderState(result.orderId)');
     // Polling stops on terminal states.

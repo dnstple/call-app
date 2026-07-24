@@ -133,6 +133,73 @@ export async function getPaymentOrderState(orderId: string): Promise<string | nu
   return ((data as { order?: { status?: string } }).order?.status) ?? null;
 }
 
+/* -------- Stage 3D-C: durable owner-safe status + recovery check -------- */
+
+/** Owner-safe durable projection from 0080's get_payment_order_status RPC. */
+export interface PaymentOrderStatusProjection {
+  found: boolean;
+  orderId?: string;
+  customerStatus?: string;
+  orderStatus?: string;
+  providerStatus?: string;
+  bookingId?: string | null;
+  orderType?: string;
+  totalMinor?: number;
+  cardAmountMinor?: number;
+  currency?: string;
+  finalisedAt?: string | null;
+}
+
+function mapStatusRow(row: Record<string, unknown> | null): PaymentOrderStatusProjection {
+  if (!row || row.found !== true) return { found: false };
+  return {
+    found: true,
+    orderId: String(row.order_id ?? ''),
+    customerStatus: String(row.customer_status ?? ''),
+    orderStatus: String(row.order_status ?? ''),
+    providerStatus: String(row.provider_status ?? ''),
+    bookingId: (row.booking_id as string | null) ?? null,
+    orderType: String(row.order_type ?? ''),
+    totalMinor: Number(row.total_minor ?? 0),
+    cardAmountMinor: Number(row.card_amount_minor ?? 0),
+    currency: String(row.currency ?? 'GBP'),
+    finalisedAt: (row.finalised_at as string | null) ?? null,
+  };
+}
+
+// 0080 RPCs postdate the generated database types (which are intentionally
+// NOT regenerated in this stage) — same untyped-rpc pattern as the financial
+// operations repository.
+type UntypedRpc = {
+  rpc: (fn: string, args?: Record<string, unknown>) =>
+    PromiseLike<{ data: unknown; error: { message: string } | null }>;
+};
+
+/** Durable customer status (webhook-authoritative projection; read-only). */
+export async function getPaymentOrderStatus(orderId: string): Promise<PaymentOrderStatusProjection> {
+  if (!isSupabaseMode()) return { found: false };
+  const { data, error } = await (getSupabaseClient() as unknown as UntypedRpc)
+    .rpc('get_payment_order_status', { p_order: orderId });
+  if (error || !data) return { found: false };
+  return mapStatusRow(data as Record<string, unknown>);
+}
+
+/**
+ * "Check payment status": the server re-reads the PaymentIntent ALREADY
+ * stored for this order and reconciles idempotently. Only the local order id
+ * is ever sent — never a PaymentIntent id, never an amount — and the server
+ * never creates or charges anything on this path.
+ */
+export async function checkPaymentOrder(orderId: string): Promise<PaymentOrderStatusProjection> {
+  if (!isSupabaseMode()) return { found: false };
+  const { data, error } = await getSupabaseClient().functions.invoke('stripe-payments', {
+    body: { action: 'check_payment_order', orderId },
+  });
+  if (error || !data) return { found: false };
+  const status = (data as { status?: Record<string, unknown> }).status ?? null;
+  return mapStatusRow(status);
+}
+
 /* ---------------- 2G3: Companion Connect status ---------------- */
 
 export interface ConnectStatus {

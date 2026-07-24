@@ -11,6 +11,7 @@ import MyProfile from './pages/MyProfile';
 import Conversations from './pages/Conversations';
 import BookingDetail from './pages/BookingDetail';
 const CallPage = lazy(() => import('./pages/CallPage'));
+const PaymentReturn = lazy(() => import('./pages/PaymentReturn'));
 const PlanMemberProfile = lazy(() => import('./pages/PlanMemberProfile'));
 const MessagesPage = lazy(() => import('./pages/MessagesPage'));
 const PlanDetail = lazy(() => import('./pages/PlanDetail'));
@@ -29,6 +30,7 @@ import AvailabilityRates from './pages/AvailabilityRates';
 import SignupWizard from './signup/SignupWizard';
 import { hasSeenSignup } from './signup/storage';
 import { EmptyState } from './components/ui';
+import PaymentResumeNotice from './components/PaymentResumeNotice';
 import { isSupabaseMode } from './config/dataMode';
 import { AuthProvider, useAuth } from './auth/AuthProvider';
 import {
@@ -193,6 +195,9 @@ function AppRoutes() {
         element={
           <Protected>
             <Shell>
+              {/* Stage 3D-C: offer Resume payment when a durable payment
+                  session survived a redirect/reload/app restart. */}
+              <PaymentResumeNotice />
               {/* Heavy routes (LiveKit, messaging, plans, notifications)
                   load as separate chunks so the shell paints promptly. */}
               <Suspense
@@ -239,6 +244,9 @@ function AppRoutes() {
                 <Route path="/support/operations" element={<SupportOnly><InternalOperations /></SupportOnly>} />
                 <Route path="/internal/operations" element={<Navigate to="/support/operations" replace />} />
                 <Route path="/settings" element={<Settings />} />
+                {/* Stage 3D-C — durable payment authentication return/resume.
+                    The outcome param is NEVER treated as proof of payment. */}
+                <Route path="/payment/return" element={<PaymentReturn />} />
                 <Route path="/availability" element={<AvailabilityRates />} />
                 <Route
                   path="*"

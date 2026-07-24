@@ -9,6 +9,7 @@
 import { useEffect, useState } from 'react';
 import { AlertTriangle, CalendarClock, CheckCircle2, Loader2 } from 'lucide-react';
 import { isSupabaseMode } from '../config/dataMode';
+import { savePaymentSession } from '../payments/paymentSession';
 import { formatMinor } from '../repositories/availabilityRepository';
 import {
   completePlanBillingPeriod,
@@ -59,6 +60,13 @@ export function PlanBillingPreviewCard({ planId }: { planId: string }) {
     setActionError(null);
     try {
       const { url } = await completePlanBillingPeriod(period.paymentOrderId);
+      // 3D-C: persist the durable recovery session BEFORE the bank handoff so
+      // /payment/return can resume this exact plan-period order.
+      savePaymentSession({
+        orderId: period.paymentOrderId,
+        kind: 'plan_period',
+        returnTo: `/conversations/plans/${planId}`,
+      });
       window.location.href = url; // Stripe-hosted confirmation
     } catch (e) {
       setActionError(e instanceof PlanBillingError ? e.message : 'That didn’t work. Please try again.');

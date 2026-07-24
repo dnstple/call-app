@@ -529,3 +529,48 @@ application and deployment belong to Stage 3D-B2):
 
 Stage 3D remains INCOMPLETE: 0080 is not applied hosted, no function is
 deployed, and 3D-C (frontend) / 3D-D (hosted drills) are outstanding.
+
+## 23. Implementation status — Stage 3D-C (frontend recovery UX) DONE
+
+Implemented (commit "Implement resilient customer payment recovery UX"):
+
+- **Return route** `/#/payment/return?order=<id>&outcome=success|cancelled`
+  (`src/pages/PaymentReturn.tsx`, lazy HashRouter route in App.tsx): validates
+  the order id format, restores/refreshes the durable session, requires a
+  signed-in owner before ONE guarded `check_payment_order` recovery call, and
+  renders only the durable server state — the `outcome` parameter shapes
+  interim wording and is never financial authority. Missing/malformed/
+  unauthenticated returns get safe explanatory pages with no lookups.
+- **Durable payment session** (`src/payments/paymentSession.ts`): versioned
+  localStorage key `callapp.payment.session.v1` holding ONLY
+  {orderId, kind, returnTo, createdAt, lastState}; validated on load; 90-min
+  expiry; cleared on completed/failed/cancelled but NEVER on polling timeout;
+  survives redirects, banking-app returns, reloads and app restarts. A shell
+  "Resume payment" notice (`PaymentResumeNotice`) surfaces live sessions.
+- **Status model** (`src/payments/paymentStatus.ts`): single mapping of the
+  0080 customer states to the approved wording (incl. "You will not be
+  charged again"); retry offered ONLY for failed/cancelled/
+  awaiting_payment_method; no state renders a bare spinner.
+- **PaymentStatusCard**: bounded backoff polling (1.5s→3s→5s, hard stop
+  ≈2 min), overlap-guarded, unmount-cancelled, transient-error tolerant;
+  timeout presents provider-succeeded orders as confirmation_delayed (never
+  failure); "Check payment status" calls the server check with the stored
+  order id only.
+- **SCA handoff** (SupabaseBookingWizard, TestCallWizard,
+  PlanBillingPreviewCard): the recovery session is persisted BEFORE
+  `window.location.href` navigation, guarded to navigate exactly once;
+  wizard poll timeouts land in the delayed state with recovery actions;
+  plan-period completion has full parity (`kind: 'plan_period'`).
+- **Repository** additions (`billingRepository`): `getPaymentOrderStatus`
+  (owner RPC) and `checkPaymentOrder` (Edge action; order id only — a
+  client PaymentIntent id cannot be expressed).
+- **Tests**: `paymentRecoveryUx3dc.test.tsx` (24) covering session
+  persistence/validation/expiry/terminal-clearing, status copy and retry
+  rules, polling backoff/timeout/unmount/overlap/error-tolerance, manual
+  check, route registration + unauthenticated/malformed handling, both
+  wizards' save-before-navigate + single-navigation contracts, plan parity,
+  and the security contracts (no secrets stored, outcome never proof, no
+  provider-object creation in any recovery path). Full battery green.
+
+Stage 3D-D (hosted Stripe test-mode validation) remains before Stage 3D
+closes.
