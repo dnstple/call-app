@@ -125,14 +125,20 @@ Deno.serve(async (req) => {
         const session = event.data.object as Stripe.Checkout.Session;
         const orderId = session.metadata?.payment_order_id;
         if (orderId && session.mode === 'payment') {
-          // 2G2: exactly-once finalisation (order lock inside the RPC)
-          // creates the funded booking and completes credit consumption.
-          await admin.rpc('finalize_paid_order', {
+          // 2G2 exactly-once finalisation, now routed through the 3D-B1
+          // shared reconcile path: verifies the expected intent linkage plus
+          // amount/currency against the local snapshot, then calls the SAME
+          // row-locked finalise inside app_private.reconcile_payment_order.
+          await admin.rpc('reconcile_payment_order', {
             p_order: orderId,
-            p_outcome: 'succeeded',
             p_intent: typeof session.payment_intent === 'string' ? session.payment_intent : null,
+            p_provider_status: session.payment_status === 'paid' ? 'succeeded' : 'processing',
+            p_amount_minor: session.payment_status === 'paid' ? session.amount_total : null,
+            p_currency: session.payment_status === 'paid' ? session.currency : null,
+            p_event_at: new Date(event.created * 1000).toISOString(),
+            p_metadata_order: orderId,
           });
-          result = 'order_finalised';
+          result = session.payment_status === 'paid' ? 'order_finalised' : 'order_processing';
         }
         break;
       }
@@ -140,10 +146,29 @@ Deno.serve(async (req) => {
         const pi = event.data.object as Stripe.PaymentIntent;
         const orderId = pi.metadata?.payment_order_id;
         if (orderId && pi.currency?.toUpperCase() === 'GBP') {
-          await admin.rpc('finalize_paid_order', {
-            p_order: orderId, p_outcome: 'succeeded', p_intent: pi.id,
+          await admin.rpc('reconcile_payment_order', {
+            p_order: orderId, p_intent: pi.id, p_provider_status: 'succeeded',
+            p_amount_minor: pi.amount_received ?? pi.amount, p_currency: pi.currency,
+            p_event_at: new Date(event.created * 1000).toISOString(),
+            p_metadata_order: orderId,
           });
           result = 'order_finalised';
+        }
+        break;
+      }
+      case 'payment_intent.processing': {
+        // 3D-B1: durable projection only — no financial effect. The customer
+        // sees an honest 'processing' state instead of a silent stall.
+        const pi = event.data.object as Stripe.PaymentIntent;
+        const orderId = pi.metadata?.payment_order_id;
+        if (orderId) {
+          await admin.rpc('reconcile_payment_order', {
+            p_order: orderId, p_intent: pi.id, p_provider_status: 'processing',
+            p_amount_minor: null, p_currency: null,
+            p_event_at: new Date(event.created * 1000).toISOString(),
+            p_metadata_order: orderId,
+          });
+          result = 'order_processing';
         }
         break;
       }
@@ -156,9 +181,12 @@ Deno.serve(async (req) => {
           // plan_period orders this routes through the single-authority state
           // sync; a cancellation carries the distinct safe 'payment_cancelled'
           // code so order + period always end in a consistent terminal state.
-          const outcome = event.type === 'payment_intent.canceled' ? 'payment_cancelled' : 'failed';
-          await admin.rpc('finalize_paid_order', {
-            p_order: orderId, p_outcome: outcome, p_intent: pi.id,
+          await admin.rpc('reconcile_payment_order', {
+            p_order: orderId, p_intent: pi.id,
+            p_provider_status: event.type === 'payment_intent.canceled' ? 'canceled' : 'failed',
+            p_amount_minor: null, p_currency: null,
+            p_event_at: new Date(event.created * 1000).toISOString(),
+            p_metadata_order: orderId,
           });
           result = 'order_failed';
         }

@@ -186,8 +186,10 @@ describe('0079 public wrappers — zero logic, exact signatures, service_role on
       expect(M).toContain(`create or replace function app_private.${name}(`);
       expect(M).not.toContain(`create or replace function public.${name}(`);
     }
+    // Stage-agnostic: 0079 exists (later stages may add further migrations,
+    // but the wrapper migration itself is immutable).
     const files = readdirSync(MIG).filter((f) => /^\d{4}_.*\.sql$/.test(f)).map((f) => f.slice(0, 4)).sort();
-    expect(files[files.length - 1]).toBe('0079');
+    expect(files).toContain('0079');
   });
   it('each wrapper has the EXACT app_private signature + param names and delegates in ONE statement (no business logic)', () => {
     for (const [name, sig] of WRAPPERS) {

@@ -476,3 +476,56 @@ drills pass without manual data repair.
 - **3D-D (hosted):** §19 gates; tag on completion; production activation
   remains out of scope (3C1 control plane still governs everything
   financial).
+
+## 22. Implementation status — Stage 3D-B1 (backend foundation) DONE, NOT APPLIED
+
+Implemented on `stage-3d-payment-reliability` (documentation of record; hosted
+application and deployment belong to Stage 3D-B2):
+
+- **Migration `0080_durable_customer_payment_recovery.sql`** (additive only;
+  0001–0079 untouched): `payment_orders` projection columns
+  (`provider_payment_status`, `local_finalisation_status`,
+  `provider_synced_at`, `provider_event_at`, `finalised_at`,
+  `reconciliation_code`, `last_reconciliation_at`) with check constraints and
+  a one-time backfill; support-queue partial index;
+  `app_private.payment_order_customer_status` (single derivation authority
+  for the §17 vocabulary, incl. the 2-minute `confirmation_delayed`
+  threshold); owner-safe `public.get_payment_order_status` (payer-only,
+  neutral not_found, authenticated grant);
+  `app_private.reconcile_payment_order` + service-role-only public wrapper —
+  the ONE shared idempotent path (order lock → expected-intent +
+  metadata-linkage + amount + currency verification → existing
+  `finalise_paid_order` → `completed`, with `finalise_error` /
+  `finalise_incomplete` containment into `reconciliation_required`);
+  support-admin-gated read-only `support_list_pending_paid_orders`.
+- **`stripe-payments`**: central fail-closed return-origin policy (no hosted
+  localhost fallback anywhere — payment, setup and Connect paths);
+  `/#/payment/return?order=<id>&outcome=success|cancelled` return-route
+  contract for 3D-C; BOTH requires-action shapes (returned intent AND thrown
+  `authentication_required`) now return `{state:'requires_action', url}` via
+  one hosted-session builder, cancelling the superseded direct intent; new
+  `check_payment_order` action (order-id in, stored-intent-only retrieval,
+  reconcile, owner projection out; never creates or charges).
+- **`stripe-webhook`**: unchanged security spine (raw body, signature-first,
+  ledger-before-effects, dedup); `payment_intent.processing` projection
+  added; succeeded/failed/canceled/checkout-session handlers now route
+  through the shared reconcile path with provider-observed amount/currency
+  and metadata linkage; `checkout.session.completed` counts as success only
+  when `payment_status === 'paid'`.
+- **`stripe-billing`** `complete_period`: same fail-closed origin policy and
+  return-route contract; requires-action projection recorded. `charge_due`
+  needs no change (its `settle('authentication_required')` drives
+  `order.status='requires_action'`, which the derivation maps to
+  `awaiting_bank_authentication`).
+- **Validation**: migrations 0001–0080 applied to scratch Postgres
+  (`check_function_bodies=on`) with 22/22 functional proofs — finalise-once,
+  duplicate reconcile idempotency (success and failure), amount / currency /
+  intent / metadata mismatch containment, true two-connection concurrency
+  race (one `finalised`, one `already_finalised`, one booking), credit
+  release exactly once, expired-order provider-success containment, owner /
+  stranger / support access, grants. Contract suite
+  `paymentRecovery3db1.test.ts`; hosted block added to
+  `rls.integration.test.ts` (3D-B1).
+
+Stage 3D remains INCOMPLETE: 0080 is not applied hosted, no function is
+deployed, and 3D-C (frontend) / 3D-D (hosted drills) are outstanding.

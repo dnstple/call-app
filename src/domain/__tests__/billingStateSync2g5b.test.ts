@@ -134,8 +134,13 @@ describe('0045 public reconciliation wrapper — service-role only', () => {
   });
 });
 
-describe('stripe-webhook maps cancellation to the safe payment_cancelled code', () => {
-  it('sends payment_cancelled for payment_intent.canceled', () => {
-    expect(WEBHOOK).toContain("event.type === 'payment_intent.canceled' ? 'payment_cancelled' : 'failed'");
+describe('cancellation still maps to the safe payment_cancelled code (relocated by 3D-B1)', () => {
+  it('webhook forwards the distinct canceled provider status through the reconcile path', () => {
+    expect(WEBHOOK).toContain("event.type === 'payment_intent.canceled' ? 'canceled' : 'failed'");
+    expect(WEBHOOK).toContain("rpc('reconcile_payment_order'");
+  });
+  it('0080 reconcile translates canceled → payment_cancelled for the SAME 0043 authority', () => {
+    const M80 = readFileSync(join(ROOT, 'supabase', 'migrations', '0080_durable_customer_payment_recovery.sql'), 'utf-8');
+    expect(M80).toContain("case when v_status = 'canceled' then 'payment_cancelled' else 'failed' end");
   });
 });

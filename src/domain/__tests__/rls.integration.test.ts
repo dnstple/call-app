@@ -9360,3 +9360,88 @@ describe.skipIf(!enabled)('Stage 3C2-C2 scoped provider transfer execution (requ
     expect(bookingsMade).not.toContain(PROTECTED_BOOKING);
   }, 120_000);
 });
+
+describe.skipIf(!enabled)('3D-B1 durable payment recovery (requires live Supabase)', () => {
+  let w: SupabaseClient;   // coordinator (payer)
+  let w2: SupabaseClient;  // unrelated coordinator
+  let sup: SupabaseClient; // support admin
+  let wAccountId: string;
+  let orderId: string;
+  const key = `3db1-${suffix}`;
+
+  beforeAll(async () => {
+    w = await signedInClient(`rls-3db1-w-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    w2 = await signedInClient(`rls-3db1-w2-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    sup = await signedInClient(`rls-3db1-sup-${suffix}@${TEST_EMAIL_DOMAIN}`);
+    wAccountId = (await w.auth.getUser()).data.user!.id;
+    const supId = (await sup.auth.getUser()).data.user!.id;
+    const admin = adminClient();
+    await w.rpc('ensure_current_account');
+    await w2.rpc('ensure_current_account');
+    await sup.rpc('ensure_current_account');
+    await admin.from('support_admins').upsert({ account_id: supId }, { onConflict: 'account_id', ignoreDuplicates: true });
+    // Synthetic live order (profiles/offer are nullable on payment_orders):
+    // pure projection fixture — no Stripe object exists and none is created.
+    const ins = await admin.from('payment_orders').insert({
+      coordinator_account_id: wAccountId, order_type: 'one_off',
+      subtotal_minor: 1000, total_minor: 1000, credit_applied_minor: 0,
+      card_amount_minor: 1000, commission_rate_pct: 5,
+      idempotency_key: key, status: 'pending',
+    }).select('id').single();
+    expect(ins.error).toBeNull();
+    orderId = ins.data!.id;
+  }, 120_000);
+
+  afterAll(async () => {
+    await adminClient().from('payment_orders').delete().eq('idempotency_key', key);
+  });
+
+  it('owner reads the durable status projection; stranger gets a neutral not_found', async () => {
+    const mine = await w.rpc('get_payment_order_status', { p_order: orderId });
+    expect(mine.error).toBeNull();
+    expect(mine.data).toMatchObject({ found: true, order_id: orderId, customer_status: 'awaiting_payment_method' });
+    expect(JSON.stringify(mine.data)).not.toMatch(/client_secret|sk_test|sk_live/);
+    const theirs = await w2.rpc('get_payment_order_status', { p_order: orderId });
+    expect(theirs.error).toBeNull();
+    expect(theirs.data).toMatchObject({ found: false });
+  });
+
+  it('authenticated users cannot invoke the service reconcile wrapper', async () => {
+    const r = await w.rpc('reconcile_payment_order', {
+      p_order: orderId, p_intent: null, p_provider_status: 'succeeded',
+      p_amount_minor: 1000, p_currency: 'gbp', p_event_at: null, p_metadata_order: null,
+    });
+    expect(r.error).not.toBeNull(); // permission denied / not found via PostgREST
+  });
+
+  it('service reconcile projects provider facts; owner sees them; mismatch flags reconciliation', async () => {
+    const admin = adminClient();
+    const proj = await admin.rpc('reconcile_payment_order', {
+      p_order: orderId, p_intent: 'pi_3db1_test', p_provider_status: 'processing',
+      p_amount_minor: null, p_currency: null, p_event_at: null, p_metadata_order: null,
+    });
+    expect(proj.error).toBeNull();
+    expect((proj.data as { ok: boolean }).ok).toBe(true);
+    const st = await w.rpc('get_payment_order_status', { p_order: orderId });
+    expect(st.data).toMatchObject({ found: true, customer_status: 'processing', provider_status: 'processing' });
+    // Amount mismatch on provider "success" NEVER finalises — flags support.
+    const bad = await admin.rpc('reconcile_payment_order', {
+      p_order: orderId, p_intent: 'pi_3db1_test', p_provider_status: 'succeeded',
+      p_amount_minor: 999, p_currency: 'gbp', p_event_at: null, p_metadata_order: null,
+    });
+    expect(bad.error).toBeNull();
+    expect((bad.data as { reason?: string }).reason).toBe('amount_mismatch');
+    const flagged = await w.rpc('get_payment_order_status', { p_order: orderId });
+    expect(flagged.data).toMatchObject({ customer_status: 'reconciliation_required', reconciliation_code: 'amount_mismatch' });
+    expect((await admin.from('payment_orders').select('status, booking_id').eq('id', orderId).single()).data)
+      .toMatchObject({ status: 'pending', booking_id: null });
+  });
+
+  it('support queue lists the flagged order for support admins only', async () => {
+    const seen = await sup.rpc('support_list_pending_paid_orders', { p_min_age_minutes: 0 });
+    expect(seen.error).toBeNull();
+    expect((seen.data as Array<{ order_id: string }>).some((r) => r.order_id === orderId)).toBe(true);
+    const denied = await w2.rpc('support_list_pending_paid_orders', { p_min_age_minutes: 0 });
+    expect(denied.error).not.toBeNull();
+  });
+});

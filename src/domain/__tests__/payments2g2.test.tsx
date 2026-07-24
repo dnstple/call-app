@@ -74,7 +74,10 @@ describe('0031 paid-request contract', () => {
     // …and only webhooks/service role may call it.
     expect(SQL).toContain('grant execute on function public.finalize_paid_order(uuid, text, text) to service_role');
     expect(SQL).toMatch(/revoke all on function public\.finalize_paid_order[\s\S]{0,40}from public, anon, authenticated/);
-    expect(WH).toContain("rpc('finalize_paid_order'");
+    // 3D-B1 strengthening: the webhook reaches the SAME row-locked finaliser
+    // through the verifying reconcile wrapper (0080: expected-intent linkage,
+    // amount and currency are checked before finalisation).
+    expect(WH).toContain("rpc('reconcile_payment_order'");
     // The browser-facing function NEVER finalises success itself.
     expect(FN).not.toMatch(/finalize_paid_order'[\s\S]{0,80}p_outcome: 'succeeded'/);
   });
