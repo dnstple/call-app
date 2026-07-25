@@ -288,7 +288,7 @@ async function makeCase(S, comp, key, { offerId, orderType, subtotal, commission
     platform_fee_rate: orderType === 'trial' ? 0 : 5, platform_fee_minor: commission,
     companion_amount_minor: subtotal - commission, is_trial: orderType === 'trial',
   };
-  if (planId) bookingIns.plan_id = planId;
+  if (planId) { bookingIns.plan_id = planId; bookingIns.booking_source = 'package_credit'; }
   const bookingId = must(await admin.from('bookings').insert(bookingIns).select('id').single(), `${key} booking`).id;
   let orderId = null;
   if (orderType !== 'plan_period_call') {
@@ -358,7 +358,7 @@ async function prepareEarnings() {
     created_by_account_id: S.coordinator.account_id, frequency_per_week: 2,
     duration_minutes: 30, communication_method: 'in_app',
     per_conversation_price_minor: REGULAR_MINOR, weekly_price_minor: REGULAR_MINOR * 2,
-    status: 'active', allowance_purchase_id: allowance,
+    status: 'active', funding_mode: 'recurring', allowance_purchase_id: allowance,
   }).select('id').single(), 'e7 plan').id;
   const monthStart = new Date(); monthStart.setUTCDate(1);
   const monthEnd = new Date(monthStart); monthEnd.setUTCMonth(monthEnd.getUTCMonth() + 1);
@@ -376,10 +376,14 @@ async function prepareEarnings() {
   const priorPlanBooking = must(await admin.from('bookings')
     .select('id, timezone').eq('plan_id', plan).maybeSingle(), 'e7 prior booking');
   if (priorPlanBooking?.id) {
-    if (!priorPlanBooking.timezone) {
-      must(await admin.from('bookings').update({ timezone: 'Europe/London' })
-        .eq('id', priorPlanBooking.id).select('id'), 'e7 timezone repair');
-    }
+    // Repair earlier partial rows to the REAL recurring-plan shape (the
+    // 0068 Path B gate requires booking_source='package_credit' on the
+    // booking AND funding_mode='recurring' on the plan).
+    must(await admin.from('bookings')
+      .update({ timezone: 'Europe/London', booking_source: 'package_credit' })
+      .eq('id', priorPlanBooking.id).select('id'), 'e7 booking repair');
+    must(await admin.from('conversation_plans').update({ funding_mode: 'recurring' })
+      .eq('id', plan).select('id'), 'e7 plan repair');
     const priorEarning = must(await admin.from('companion_earnings')
       .select('id, state, basis_minor, commission_rate_pct, commission_minor, net_minor')
       .eq('booking_id', priorPlanBooking.id).maybeSingle(), 'e7 prior earning');
