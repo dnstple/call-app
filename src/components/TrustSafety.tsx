@@ -8,7 +8,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { Flag, Shield, ShieldOff } from 'lucide-react';
 import {
   acknowledgeConsent, getMyConsentStatus, reportConcern, createBlock, removeBlock,
-  type ConsentItem, type ConcernCategory,
+  getMyNotificationPreferences, setMyNotificationPreferences,
+  type ConsentItem, type ConcernCategory, type NotificationPreferences,
 } from '../repositories/trustRepository';
 
 const CONSENT_COPY: Record<string, { title: string; points: string[] }> = {
@@ -205,6 +206,53 @@ export function BlockControl({ memberProfileId, companionProfileId, initiallyBlo
     <button className="inline-flex items-center gap-1 text-sm text-stone-500 hover:text-red-600" onClick={() => setConfirming(true)}>
       <Shield size={14} /> Block
     </button>
+  );
+}
+
+export function NotificationPreferencesPanel() {
+  const [prefs, setPrefs] = useState<NotificationPreferences | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      try { setPrefs(await getMyNotificationPreferences()); }
+      catch (e) { setError(e instanceof Error ? e.message : 'Could not load your preferences.'); }
+    })();
+  }, []);
+
+  const update = async (patch: Partial<NotificationPreferences>) => {
+    if (!prefs) return;
+    const next = { ...prefs, ...patch };
+    setPrefs(next); setBusy(true); setError(null);
+    try { await setMyNotificationPreferences(next); }
+    catch (e) { setError(e instanceof Error ? e.message : 'Could not save.'); }
+    finally { setBusy(false); }
+  };
+
+  if (!prefs) return null;
+  const row = (label: string, key: keyof NotificationPreferences, disabled = false) => (
+    <label className="flex items-center justify-between gap-3 py-1 text-sm text-stone-700">
+      <span>{label}</span>
+      <input type="checkbox" checked={prefs[key]} disabled={busy || disabled}
+        onChange={(e) => void update({ [key]: e.target.checked } as Partial<NotificationPreferences>)} />
+    </label>
+  );
+  return (
+    <section>
+      <h2 className="text-base font-semibold text-stone-800">Email notifications</h2>
+      <p className="mt-1 text-xs text-stone-500">In-app notifications always stay on. Email is optional.</p>
+      {error && <div className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">{error}</div>}
+      <div className="mt-2 rounded-2xl border border-stone-200 bg-white p-4">
+        {row('Email me notifications', 'email_enabled')}
+        <div className={prefs.email_enabled ? '' : 'pointer-events-none opacity-50'}>
+          {row('Messages', 'email_messages', !prefs.email_enabled)}
+          {row('Bookings & reminders', 'email_bookings', !prefs.email_enabled)}
+          {row('Billing & payments', 'email_billing', !prefs.email_enabled)}
+          {row('Safety & support', 'email_safety', !prefs.email_enabled)}
+        </div>
+      </div>
+    </section>
   );
 }
 

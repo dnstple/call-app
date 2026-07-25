@@ -109,6 +109,33 @@ export async function supportBlockConflicts(): Promise<BlockConflictRow[]> {
   if (error) throw fail(error);
   return ((data as { conflicts?: BlockConflictRow[] })?.conflicts ?? []);
 }
+/* ---------------- notification preferences (Block 3) ---------------- */
+export interface NotificationPreferences {
+  email_enabled: boolean; email_messages: boolean; email_bookings: boolean;
+  email_billing: boolean; email_safety: boolean;
+}
+export async function getMyNotificationPreferences(): Promise<NotificationPreferences> {
+  const { data, error } = await db().rpc('get_my_notification_preferences');
+  if (error) throw fail(error);
+  return data as NotificationPreferences;
+}
+export async function setMyNotificationPreferences(p: NotificationPreferences): Promise<void> {
+  const { error } = await db().rpc('set_my_notification_preferences', {
+    p_email_enabled: p.email_enabled, p_messages: p.email_messages, p_bookings: p.email_bookings,
+    p_billing: p.email_billing, p_safety: p.email_safety,
+  });
+  if (error) throw fail(error);
+}
+export interface SystemHealth {
+  email_pending: number; email_failed: number; open_concerns: number;
+  companions_pending_moderation: number; earnings_held: number; active_blocks: number;
+}
+export async function supportSystemHealth(): Promise<SystemHealth> {
+  const { data, error } = await db().rpc('support_system_health');
+  if (error) throw fail(error);
+  return data as SystemHealth;
+}
+
 export interface ConsentAckRow { consent_type: string; policy_version: number; current_version: number; status: string; on_behalf: boolean; acknowledged_at: string; is_current: boolean }
 export async function supportConsentStatus(profileId: string): Promise<ConsentAckRow[]> {
   const { data, error } = await db().rpc('support_consent_status', { p_profile: profileId });

@@ -255,7 +255,7 @@ function AppRoutes() {
                   element={
                     <EmptyState
                       title="Page not found"
-                      body="That route doesn’t exist in the prototype."
+                      body="We couldn’t find that page. It may have moved."
                       action={<Link to="/" className="btn btn-primary">Go home</Link>}
                     />
                   }

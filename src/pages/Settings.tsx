@@ -28,7 +28,7 @@ import { saveSettings } from '../state/actions';
 import { formatPence } from '../domain/commission';
 import { usageLabel } from '../domain/packages';
 import { ConfirmDialog, Modal, PageHeader, ProfilePhoto, SettingsRow, Switch } from '../components/ui';
-import { ConsentPanel, SafetyNotice } from '../components/TrustSafety';
+import { ConsentPanel, NotificationPreferencesPanel, SafetyNotice } from '../components/TrustSafety';
 import { MessagingPermissionSettings } from '../messaging/MessagingPermissionSettings';
 import { clearDraft, completedSignups, hasDraft, resetSignupDemo } from '../signup/storage';
 import { DataModePanel } from '../components/DataModePanel';
@@ -96,8 +96,9 @@ export default function Settings() {
         {/* 3E-G: Companion earnings (read-only 0085 projections). */}
         {isSupabaseMode() && me.role === 'companion' && <EarningsPanel />}
 
-        {/* Block 2: versioned consent + safety copy. */}
+        {/* Block 2: versioned consent + safety copy. Block 3: email preferences. */}
         {isSupabaseMode() && <ConsentPanel />}
+        {isSupabaseMode() && <NotificationPreferencesPanel />}
         <SafetyNotice />
 
         <section>

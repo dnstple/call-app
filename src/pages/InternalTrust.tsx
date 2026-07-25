@@ -13,8 +13,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { PageHeader } from '../components/ui';
 import {
   supportModerationOverview, supportSetModeration, supportConcernsOverview,
-  supportResolveConcern, supportBlockOverview, supportBlockConflicts,
-  type ModerationRow, type ConcernRow, type BlockRow, type BlockConflictRow,
+  supportResolveConcern, supportBlockOverview, supportBlockConflicts, supportSystemHealth,
+  type ModerationRow, type ConcernRow, type BlockRow, type BlockConflictRow, type SystemHealth,
 } from '../repositories/trustRepository';
 
 export default function InternalTrust() {
@@ -22,17 +22,18 @@ export default function InternalTrust() {
   const [concerns, setConcerns] = useState<ConcernRow[]>([]);
   const [blocks, setBlocks] = useState<BlockRow[]>([]);
   const [conflicts, setConflicts] = useState<BlockConflictRow[]>([]);
+  const [health, setHealth] = useState<SystemHealth | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [m, c, b, cf] = await Promise.all([
+      const [m, c, b, cf, h] = await Promise.all([
         supportModerationOverview(), supportConcernsOverview(),
-        supportBlockOverview(), supportBlockConflicts(),
+        supportBlockOverview(), supportBlockConflicts(), supportSystemHealth(),
       ]);
-      setMods(m); setConcerns(c); setBlocks(b); setConflicts(cf);
+      setMods(m); setConcerns(c); setBlocks(b); setConflicts(cf); setHealth(h);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load the trust & safety console.');
     }
@@ -62,6 +63,27 @@ export default function InternalTrust() {
     <div className="mx-auto w-full max-w-4xl px-4 py-8">
       <PageHeader title="Trust & safety" subtitle="Companion moderation, safeguarding reports and blocks" />
       {error && <div className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">{error}</div>}
+
+      {health && (
+        <section className="mt-6">
+          <h2 className="text-base font-semibold text-stone-800">Operational health</h2>
+          <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {([
+              ['Open concerns', health.open_concerns],
+              ['Pending moderation', health.companions_pending_moderation],
+              ['Earnings held', health.earnings_held],
+              ['Active blocks', health.active_blocks],
+              ['Emails pending', health.email_pending],
+              ['Emails failed', health.email_failed],
+            ] as [string, number][]).map(([label, n]) => (
+              <div key={label} className="rounded-xl border border-stone-200 bg-white p-3">
+                <div className="text-2xl font-semibold text-stone-800">{n}</div>
+                <div className="text-xs text-stone-500">{label}</div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       <section className="mt-6">
         <h2 className="text-base font-semibold text-stone-800">Companion moderation</h2>
