@@ -89,6 +89,8 @@ if (MUTATING.some((m) => args.includes(m)) && argOf('--confirm') !== PHRASE) {
 
 const admin = createClient(URL_, SVC, { auth: { persistSession: false } });
 const must = (r, w) => { if (r.error) fail(`${w}: ${JSON.stringify(r.error)}`); return r.data; };
+// Throwing variant: use inside any armed/finally window so restores always run.
+const mustT = (r, w) => { if (r.error) throw new Error(`${w}: ${JSON.stringify(r.error)}`); return r.data; };
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const mustUuid = (v, label) => {
   if (typeof v !== 'string' || !UUID_RE.test(v)) fail(`${label} is not a UUID`);
@@ -548,9 +550,6 @@ async function runTransferCases() {
   // of the deployed scoped-stripe-transfers Edge Function. transfer_finalise
   // is armed to scoped_execution ONLY around execution and hard-restored in
   // finally, exactly like execute-c3-transfer.mjs.
-  // Throwing variant so the FINALLY restore always runs (fail()/process.exit
-  // would skip finally — the exact bug that once left the control armed).
-  const mustT = (r, w) => { if (r.error) throw new Error(`${w}: ${JSON.stringify(r.error)}`); return r.data; };
   const controlState = async () => mustT(await admin.from('financial_operation_controls')
     .select('state').eq('control_name', 'transfer_finalise').single(), 'read control').state;
   const setControlTo = async (to) => {
