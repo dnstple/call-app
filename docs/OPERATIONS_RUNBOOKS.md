@@ -397,3 +397,53 @@ financial control disabled. The one-shot orchestrator
 (scripts/execute-c3-transfer.mjs) performed arming, single execution and
 hard-verified finally-restoration atomically; its --replay mode is the
 sanctioned idempotency probe. production_live remains fully inactive.
+
+## Companion payouts (Stage 3E)
+
+Payout architecture: customer money is collected by the platform (Stage 3D,
+validated); a completed call creates one immutable companion earning
+(ensure_companion_earning, trial 0% / regular 5% from the booking snapshot);
+release requires the two-signal or 12-hour-no-issue rule with no open issue
+and no active evidence review; transfers execute ONLY through the scoped
+saga (0077/0078) behind the 0073 control plane, now additionally gated by
+the 0084 daily aggregate ceiling and destination allowlist.
+
+Onboarding troubleshooting: the Companion self-serves through Settings →
+"Set up payments" (Stripe-hosted Express onboarding; no bank details ever
+enter the app). If stuck, refresh_connect_status resyncs; past-due
+requirements and disabled reasons appear in support_payout_queue_overview
+(payout_account_action_required) and in the Companion's panel in plain
+language. A Coordinator can never create or control a Companion payout
+account.
+
+Earnings held: held_for_issue clears only through the existing issue
+resolution; evidence_review_active clears through the 0072 review flow;
+release_overdue (>24h, no issue, no review) means the scheduled release did
+not run — check release_eligible_earnings scheduling before touching rows.
+
+Transfer reconciliation: transfer_unknown (processing + provider id + stale)
+and provider/local mismatches are handled EXACTLY as in Stage 3C2-C3: the
+scoped saga's lookup-before-create plus finalize_scoped_transfer_uncertain
+routes ambiguity to reconciliation — never assume failed, never create a
+second transfer. Duplicate webhooks are absorbed by the event-id ledger.
+Amount/currency/destination mismatches become reconciliation-required
+findings for support; foreign transfer ids are rejected.
+
+Failed transfer retry: failed_retryable retries with the SAME earning
+identity and idempotency contract via a new scoped run; failed_permanent
+requires support classification first. Reversal-required
+(settlement_adjustments) is support-resolved; no automatic companion debit
+is authorised and no browser role can initiate a reversal.
+
+Disabling payout execution: all transfer controls are DISABLED by default;
+scoped_execution is armed per run and restored afterwards. Emergency stop =
+set transfer_claim/transfer_finalise to disabled AND ceiling 0 (per-transfer
+and daily); the allowlist can additionally be emptied. Every change is
+audited.
+
+Test-to-production checklist (payouts): APP_ORIGINS to production origin;
+live keys separately authorised; Connect platform/business verification;
+production onboarding review; per-transfer AND daily ceilings deliberately
+configured; destination allowlist policy for production decided; payout
+support staffed; refunds/reversals/negative-balance/tax approved. Stage 3E
+test-mode validation authorises NO live payout.

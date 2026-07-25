@@ -35,6 +35,7 @@ import { AuthStatusPanel } from '../components/AuthStatusPanel';
 import { getDataMode, isSupabaseMode } from '../config/dataMode';
 import { BillingPanel } from '../components/BillingPanel';
 import { ConnectPanel } from '../components/ConnectPanel';
+import { EarningsPanel } from '../components/EarningsPanel';
 import { useAuth } from '../auth/AuthProvider';
 import { KeyRound, LogOut, ShieldCheck } from 'lucide-react';
 import { roleLabel } from '../components/Shell';
@@ -91,6 +92,8 @@ export default function Settings() {
         {isSupabaseMode() && me.role !== 'companion' && <BillingPanel />}
         {/* 2G3: Companion Connect onboarding + payment readiness. */}
         {isSupabaseMode() && me.role === 'companion' && <ConnectPanel />}
+        {/* 3E-G: Companion earnings (read-only 0085 projections). */}
+        {isSupabaseMode() && me.role === 'companion' && <EarningsPanel />}
 
         <section>
           <h3 className="muted mb-2" style={{ fontWeight: 600 }}>Account</h3>
