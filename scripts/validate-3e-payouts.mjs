@@ -188,6 +188,27 @@ async function preflight() {
     }).select('id').single(), 'single offer').id;
     checkpoint(step, { type: 'offers', trial: trialOffer, single: singleOffer });
 
+    // Block 2 additive: the trust triggers (0092) gate every booking insert on
+    // Companion approval + both parties' current consent. Satisfy them for the
+    // isolated fixture WITHOUT weakening any production rule. Idempotent.
+    step = 'trust gates (approve + consent)';
+    mustT(await admin.from('companion_profiles').upsert(
+      { profile_id: compProfile, moderation_status: 'approved' }, { onConflict: 'profile_id' }),
+      'companion moderation approved');
+    for (const [subject, ctype, acct] of [[memProfile, 'member_pilot', memberOwner.id], [compProfile, 'companion_pilot', comp.id]]) {
+      const pol = mustT(await admin.from('consent_policies').select('current_version').eq('consent_type', ctype).single(), `consent policy ${ctype}`);
+      const ex = await admin.from('consent_acknowledgements').select('id')
+        .eq('subject_profile_id', subject).eq('consent_type', ctype)
+        .eq('policy_version', pol.current_version).eq('status', 'active').maybeSingle();
+      if (!ex.data) {
+        mustT(await admin.from('consent_acknowledgements').insert({
+          subject_profile_id: subject, consent_type: ctype, policy_version: pol.current_version,
+          acknowledged_by_account_id: acct, status: 'active',
+        }), `consent ack ${ctype}`);
+      }
+    }
+    checkpoint(step, { type: 'trust_gates', approved: true });
+
     saveSnap({
       suffix, baseline,
       labels: { coordinator: '3e coordinator', member: '3e managed member', companion: '3e companion', ops: '3e support' },
