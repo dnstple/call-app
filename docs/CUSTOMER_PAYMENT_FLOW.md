@@ -20,6 +20,15 @@ parameter is never trusted: the page asks the server for the durable order
 state (and runs one idempotent server-side check of the stored PaymentIntent)
 before saying anything definite.
 
+The off-session attempt that triggers this handoff is superseded once the
+hosted Checkout Session is opened: the session becomes the order's
+authoritative funding, and the superseded intent's later cancellation/failure
+can never fail the order (migrations 0082/0083). A hosted Checkout Session's
+PaymentIntent does not exist until the customer completes payment, so
+containment keys on the recorded session, not the (initially null) intent.
+This is what makes SCA payments finalise reliably instead of stalling — the
+behaviour validated end-to-end in hosted test mode (Stage 3D-D, M3/M4/M5).
+
 ## If the app is closed, reloaded, or the bank app swallows the return
 
 The durable session survives. On the next visit the shell shows

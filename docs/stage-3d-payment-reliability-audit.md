@@ -574,3 +574,55 @@ Implemented (commit "Implement resilient customer payment recovery UX"):
 
 Stage 3D-D (hosted Stripe test-mode validation) remains before Stage 3D
 closes.
+
+## 22. Stage 3D-D — hosted Stripe TEST-MODE validation outcome
+
+Executed against project `gwtunmoefapiiybwlelw` in hosted test mode (all
+financial controls disabled, transfer ceiling 0). Browser matrix M1–M9 plus
+the automated verifier all pass: `validate-3dd-payments.mjs --verify` →
+**VERIFY RESULT pass=18 fail=0** (14 fixture orders, 7 provider intents;
+order/booking deltas fully explained; every fixture intent livemode=false with
+matching amount/currency/metadata; Stage 3C payout sentinels unchanged; the M9
+plan-period order finalised exactly once through the deployed return path).
+
+Scenario results: M1 credit-only trial (exactly-once, credit path); M2 mixed
+credit+card (off-session, no SCA); M3 SCA success + return; M4 SCA
+cancellation (honest interim, order unpoisoned, no false failure); M5 reload
+during requires_action (durable resume, exactly-once); M6 browser closed after
+provider success (webhook-only finalisation); M7 double-click/two-tab
+(idempotency key + submit guard → one order/booking); M8 duplicate webhook
+event id (natural-key ledger dedup, zero duplicate effect); M9 plan-period via
+hosted return.
+
+### Launch-blocker found and fixed during 3D-D
+
+Live M1 and M3 surfaced two real defects the local suites could not (both at
+the projection/finalisation edges; the exactly-once core was sound):
+
+- **Credit-only projection freshness** — `finalize_paid_order` never
+  maintained the durable projection columns, so a synchronous credit-only
+  order settled with `local_finalisation_status='pending'`. Fixed additively
+  in **migration 0081**: a `BEFORE` trigger sustains the invariant when an
+  order reaches a terminal status while projection is at default, plus a
+  one-time repair. No user/financial impact pre-fix (customer status derives
+  from the terminal legacy status).
+- **SCA superseded-intent poisoning (launch-blocker)** — the off-session
+  PaymentIntent created before the hosted-authentication handoff stayed
+  metadata-linked to the order; its later `canceled`/`payment_failed` webhook
+  mapped back to the order and the failed/canceled reconcile branch (no
+  intent-authority check) marked it `failed`, beating the hosted success →
+  `finalise_incomplete`, customer charged, no booking, "manual confirmation
+  check" loop. Fixed additively in **migrations 0082 + 0083** and the
+  `stripe-payments` Edge function: the hosted Checkout session is recorded as
+  the order's authoritative funding (store-before-cancel), and a terminal
+  intent event may fail an order only when it carries the authoritative intent
+  — for a session-funded order (whose intent is null until Stripe creates it
+  at completion) any foreign terminal event is a benign no-op. Genuine
+  matching-intent failure, cancellation-via-expiry, non-session declines,
+  mismatch flags and idempotency are all unchanged; `finalise_paid_order` and
+  the exactly-once core are untouched. Two pre-fix hosted test charges were
+  refunded and their flags cleared.
+
+All three migrations were proven on scratch Postgres (the exact hosted races
+reproduced), covered by regression contracts, applied to hosted, and the Edge
+function redeployed; the full local battery is green.
