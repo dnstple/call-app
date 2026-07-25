@@ -331,13 +331,19 @@ async function prepareEarnings() {
   if (cases.E7_plan_call?.earningId) {
     say('e7: reusing existing case (resume)');
   } else {
-  const planOrder = must(await admin.from('payment_orders').insert({
+  const priorPlanOrder = must(await admin.from('payment_orders')
+    .select('id').eq('idempotency_key', `3efx-e7ord-${S.suffix}`).maybeSingle(), 'e7 prior order');
+  const planOrder = priorPlanOrder?.id ?? must(await admin.from('payment_orders').insert({
     coordinator_account_id: S.coordinator.account_id, member_profile_id: S.member_profile_id,
     companion_profile_id: S.companion_profile_id, order_type: 'plan_period', status: 'succeeded',
     subtotal_minor: REGULAR_MINOR * 2, discount_minor: 0, service_fee_minor: 0, credit_applied_minor: 0,
     card_amount_minor: REGULAR_MINOR * 2, total_minor: REGULAR_MINOR * 2, commission_rate_pct: 5,
     commission_minor: REGULAR_COMMISSION * 2, idempotency_key: `3efx-e7ord-${S.suffix}`,
   }).select('id').single(), 'e7 plan order').id;
+  const priorPeriod = must(await admin.from('plan_billing_periods')
+    .select('id, plan_id').eq('payment_order_id', planOrder).maybeSingle(), 'e7 prior period');
+  let plan, period;
+  if (priorPeriod?.id) { plan = priorPeriod.plan_id; period = priorPeriod.id; } else {
   // Allowance purchase exactly as public.create_conversation_plan (0011)
   // creates it: offer-less, simulated, snapshot columns only.
   const allowance = must(await admin.from('package_purchases').insert({
@@ -346,7 +352,7 @@ async function prepareEarnings() {
     title: 'Conversation plan allowance', conversation_count: 2, duration_minutes: 30,
     price_minor: REGULAR_MINOR * 2, currency: 'GBP', is_simulated: true,
   }).select('id').single(), 'e7 allowance').id;
-  const plan = must(await admin.from('conversation_plans').insert({
+  plan = must(await admin.from('conversation_plans').insert({
     member_profile_id: S.member_profile_id, companion_profile_id: S.companion_profile_id,
     created_by_account_id: S.coordinator.account_id, frequency_per_week: 2,
     duration_minutes: 30, communication_method: 'in_app',
@@ -355,13 +361,14 @@ async function prepareEarnings() {
   }).select('id').single(), 'e7 plan').id;
   const monthStart = new Date(); monthStart.setUTCDate(1);
   const monthEnd = new Date(monthStart); monthEnd.setUTCMonth(monthEnd.getUTCMonth() + 1);
-  const period = must(await admin.from('plan_billing_periods').insert({
+  period = must(await admin.from('plan_billing_periods').insert({
     plan_id: plan, coordinator_account_id: S.coordinator.account_id,
     period_start: monthStart.toISOString().slice(0, 10), period_end: monthEnd.toISOString().slice(0, 10),
     status: 'paid', payment_order_id: planOrder, occurrences_count: 2,
     gross_minor: REGULAR_MINOR * 2, discount_minor: 0, net_minor: REGULAR_MINOR * 2,
     credit_applied_minor: 0, card_amount_minor: REGULAR_MINOR * 2,
   }).select('id').single(), 'e7 period').id;
+  }
   cases.E7_plan_call = await makeCase(S, comp, 'e7', { offerId: S.single_offer_id, orderType: 'plan_period_call', subtotal: REGULAR_MINOR, commission: REGULAR_COMMISSION, credit: 0, card: 0, endedHoursAgo: 34, planId: plan, periodId: period });
   cases.E7_plan_call.planId = plan; cases.E7_plan_call.periodId = period; cases.E7_plan_call.planOrderId = planOrder;
   S.cases = cases; saveSnap(S);
