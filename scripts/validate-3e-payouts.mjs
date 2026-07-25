@@ -574,6 +574,22 @@ async function runTransferCases() {
       say({ [key]: { runId, completed: true } });
     }
 
+    // E8 containment probe: an execute-run scoped to the ISSUE-HELD earning
+    // must preview ZERO eligible records — the open issue is contained at
+    // the transfer layer (0048 claim exclusion / 0075 evaluator / 0077
+    // classify), which is the payout-blocking invariant the stage demands.
+    const e8id = mustUuid(S.cases.E8_issue_held.earningId, 'E8 earning');
+    const rq8 = must(await ops.rpc('support_request_operation_run', {
+      p_operation_type: 'transfer_finalise', p_execution_mode: 'execute', p_scope_type: 'record_ids',
+      p_scoped_ids: [e8id], p_batch_limit: null, p_reason: 'Stage 3E E8 issue-hold probe',
+    }), 'E8 run request');
+    const run8 = mustUuid(rq8.run_id, 'E8 run id');
+    const prev8 = must(await ops.rpc('support_preview_operation_run', { p_run_id: run8 }), 'E8 preview');
+    must(await ops.rpc('support_cancel_operation_run', { p_run_id: run8, p_reason: 'E8 probe complete' }), 'E8 cancel');
+    S.transfers.E8_hold_probe = { runId: run8, preview: prev8 };
+    saveSnap(S);
+    say({ E8_hold_probe: prev8 });
+
     // E10: a SECOND run scoped to the already-transferred E5 earning must
     // show ZERO eligible records (no second transfer is even preparable).
     const e5 = mustUuid(S.cases.E5_credit_only.earningId, 'E5 earning');
@@ -619,12 +635,20 @@ async function verify() {
     .select('id', { count: 'exact', head: true }).eq('plan_id', C.E7_plan_call?.planId ?? '00000000-0000-4000-8000-000000000000'), 'plan earnings');
   check('E7 one completed plan call -> exactly one earning; unused allowance -> none',
     !!e7 && planEarnings === 1 && e7.net_minor === REGULAR_NET);
-  // E8 issue hold, no transfer.
+  // E8 issue containment: the open issue blocks the TRANSFER layer (0048/
+  // 0075/0077) — provably zero eligible in the scoped preview, zero attempts,
+  // transfer projection untouched, issue still open.
   const e8 = await byKey('E8_issue_held');
   const e8Attempts = safeCount(await admin.from('companion_transfer_attempts')
     .select('id', { count: 'exact', head: true }).eq('earning_id', C.E8_issue_held?.earningId ?? e5.id), 'e8 attempts');
-  check('E8 open issue holds the earning and no transfer exists',
-    !!e8 && e8.state !== 'payable' && e8.transfer_state === 'not_ready' && e8Attempts === 0, `state=${e8?.state}`);
+  const e8Issue = safeCount(await admin.from('conversation_issues')
+    .select('id', { count: 'exact', head: true }).eq('booking_id', C.E8_issue_held?.bookingId ?? e5.id)
+    .in('state', ['open', 'reviewing']), 'e8 issue');
+  const e8prev = S.transfers?.E8_hold_probe?.preview ?? {};
+  const e8Eligible = Number(e8prev.eligible ?? e8prev.eligible_count ?? e8prev.detail?.eligible ?? -1);
+  check('E8 open issue prevents transfer (0 eligible in scoped preview, 0 attempts, projection untouched)',
+    !!e8 && e8Issue >= 1 && e8Attempts === 0 && e8.transfer_state === 'not_ready' && e8Eligible === 0,
+    `issue=${e8Issue} attempts=${e8Attempts} eligible=${e8Eligible}`);
   // E9 released exactly once by the REAL scheduled function.
   const e9 = await byKey('E9_release');
   check('E9 12h/no-issue earning became payable via release_eligible_earnings (idempotent runs)',

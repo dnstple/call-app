@@ -93,9 +93,10 @@ describe('3E-H harness: verifier assertions', () => {
     expect(v).toContain('amount/currency/destination match the immutable earning');
     expect(v).toContain('provider transfer livemode=false, amount + destination agree');
   });
-  it('16. catches a transfer against an ineligible earning (issue-held earning must have zero attempts)', () => {
-    expect(v).toContain('E8 open issue holds the earning and no transfer exists');
+  it('16. catches a transfer against an ineligible earning (issue-held: 0 eligible in preview, 0 attempts)', () => {
+    expect(v).toContain('E8 open issue prevents transfer (0 eligible in scoped preview, 0 attempts, projection untouched)');
     expect(v).toContain('e8Attempts === 0');
+    expect(v).toContain('e8Eligible === 0');
   });
   it('17. confirms issue-held earnings have no transfer and E9 released exactly once via the REAL function', () => {
     expect(v).toContain("e9.state === 'payable'");
