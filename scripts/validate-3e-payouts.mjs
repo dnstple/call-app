@@ -262,6 +262,21 @@ async function verifyConnect() {
 // ONLY through the real public functions. No production eligibility rule is
 // weakened; there is no test clock — bookings simply *are* in the past.
 async function makeCase(S, comp, key, { offerId, orderType, subtotal, commission, credit, card, endedHoursAgo, planId = null, periodId = null }) {
+  // Idempotent resume: if this case's order already exists (unique
+  // idempotency key), reuse its booking/earning instead of recreating —
+  // the companion no-overlap exclusion constraint makes duplicates impossible
+  // anyway, and a resumed run must not fail on its own earlier progress.
+  if (orderType !== 'plan_period_call') {
+    const prior = must(await admin.from('payment_orders')
+      .select('id, booking_id').eq('idempotency_key', `3efx-${key}-${S.suffix}`).maybeSingle(), `${key} prior order`);
+    if (prior?.id) {
+      const earning = must(await admin.from('companion_earnings')
+        .select('id, state, basis_minor, commission_rate_pct, commission_minor, net_minor')
+        .eq('booking_id', prior.booking_id).maybeSingle(), `${key} prior earning`);
+      say(`${key}: reusing existing case (resume)`);
+      return { bookingId: prior.booking_id, orderId: prior.id, earningId: earning?.id ?? null, earning };
+    }
+  }
   const start = new Date(Date.now() - (endedHoursAgo * 60 + 30) * 60_000);
   const end = new Date(start.getTime() + 30 * 60_000);
   const bookingIns = {
@@ -297,19 +312,25 @@ async function makeCase(S, comp, key, { offerId, orderType, subtotal, commission
 async function prepareEarnings() {
   const S = loadSnap();
   await assertRestingState();
-  if (S.cases && Object.keys(S.cases).length) { say('cases exist — prepare-earnings is idempotent.'); say(Object.keys(S.cases)); return; }
+  if (S.cases?.release_runs) { say('cases complete — prepare-earnings is idempotent.'); say(Object.keys(S.cases)); return; }
   const comp = await companionJwt(S);
 
-  const cases = {};
-  cases.E3_trial = await makeCase(S, comp, 'e3', { offerId: S.trial_offer_id, orderType: 'trial', subtotal: TRIAL_MINOR, commission: 0, credit: 0, card: TRIAL_MINOR, endedHoursAgo: 26 });
-  cases.E4_regular_card = await makeCase(S, comp, 'e4', { offerId: S.single_offer_id, orderType: 'one_off', subtotal: REGULAR_MINOR, commission: REGULAR_COMMISSION, credit: 0, card: REGULAR_MINOR, endedHoursAgo: 26 });
-  cases.E5_credit_only = await makeCase(S, comp, 'e5', { offerId: S.single_offer_id, orderType: 'one_off', subtotal: REGULAR_MINOR, commission: REGULAR_COMMISSION, credit: REGULAR_MINOR, card: 0, endedHoursAgo: 26 });
-  cases.E6_mixed = await makeCase(S, comp, 'e6', { offerId: S.single_offer_id, orderType: 'one_off', subtotal: REGULAR_MINOR, commission: REGULAR_COMMISSION, credit: 1400, card: 200, endedHoursAgo: 26 });
+  // Distinct, non-overlapping past windows: the companion no-overlap
+  // exclusion constraint (production rule) forbids identical slots.
+  const cases = S.cases ?? {};
+  const done = async (k, v) => { cases[k] = v; S.cases = cases; saveSnap(S); return v; };
+  await done('E3_trial', await makeCase(S, comp, 'e3', { offerId: S.trial_offer_id, orderType: 'trial', subtotal: TRIAL_MINOR, commission: 0, credit: 0, card: TRIAL_MINOR, endedHoursAgo: 26 }));
+  await done('E4_regular_card', await makeCase(S, comp, 'e4', { offerId: S.single_offer_id, orderType: 'one_off', subtotal: REGULAR_MINOR, commission: REGULAR_COMMISSION, credit: 0, card: REGULAR_MINOR, endedHoursAgo: 28 }));
+  await done('E5_credit_only', await makeCase(S, comp, 'e5', { offerId: S.single_offer_id, orderType: 'one_off', subtotal: REGULAR_MINOR, commission: REGULAR_COMMISSION, credit: REGULAR_MINOR, card: 0, endedHoursAgo: 30 }));
+  await done('E6_mixed', await makeCase(S, comp, 'e6', { offerId: S.single_offer_id, orderType: 'one_off', subtotal: REGULAR_MINOR, commission: REGULAR_COMMISSION, credit: 1400, card: 200, endedHoursAgo: 32 }));
 
   // E7 plan-funded: real schema chain (package_offers -> package_purchases
   // allowance -> conversation_plans -> PAID plan_billing_periods) covering
   // exactly one completed call + one unused allowance (occurrences 2, one
   // booking only). The plan purchase itself must create NO earning.
+  if (cases.E7_plan_call?.earningId) {
+    say('e7: reusing existing case (resume)');
+  } else {
   const planOrder = must(await admin.from('payment_orders').insert({
     coordinator_account_id: S.coordinator.account_id, member_profile_id: S.member_profile_id,
     companion_profile_id: S.companion_profile_id, order_type: 'plan_period', status: 'succeeded',
@@ -344,23 +365,32 @@ async function prepareEarnings() {
     gross_minor: REGULAR_MINOR * 2, discount_minor: 0, net_minor: REGULAR_MINOR * 2,
     credit_applied_minor: 0, card_amount_minor: REGULAR_MINOR * 2,
   }).select('id').single(), 'e7 period').id;
-  cases.E7_plan_call = await makeCase(S, comp, 'e7', { offerId: S.single_offer_id, orderType: 'plan_period_call', subtotal: REGULAR_MINOR, commission: REGULAR_COMMISSION, credit: 0, card: 0, endedHoursAgo: 26, planId: plan, periodId: period });
+  cases.E7_plan_call = await makeCase(S, comp, 'e7', { offerId: S.single_offer_id, orderType: 'plan_period_call', subtotal: REGULAR_MINOR, commission: REGULAR_COMMISSION, credit: 0, card: 0, endedHoursAgo: 34, planId: plan, periodId: period });
   cases.E7_plan_call.planId = plan; cases.E7_plan_call.periodId = period; cases.E7_plan_call.planOrderId = planOrder;
+  S.cases = cases; saveSnap(S);
+  }
 
   // E8 issue-held: completed call, then a REAL open issue from the coordinator.
-  cases.E8_issue_held = await makeCase(S, comp, 'e8', { offerId: S.single_offer_id, orderType: 'one_off', subtotal: REGULAR_MINOR, commission: REGULAR_COMMISSION, credit: 0, card: REGULAR_MINOR, endedHoursAgo: 26 });
-  const coordClient = createClient(URL_, ANON, { auth: { persistSession: false } });
-  const si = await coordClient.auth.signInWithPassword({ email: S.coordinator.email, password: S.coordinator.password });
-  if (si.error) fail(`coordinator sign-in: ${si.error.message}`);
-  const issue = must(await coordClient.rpc('report_conversation_issue', {
-    p_booking: cases.E8_issue_held.bookingId, p_category: 'call_quality',
-    p_description: 'Stage 3E validation: deliberate issue hold (E8).',
-  }), 'e8 issue');
-  cases.E8_issue_held.issue = issue?.id ?? issue;
+  cases.E8_issue_held = await makeCase(S, comp, 'e8', { offerId: S.single_offer_id, orderType: 'one_off', subtotal: REGULAR_MINOR, commission: REGULAR_COMMISSION, credit: 0, card: REGULAR_MINOR, endedHoursAgo: 36 });
+  S.cases = cases; saveSnap(S);
+  const existingIssue = must(await admin.from('conversation_issues')
+    .select('id').eq('booking_id', cases.E8_issue_held.bookingId).maybeSingle(), 'e8 issue check');
+  if (existingIssue?.id) {
+    cases.E8_issue_held.issue = existingIssue.id;
+  } else {
+    const coordClient = createClient(URL_, ANON, { auth: { persistSession: false } });
+    const si = await coordClient.auth.signInWithPassword({ email: S.coordinator.email, password: S.coordinator.password });
+    if (si.error) fail(`coordinator sign-in: ${si.error.message}`);
+    const issue = must(await coordClient.rpc('report_conversation_issue', {
+      p_booking: cases.E8_issue_held.bookingId, p_category: 'call_quality',
+      p_description: 'Stage 3E validation: deliberate issue hold (E8).',
+    }), 'e8 issue');
+    cases.E8_issue_held.issue = issue?.id ?? issue;
+  }
 
   // E9 release path: ended 26h ago -> the REAL scheduled function must
   // release it exactly once (run twice, idempotent).
-  cases.E9_release = await makeCase(S, comp, 'e9', { offerId: S.single_offer_id, orderType: 'one_off', subtotal: REGULAR_MINOR, commission: REGULAR_COMMISSION, credit: 0, card: REGULAR_MINOR, endedHoursAgo: 30 });
+  cases.E9_release = await makeCase(S, comp, 'e9', { offerId: S.single_offer_id, orderType: 'one_off', subtotal: REGULAR_MINOR, commission: REGULAR_COMMISSION, credit: 0, card: REGULAR_MINOR, endedHoursAgo: 38 });
   const rel1 = must(await admin.rpc('release_eligible_earnings'), 'release run 1');
   const rel2 = must(await admin.rpc('release_eligible_earnings'), 'release run 2');
   cases.release_runs = { first: rel1, second: rel2 };

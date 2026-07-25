@@ -42,7 +42,8 @@ describe('3E-H harness: phrase, keys, project and identity guards', () => {
 describe('3E-H harness: idempotency, checkpointing and control restoration', () => {
   it('7. fixture creation is idempotent (existing snapshot short-circuits)', () => {
     expect(H).toContain('snapshot exists — preflight is idempotent');
-    expect(H).toContain('cases exist — prepare-earnings is idempotent');
+    expect(H).toContain('cases complete — prepare-earnings is idempotent');
+    expect(H).toContain('reusing existing case (resume)');
     expect(H).toContain('already transferred — skipping (idempotent)');
   });
   it('8. interrupted execution resumes from checkpoint/snapshot', () => {
