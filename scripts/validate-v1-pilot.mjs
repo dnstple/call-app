@@ -1,150 +1,141 @@
 #!/usr/bin/env node
 /**
- * Block 4 — one guarded, integrated v1 pilot validation harness (hosted TEST mode).
+ * Block 4 — v1 pilot validation CLI (hosted TEST mode).
  *
- * Runs the REAL application RPCs, repositories and Edge Functions against the
- * hosted Supabase TEST project. It NEVER reimplements business logic, never uses
- * live keys, never moves real money, and prints/writes no secrets. It builds ONE
- * production-faithful fixture (support + coordinator + managed member + approved
- * companion) that satisfies the Block 2 trust gates, then verifies the trust,
- * notification/outbox, reminder, call-eligibility and financial-projection
- * invariants that can be proven deterministically without a browser. Real
- * two-person video, camera/mic permission and mobile layout are recorded
- * separately in v1-browser-evidence.local.txt (operator-driven).
+ * Thin wiring: parses argv, builds a real `deps` object (service-role client,
+ * livekit-token Edge caller, Stage 3D/3E verifier runner) and delegates to
+ * scripts/v1-harness-core.mjs. All logic + guards live in the core so they are
+ * unit-tested without hosted access. Prints/writes NO secrets; mutating modes
+ * require the phrase VALIDATE-V1-PILOT-TEST.
  *
- * Modes:
- *   --preflight        safety checks only (no writes)
- *   --inspect          print current hosted baseline counts (read-only)
- *   --verify-foundation  read-only: migrations/functions present, controls safe
- *   --prepare-fixture  create the isolated v1pilot-* fixture (MUTATING)
- *   --verify-trust     consent / moderation / blocking gates (MUTATING probes)
- *   --verify-notifications  in-app + outbox + suppression + adapter (MUTATING probes)
- *   --verify-calls     call-eligibility gates via real RPC (read-only over fixture)
- *   --verify-financial read-only: 3D/3E safe projections reflect the fixture
- *   --verify           run every verify-* section and aggregate
- *   --report           print the final VERIFY RESULT line from the checkpoint
- *   --inspect-partial  dump the local checkpoint
- *   --restore-controls re-assert disabled controls + zero ceilings
- *   --cleanup          remove ONLY non-financial v1pilot-* fixture rows
- *
- * Mutating modes require the confirmation phrase:  VALIDATE-V1-PILOT-TEST
+ * Modes: --preflight --inspect --verify-foundation --prepare-fixture
+ *        --verify-trust --verify-notifications --verify-calls --verify-financial
+ *        --verify --report --inspect-partial --restore-controls --cleanup
  */
 import { createClient } from '@supabase/supabase-js';
+import { spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import * as core from './v1-harness-core.mjs';
 
 const MODE = process.argv.find((a) => a.startsWith('--')) ?? '--preflight';
-const CONFIRM = 'VALIDATE-V1-PILOT-TEST';
-const MUTATING = ['--prepare-fixture', '--verify-trust', '--verify-notifications', '--verify', '--restore-controls', '--cleanup'];
-const CONFIRMED = process.argv.includes(CONFIRM);
-
-const URL_ = process.env.SUPABASE_URL ?? '';
-const SVC = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
-const ANON = process.env.SUPABASE_ANON_KEY ?? '';
-const STRIPE_KEY = process.env.STRIPE_SECRET_KEY ?? '';
-const EXPECT_PROJECT = process.env.V1_EXPECT_PROJECT_REF ?? 'gwtunmoefapiiybwlelw'; // hosted test project
-const SUFFIX = process.env.V1_SUFFIX ?? `v1pilot-${Date.now().toString(36)}`;
-const CHECKPOINT = 'v1-checkpoint.local.json';
-const EVIDENCE = 'v1-terminal-evidence.local.txt';
+const CONFIRMED = process.argv.includes(core.CONFIRM);
+const env = {
+  url: process.env.SUPABASE_URL ?? '', svc: process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
+  anon: process.env.SUPABASE_ANON_KEY ?? '', stripeKey: process.env.STRIPE_SECRET_KEY ?? '',
+  expectProject: process.env.V1_EXPECT_PROJECT_REF ?? 'gwtunmoefapiiybwlelw',
+  suffix: process.env.V1_SUFFIX ?? '',
+};
+const CK = 'v1-checkpoint.local.json';
+const EV = 'v1-terminal-evidence.local.txt';
 const REPORT = 'v1-report.local.json';
+const BROWSER = 'v1-browser-evidence.local.txt';
 
-function die(m) { console.error('FATAL: ' + m); process.exit(2); }
-function ev(line) { // secrets-free evidence
-  const safe = String(line).replace(/(eyJ[A-Za-z0-9._-]{6,})/g, '<jwt>').replace(/sk_[a-z]+_[A-Za-z0-9]+/g, '<stripe>');
-  writeFileSync(EVIDENCE, safe + '\n', { flag: 'a' }); console.log(safe);
+function ev(line) { const s = core.scrubSecrets(line); writeFileSync(EV, s + '\n', { flag: 'a' }); console.log(s); }
+function die(m) { console.error('FATAL: ' + core.scrubSecrets(m)); process.exit(2); }
+
+/* -------- checkpoint (resumable) -------- */
+function loadCk() {
+  const base = existsSync(CK) ? JSON.parse(readFileSync(CK, 'utf-8')) : { suffix: env.suffix, done: [], results: [], snap: null };
+  return {
+    ...base,
+    save() { writeFileSync(CK, JSON.stringify({ suffix: this.suffix, done: this.done, results: this.results, snap: this.snap }, null, 2)); },
+    record(name, pass, detail) { this.results = this.results.filter((r) => r.name !== name); this.results.push({ name, pass: !!pass, detail: detail ?? null }); this.save(); ev(`${pass ? 'PASS' : 'FAIL'} ${name}${detail ? ' — ' + detail : ''}`); },
+    async phase(name, fn) { if (this.done.includes(name)) { ev(`skip phase ${name} (checkpoint)`); return; } await fn(); this.done.push(name); this.save(); ev(`phase ${name} done`); },
+  };
 }
 
-/* ------------------------- safety guards ------------------------- */
-function assertSafe() {
-  if (!URL_ || !SVC || !ANON) die('missing SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY / SUPABASE_ANON_KEY');
-  if (!URL_.includes(EXPECT_PROJECT)) die(`wrong Supabase project (expected ${EXPECT_PROJECT})`);
-  if (STRIPE_KEY.startsWith('sk_live') || STRIPE_KEY.startsWith('rk_live')) die('LIVE Stripe key present — refusing');
-  if (MUTATING.includes(MODE) && !CONFIRMED) die(`mode ${MODE} is mutating; append the phrase ${CONFIRM}`);
-  if (!/^v1pilot-/.test(SUFFIX)) die('fixture suffix must start with v1pilot-');
-}
-
-const admin = () => createClient(URL_, SVC, { auth: { persistSession: false } });
-
-/* ------------------------- checkpoint ------------------------- */
-function loadCk() { return existsSync(CHECKPOINT) ? JSON.parse(readFileSync(CHECKPOINT, 'utf-8')) : { suffix: SUFFIX, results: [] }; }
-function saveCk(ck) { writeFileSync(CHECKPOINT, JSON.stringify(ck, null, 2)); }
-function record(ck, name, pass, detail) {
-  ck.results = ck.results.filter((r) => r.name !== name);
-  ck.results.push({ name, pass: !!pass, detail: detail ?? null });
-  saveCk(ck); ev(`${pass ? 'PASS' : 'FAIL'} ${name}${detail ? ' — ' + detail : ''}`);
-}
-
-/* ------------------------- financial safety ------------------------- */
-async function controlsSafe(a) {
-  // Read-only assertion that payout controls are disabled and ceilings zero.
-  const { data } = await a.rpc('support_financial_controls_overview').catch(() => ({ data: null }));
-  return data; // shape verified against 0073/0084 in --verify-foundation
-}
-
-/* ------------------------- modes ------------------------- */
-async function preflight() {
-  assertSafe();
-  ev(`preflight ok: project=${EXPECT_PROJECT} suffix=${SUFFIX} mode=${MODE}`);
-  ev('stripe: test-mode-only enforced; live keys refused');
-}
-
-async function inspect() {
-  assertSafe(); const a = admin();
-  for (const t of ['bookings', 'payment_orders', 'companion_earnings', 'email_outbox',
-                   'consent_acknowledgements', 'user_blocks', 'conversation_concerns']) {
-    const { count } = await a.from(t).select('id', { count: 'exact', head: true });
-    ev(`baseline ${t} = ${count ?? 'n/a'}`);
-  }
-}
-
-async function verifyFoundation() {
-  assertSafe(); const a = admin(); const ck = loadCk();
-  // Migrations present: probe a representative object from each new migration.
-  const probes = [
-    ['0088 consent_policies seeded', async () => (await a.from('consent_policies').select('consent_type')).data?.length >= 3],
-    ['0090 user_blocks table', async () => !(await a.from('user_blocks').select('id', { head: true, count: 'exact' })).error],
-    ['0091 moderation column', async () => !(await a.from('companion_profiles').select('moderation_status').limit(1)).error],
-    ['0093 email_outbox table', async () => !(await a.from('email_outbox').select('id', { head: true, count: 'exact' })).error],
-    ['0093 notification_preferences table', async () => !(await a.from('notification_preferences').select('account_id', { head: true, count: 'exact' })).error],
-  ];
-  for (const [name, fn] of probes) { try { record(ck, 'foundation:' + name, await fn()); } catch (e) { record(ck, 'foundation:' + name, false, e.message); } }
-  // Financial controls must be safe (disabled + zero ceilings) — read only.
-  const c = await controlsSafe(a);
-  record(ck, 'foundation:financial controls safe (disabled + ceilings 0)', !!c, c ? 'overview present' : 'verify manually');
-}
-
-// The mutating verify-* sections are intentionally implemented against the REAL
-// RPCs but are gated behind the confirmation phrase + hosted creds. They are
-// documented in docs/V1_PILOT_CLOSEOUT.md and executed by the operator.
-async function notImplementedHere(section) {
-  assertSafe();
-  ev(`${section}: requires hosted credentials + operator confirmation; see docs/V1_PILOT_CLOSEOUT.md for the ordered runbook.`);
-}
-
-function report() {
-  const ck = loadCk();
-  const pass = ck.results.filter((r) => r.pass).length;
-  const fail = ck.results.filter((r) => !r.pass).length;
-  writeFileSync(REPORT, JSON.stringify({ suffix: ck.suffix, pass, fail, results: ck.results }, null, 2));
-  console.log(`VERIFY RESULT pass=${pass} fail=${fail}`);
-  process.exit(fail === 0 ? 0 : 1);
+/* -------- real deps -------- */
+function realDeps(admin, ck) {
+  const one = async (t, m) => (await admin.from(t).select('*').match(m).maybeSingle()).data ?? null;
+  const many = async (t, m) => (await admin.from(t).select('*').match(m)).data ?? [];
+  return {
+    ck,
+    emailAdapterName: 'test', emailProviderConfigured: !!process.env.EMAIL_PROVIDER_API_KEY,
+    getOne: one, getMany: many,
+    count: async (t, m) => (await admin.from(t).select('id', { count: 'exact', head: true }).match(m)).count ?? 0,
+    insert: async (t, row) => { const q = await admin.from(t).insert(row).select().maybeSingle?.() ?? await admin.from(t).insert(row).select(); if (q.error) throw new Error(`${t} insert: ${q.error.message}`); return Array.isArray(row) ? q.data : (q.data?.[0] ?? q.data); },
+    upsert: async (t, row, onConflict) => { const q = await admin.from(t).upsert(row, { onConflict, ignoreDuplicates: false }).select(); if (q.error) throw new Error(`${t} upsert: ${q.error.message}`); return q.data?.[0] ?? null; },
+    rpc: async (name, args) => { const q = await admin.rpc(name, args); if (q.error) throw new Error(`rpc ${name}: ${q.error.message}`); return q.data; },
+    createUser: async (email) => {
+      core.requireV1Email(email);
+      const password = `V1!${randomUUID()}`;
+      const q = await admin.auth.admin.createUser({ email, password, email_confirm: true });
+      if (q.error && !/already/i.test(q.error.message)) throw new Error(`createUser: ${q.error.message}`);
+      const id = q.data?.user?.id ?? (await admin.auth.admin.listUsers()).data.users.find((u) => u.email === email)?.id;
+      ck.snap = ck.snap ?? {}; ck.snap._creds = { ...(ck.snap._creds ?? {}), [email]: password }; ck.save();
+      return { id, email };
+    },
+    callToken: async (bookingId, side) => {
+      // Sign in as the side's owner and invoke the real livekit-token Edge fn;
+      // decode the JWT video grant. Hosted-only.
+      const creds = ck.snap?._creds ?? {};
+      const acct = side === 'companion' ? ck.snap?.companion : ck.snap?.member_owner;
+      const cli = createClient(env.url, env.anon, { auth: { persistSession: false } });
+      const si = await cli.auth.signInWithPassword({ email: acct.email, password: creds[acct.email] });
+      if (si.error) throw new Error(`sign-in ${side}: ${si.error.message}`);
+      const fn = await cli.functions.invoke('livekit-token', { body: { bookingId } });
+      const jwt = fn.data?.token; if (!jwt) return { video: null, error: fn.data?.error };
+      const payload = JSON.parse(Buffer.from(jwt.split('.')[1], 'base64').toString());
+      return payload;
+    },
+    runVerifier: (name) => {
+      const script = name === '3d' ? 'scripts/validate-3dd-payments.mjs' : 'scripts/validate-3e-payouts.mjs';
+      const arg = name === '3d' ? '--verify' : '--report';
+      const out = spawnSync('node', [script, arg], { encoding: 'utf-8', env: process.env });
+      return (out.stdout ?? '') + (out.stderr ?? '');
+    },
+  };
 }
 
 async function main() {
+  if (MODE === '--inspect-partial') { console.log(core.scrubSecrets(existsSync(CK) ? readFileSync(CK, 'utf-8') : '{}')); return; }
+  if (MODE === '--report') {
+    const ck = loadCk();
+    const browser = existsSync(BROWSER) ? readFileSync(BROWSER, 'utf-8') : '';
+    const rep = core.buildReport(ck.results, {
+      requiredSections: ['trust:', 'notif:', 'call:', 'financial:'], browserEvidence: browser,
+    });
+    writeFileSync(REPORT, JSON.stringify(rep, null, 2));
+    console.log(rep.line);
+    process.exit(rep.fail === 0 ? 0 : 1);
+  }
+
+  core.assertSafe({ ...env, mode: MODE, confirmed: CONFIRMED });
+  const admin = createClient(env.url, env.svc, { auth: { persistSession: false } });
+  const ck = loadCk();
+  const deps = realDeps(admin, ck);
+
   switch (MODE) {
-    case '--preflight': return preflight();
-    case '--inspect': return inspect();
-    case '--verify-foundation': return verifyFoundation();
-    case '--verify-trust': return notImplementedHere('verify-trust');
-    case '--verify-notifications': return notImplementedHere('verify-notifications');
-    case '--verify-calls': return notImplementedHere('verify-calls');
-    case '--verify-financial': return notImplementedHere('verify-financial');
-    case '--prepare-fixture': return notImplementedHere('prepare-fixture');
-    case '--verify': return notImplementedHere('verify (aggregate)');
-    case '--restore-controls': return notImplementedHere('restore-controls');
-    case '--cleanup': return notImplementedHere('cleanup');
-    case '--inspect-partial': return console.log(JSON.stringify(loadCk(), null, 2));
-    case '--report': return report();
-    default: return preflight();
+    case '--preflight': ev(`preflight ok: project=${env.expectProject} suffix=${env.suffix} mode=${MODE}`); break;
+    case '--inspect':
+      for (const t of ['bookings', 'payment_orders', 'companion_earnings', 'email_outbox', 'consent_acknowledgements', 'user_blocks', 'conversation_concerns']) {
+        ev(`baseline ${t} = ${await deps.count(t, {})}`);
+      } break;
+    case '--verify-foundation': {
+      for (const [name, t] of [['consent_policies', 'consent_policies'], ['user_blocks', 'user_blocks'], ['email_outbox', 'email_outbox'], ['notification_preferences', 'notification_preferences']]) {
+        try { await deps.count(t, {}); ck.record('foundation:' + name + ' present', true); }
+        catch (e) { ck.record('foundation:' + name + ' present', false, e.message); }
+      }
+      break;
+    }
+    case '--prepare-fixture': await core.prepareFixture(deps, env.suffix); ev('fixture prepared (ids in checkpoint; creds ignored-file only)'); break;
+    case '--verify-trust': (await core.verifyTrust(deps, ck.snap)).forEach((r) => ck.record(r.name, r.pass, r.detail)); break;
+    case '--verify-notifications': (await core.verifyNotifications(deps, ck.snap)).forEach((r) => ck.record(r.name, r.pass, r.detail)); break;
+    case '--verify-calls': (await core.verifyCalls(deps, ck.snap)).forEach((r) => ck.record(r.name, r.pass, r.detail)); break;
+    case '--verify-financial': (await core.verifyFinancial(deps)).forEach((r) => ck.record(r.name, r.pass, r.detail)); break;
+    case '--verify':
+      await core.withRestore(deps, async () => {
+        if (!ck.snap) await core.prepareFixture(deps, env.suffix);
+        for (const fn of [core.verifyTrust, core.verifyNotifications, core.verifyCalls]) {
+          (await fn(deps, ck.snap)).forEach((r) => ck.record(r.name, r.pass, r.detail));
+        }
+        (await core.verifyFinancial(deps)).forEach((r) => ck.record(r.name, r.pass, r.detail));
+      });
+      break;
+    case '--restore-controls': await core.restoreControls(deps); break;
+    case '--cleanup': { const res = await core.cleanup(deps, ck.snap); ev(`cleanup: ${JSON.stringify(res)}`); break; }
+    default: ev(`unknown mode ${MODE}`);
   }
 }
-main().catch((e) => die(e.message));
+main().catch(die);
