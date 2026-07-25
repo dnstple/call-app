@@ -50,6 +50,18 @@ const INELIGIBLE_COPY: Record<string, { title: string; body: string }> = {
     title: 'Only the two people talking can join',
     body: 'As the coordinator you arrange the conversation, but only the member and companion join the call itself.',
   },
+  blocked: {
+    title: 'This call isn’t available',
+    body: 'This conversation can’t be joined because a block is in place. Contact support if you think this is a mistake.',
+  },
+  companion_unavailable: {
+    title: 'This call isn’t available',
+    body: 'This companion isn’t available for calls at the moment. Please contact support for help.',
+  },
+  consent_required: {
+    title: 'Please accept the terms first',
+    body: 'The current terms must be accepted before joining a call. You can do this from your settings.',
+  },
 };
 
 export default function CallPage() {

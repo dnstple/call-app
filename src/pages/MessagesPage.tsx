@@ -30,6 +30,7 @@ import { ProfileAvatar } from '../components/ProfileAvatar';
 import { useProfileAvatars } from '../state/avatars';
 import { browserTimezone } from '../domain/timezones';
 import { SystemEventMessage } from '../messaging/systemEvents';
+import { ReportConcernButton } from '../components/TrustSafety';
 
 /* ---------------- small formatting helpers ---------------- */
 
@@ -387,6 +388,9 @@ function Thread({ conversationId, summary, viewer, onBack }: {
           </>
         )}
       </header>
+      <div className="px-4 pt-2">
+        <ReportConcernButton conversationId={conversationId} />
+      </div>
 
       <div className="msg-scroll" ref={scrollRef} onScroll={(e) => {
         const el = e.currentTarget;

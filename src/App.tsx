@@ -25,6 +25,7 @@ const InternalDisputeDetail = lazy(() => import('./pages/InternalDisputeDetail')
 const InternalReconciliation = lazy(() => import('./pages/InternalReconciliation'));
 const InternalReconciliationDetail = lazy(() => import('./pages/InternalReconciliationDetail'));
 const InternalOperations = lazy(() => import('./pages/InternalOperations'));
+const InternalTrust = lazy(() => import('./pages/InternalTrust'));
 import Settings from './pages/Settings';
 import AvailabilityRates from './pages/AvailabilityRates';
 import SignupWizard from './signup/SignupWizard';
@@ -242,6 +243,7 @@ function AppRoutes() {
                 {/* Stage 3C1 — financial operations control plane (readiness + previews),
                     DB-role protected, absent from normal navigation. */}
                 <Route path="/support/operations" element={<SupportOnly><InternalOperations /></SupportOnly>} />
+                <Route path="/internal/trust" element={<SupportOnly><InternalTrust /></SupportOnly>} />
                 <Route path="/internal/operations" element={<Navigate to="/support/operations" replace />} />
                 <Route path="/settings" element={<Settings />} />
                 {/* Stage 3D-C — durable payment authentication return/resume.

@@ -44,6 +44,7 @@ import { IN_APP_CALL_LABEL } from '../components/FlowModal';
 import { useAuthSnapshot } from '../state/authBridge';
 import { ReportDialog } from '../components/ConversationRow';
 import { roleLabel } from '../components/Shell';
+import { BlockControl } from '../components/TrustSafety';
 import type { PackageOffer } from '../types';
 
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -257,6 +258,13 @@ export default function ProfileDetail() {
       {/* Reviews sit above the diary: people first, logistics second. */}
       {supabase && user.role === 'companion' && (
         <CompanionReviews profileId={user.id} firstName={user.firstName} />
+      )}
+
+      {/* Block 2 — a member/coordinator can block this companion. */}
+      {supabase && user.role === 'companion' && (me.role === 'member' || me.role === 'coordinator') && bookingMemberId && (
+        <section className="section-tight">
+          <BlockControl memberProfileId={bookingMemberId} companionProfileId={user.id} />
+        </section>
       )}
 
       {supabase && user.role === 'companion' && realRules.length > 0 && (
