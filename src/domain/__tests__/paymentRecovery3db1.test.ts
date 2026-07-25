@@ -16,6 +16,7 @@ const ROOT = join(__dirname, '..', '..', '..');
 const M80 = readFileSync(join(ROOT, 'supabase', 'migrations', '0080_durable_customer_payment_recovery.sql'), 'utf-8');
 const M81 = readFileSync(join(ROOT, 'supabase', 'migrations', '0081_finalisation_projection_trigger.sql'), 'utf-8');
 const M82 = readFileSync(join(ROOT, 'supabase', 'migrations', '0082_reconcile_foreign_intent_containment.sql'), 'utf-8');
+const M83 = readFileSync(join(ROOT, 'supabase', 'migrations', '0083_session_funded_terminal_containment.sql'), 'utf-8');
 const FN = readFileSync(join(ROOT, 'supabase', 'functions', 'stripe-payments', 'index.ts'), 'utf-8');
 const WH = readFileSync(join(ROOT, 'supabase', 'functions', 'stripe-webhook', 'index.ts'), 'utf-8');
 const BILL = readFileSync(join(ROOT, 'supabase', 'functions', 'stripe-billing', 'index.ts'), 'utf-8');
@@ -251,6 +252,28 @@ describe('0082 superseded/foreign-intent containment (SCA finalisation fix)', ()
   it('the authoritative failure path is unchanged (M4: real hosted-intent failure still fails)', () => {
     expect(M82).toContain("case when v_status = 'canceled' then 'payment_cancelled' else 'failed' end");
     expect(M82).toContain("perform app_private.finalise_paid_order(");
+  });
+});
+
+describe('0083 session-funded terminal containment (null-intent SCA window)', () => {
+  it('is the final reconcile definition and stays additive', () => {
+    expect(M83).toContain('create or replace function app_private.reconcile_payment_order');
+    expect(M83).not.toMatch(/drop\s+table|drop\s+column|alter\s+column/i);
+    expect(M83).not.toMatch(/function\s+app_private\.finalise_paid_order/i);
+  });
+  it('contains foreign terminal events for session-funded orders EVEN WITH a null stored intent, BEFORE any projection', () => {
+    // Stripe creates the session PaymentIntent only at completion, so the
+    // stored intent is null during the whole authentication window — the 0082
+    // stored-intent guard alone could not engage (hosted order 28fb2dde).
+    const guard = M83.indexOf("session_funded_foreign_terminal");
+    const projection = M83.indexOf('-- Projection (always safe');
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(projection);
+    expect(M83).toMatch(/p_provider_status in \('failed', 'canceled'\)\s*\n\s*and v\.stripe_checkout_session_id is not null\s*\n\s*and \(v\.stripe_payment_intent_id is null/);
+  });
+  it('keeps the 0082 foreign-intent guard and the authoritative failure path intact', () => {
+    expect(M83).toContain("'ignored', 'foreign_intent_terminal'");
+    expect(M83).toContain("case when v_status = 'canceled' then 'payment_cancelled' else 'failed' end");
   });
 });
 
