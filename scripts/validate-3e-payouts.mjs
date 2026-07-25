@@ -165,23 +165,23 @@ async function preflight() {
     checkpoint(step, { type: 'auth_user', id: comp.id, email: comp.email });
     const ops = await mkUser('ops', suffix);
     checkpoint(step, { type: 'auth_user', id: ops.id, email: ops.email });
-    must(await admin.from('support_admins').upsert({ account_id: ops.id }, { onConflict: 'account_id', ignoreDuplicates: true }), 'support admin');
+    mustT(await admin.from('support_admins').upsert({ account_id: ops.id }, { onConflict: 'account_id', ignoreDuplicates: true }), 'support admin');
 
     step = 'profiles + access';
-    const compProfile = must(await admin.from('profiles').insert({ role: 'companion', first_name: `EComp${suffix}` }).select('id').single(), 'companion profile').id;
-    must(await admin.from('profile_access').insert({ account_id: comp.id, profile_id: compProfile, access_role: 'owner', can_edit: true, can_book: true }), 'companion access');
-    const memProfile = must(await admin.from('profiles').insert({ role: 'member', first_name: `EMem${suffix}` }).select('id').single(), 'member profile').id;
-    must(await admin.from('profile_access').insert([
+    const compProfile = mustT(await admin.from('profiles').insert({ role: 'companion', first_name: `EComp${suffix}` }).select('id').single(), 'companion profile').id;
+    mustT(await admin.from('profile_access').insert({ account_id: comp.id, profile_id: compProfile, access_role: 'owner', can_edit: true, can_book: true }), 'companion access');
+    const memProfile = mustT(await admin.from('profiles').insert({ role: 'member', first_name: `EMem${suffix}` }).select('id').single(), 'member profile').id;
+    mustT(await admin.from('profile_access').insert([
       { account_id: memberOwner.id, profile_id: memProfile, access_role: 'owner', can_edit: true, can_book: true },
       { account_id: coord.id, profile_id: memProfile, access_role: 'coordinator', can_edit: true, can_book: true },
     ]), 'member access');
     checkpoint(step, { type: 'profiles', companion: compProfile, member: memProfile });
 
     step = 'offers';
-    const trialOffer = must(await admin.from('conversation_offers').insert({
+    const trialOffer = mustT(await admin.from('conversation_offers').insert({
       companion_profile_id: compProfile, offer_type: 'trial', duration_minutes: 30, price_minor: TRIAL_MINOR, supported_methods: ['in_app'],
     }).select('id').single(), 'trial offer').id;
-    const singleOffer = must(await admin.from('conversation_offers').insert({
+    const singleOffer = mustT(await admin.from('conversation_offers').insert({
       companion_profile_id: compProfile, offer_type: 'single', duration_minutes: 30, price_minor: REGULAR_MINOR, supported_methods: ['in_app'],
     }).select('id').single(), 'single offer').id;
     checkpoint(step, { type: 'offers', trial: trialOffer, single: singleOffer });
@@ -224,10 +224,10 @@ async function prepareConnect() {
   const S = loadSnap();
   const { jwt } = await companionJwt(S);
   let r = await edge('stripe-payments', jwt, { action: 'ensure_connect_account' });
-  if (r.status !== 200) fail(`ensure_connect_account: ${r.status} ${JSON.stringify(r.body)}`);
+  if (r.status !== 200) throw new Error(`ensure_connect_account: ${r.status} ${JSON.stringify(r.body)}`);
   r = await edge('stripe-payments', jwt, { action: 'create_connect_onboarding_link', origin: 'http://localhost:5173' });
   if (r.status !== 200 || !r.body?.url) fail(`onboarding link: ${r.status} ${JSON.stringify(r.body)}`);
-  const ca = must(await admin.from('connected_accounts').select('stripe_account_id, details_submitted, payouts_enabled').eq('account_id', S.companion.account_id).single(), 'connected account row');
+  const ca = mustT(await admin.from('connected_accounts').select('stripe_account_id, details_submitted, payouts_enabled').eq('account_id', S.companion.account_id).single(), 'connected account row');
   S.connected_account_id = ca.stripe_account_id; saveSnap(S);
   say({ connect: 'ready', destination_recorded: true, onboarding_url: r.body.url,
         note: 'Open the URL in the browser and complete Stripe test onboarding (E1).' });
@@ -237,8 +237,8 @@ async function verifyConnect() {
   const S = loadSnap();
   const { jwt } = await companionJwt(S);
   const r = await edge('stripe-payments', jwt, { action: 'refresh_connect_status' });
-  if (r.status !== 200) fail(`refresh_connect_status: ${r.status}`);
-  const ca = must(await admin.from('connected_accounts')
+  if (r.status !== 200) throw new Error(`refresh_connect_status: ${r.status}`);
+  const ca = mustT(await admin.from('connected_accounts')
     .select('stripe_account_id, details_submitted, payouts_enabled, transfers_capability, requirements_past_due, disabled_reason, last_synced_at')
     .eq('account_id', S.companion.account_id).single(), 'connected account');
   check('connected account exists for fixture companion', !!ca.stripe_account_id);
@@ -267,10 +267,10 @@ async function makeCase(S, comp, key, { offerId, orderType, subtotal, commission
   // the companion no-overlap exclusion constraint makes duplicates impossible
   // anyway, and a resumed run must not fail on its own earlier progress.
   if (orderType !== 'plan_period_call') {
-    const prior = must(await admin.from('payment_orders')
+    const prior = mustT(await admin.from('payment_orders')
       .select('id, booking_id').eq('idempotency_key', `3efx-${key}-${S.suffix}`).maybeSingle(), `${key} prior order`);
     if (prior?.id) {
-      const earning = must(await admin.from('companion_earnings')
+      const earning = mustT(await admin.from('companion_earnings')
         .select('id, state, basis_minor, commission_rate_pct, commission_minor, net_minor')
         .eq('booking_id', prior.booking_id).maybeSingle(), `${key} prior earning`);
       say(`${key}: reusing existing case (resume)`);
@@ -296,10 +296,10 @@ async function makeCase(S, comp, key, { offerId, orderType, subtotal, commission
     bookingIns.offer_id = null;
     bookingIns.package_purchase_id = allowanceId;
   }
-  const bookingId = must(await admin.from('bookings').insert(bookingIns).select('id').single(), `${key} booking`).id;
+  const bookingId = mustT(await admin.from('bookings').insert(bookingIns).select('id').single(), `${key} booking`).id;
   let orderId = null;
   if (orderType !== 'plan_period_call') {
-    orderId = must(await admin.from('payment_orders').insert({
+    orderId = mustT(await admin.from('payment_orders').insert({
       booking_id: bookingId, provider: 'stripe_test', coordinator_account_id: S.coordinator.account_id,
       member_profile_id: S.member_profile_id, companion_profile_id: S.companion_profile_id,
       order_type: orderType, status: 'succeeded', subtotal_minor: subtotal, discount_minor: 0,
@@ -309,8 +309,8 @@ async function makeCase(S, comp, key, { offerId, orderType, subtotal, commission
     }).select('id').single(), `${key} order`).id;
   }
   // REAL authoritative earning path.
-  must(await comp.client.rpc('submit_companion_attendance', { p_booking: bookingId, p_outcome: 'took_place', p_explanation: null }), `${key} attendance`);
-  const earning = must(await admin.from('companion_earnings')
+  mustT(await comp.client.rpc('submit_companion_attendance', { p_booking: bookingId, p_outcome: 'took_place', p_explanation: null }), `${key} attendance`);
+  const earning = mustT(await admin.from('companion_earnings')
     .select('id, state, basis_minor, commission_rate_pct, commission_minor, net_minor')
     .eq('booking_id', bookingId).maybeSingle(), `${key} earning read`);
   checkpoint(`case ${key}`, { booking: bookingId, order: orderId, earning: earning?.id ?? null });
@@ -339,28 +339,28 @@ async function prepareEarnings() {
   if (cases.E7_plan_call?.earningId) {
     say('e7: reusing existing case (resume)');
   } else {
-  const priorPlanOrder = must(await admin.from('payment_orders')
+  const priorPlanOrder = mustT(await admin.from('payment_orders')
     .select('id').eq('idempotency_key', `3efx-e7ord-${S.suffix}`).maybeSingle(), 'e7 prior order');
-  const planOrder = priorPlanOrder?.id ?? must(await admin.from('payment_orders').insert({
+  const planOrder = priorPlanOrder?.id ?? mustT(await admin.from('payment_orders').insert({
     coordinator_account_id: S.coordinator.account_id, member_profile_id: S.member_profile_id,
     companion_profile_id: S.companion_profile_id, order_type: 'plan_period', status: 'succeeded',
     subtotal_minor: REGULAR_MINOR * 2, discount_minor: 0, service_fee_minor: 0, credit_applied_minor: 0,
     card_amount_minor: REGULAR_MINOR * 2, total_minor: REGULAR_MINOR * 2, commission_rate_pct: 5,
     commission_minor: REGULAR_COMMISSION * 2, idempotency_key: `3efx-e7ord-${S.suffix}`,
   }).select('id').single(), 'e7 plan order').id;
-  const priorPeriod = must(await admin.from('plan_billing_periods')
+  const priorPeriod = mustT(await admin.from('plan_billing_periods')
     .select('id, plan_id').eq('payment_order_id', planOrder).maybeSingle(), 'e7 prior period');
   let plan, period;
   if (priorPeriod?.id) { plan = priorPeriod.plan_id; period = priorPeriod.id; } else {
   // Allowance purchase exactly as public.create_conversation_plan (0011)
   // creates it: offer-less, simulated, snapshot columns only.
-  const allowance = must(await admin.from('package_purchases').insert({
+  const allowance = mustT(await admin.from('package_purchases').insert({
     buyer_account_id: S.coordinator.account_id, member_profile_id: S.member_profile_id,
     companion_profile_id: S.companion_profile_id, package_offer_id: null,
     title: 'Conversation plan allowance', conversation_count: 2, duration_minutes: 30,
     price_minor: REGULAR_MINOR * 2, currency: 'GBP', is_simulated: true,
   }).select('id').single(), 'e7 allowance').id;
-  plan = must(await admin.from('conversation_plans').insert({
+  plan = mustT(await admin.from('conversation_plans').insert({
     member_profile_id: S.member_profile_id, companion_profile_id: S.companion_profile_id,
     created_by_account_id: S.coordinator.account_id, frequency_per_week: 2,
     duration_minutes: 30, communication_method: 'in_app',
@@ -369,7 +369,7 @@ async function prepareEarnings() {
   }).select('id').single(), 'e7 plan').id;
   const monthStart = new Date(); monthStart.setUTCDate(1);
   const monthEnd = new Date(monthStart); monthEnd.setUTCMonth(monthEnd.getUTCMonth() + 1);
-  period = must(await admin.from('plan_billing_periods').insert({
+  period = mustT(await admin.from('plan_billing_periods').insert({
     plan_id: plan, coordinator_account_id: S.coordinator.account_id,
     period_start: monthStart.toISOString().slice(0, 10), period_end: monthEnd.toISOString().slice(0, 10),
     status: 'paid', payment_order_id: planOrder, occurrences_count: 2,
@@ -380,33 +380,33 @@ async function prepareEarnings() {
   // Resume/repair: the plan-funded booking (no order row) is found by its
   // plan linkage; a missing timezone from an earlier partial run is repaired
   // (the plan-period month match is timezone-aware).
-  const priorPlanBooking = must(await admin.from('bookings')
+  const priorPlanBooking = mustT(await admin.from('bookings')
     .select('id, timezone').eq('plan_id', plan).maybeSingle(), 'e7 prior booking');
   if (priorPlanBooking?.id) {
     // Repair earlier partial rows to the REAL recurring-plan shape: the 0068
     // Path B gate requires booking_source='package_credit' + funding_mode=
     // 'recurring', and bookings_source_shape requires the allowance purchase
     // with NO offer on package_credit bookings.
-    const planRow = must(await admin.from('conversation_plans')
+    const planRow = mustT(await admin.from('conversation_plans')
       .select('id, allowance_purchase_id').eq('id', plan).single(), 'e7 plan row');
-    must(await admin.from('bookings')
+    mustT(await admin.from('bookings')
       .update({ timezone: 'Europe/London', booking_source: 'package_credit',
                 offer_id: null, package_purchase_id: planRow.allowance_purchase_id })
       .eq('id', priorPlanBooking.id).select('id'), 'e7 booking repair');
-    must(await admin.from('conversation_plans').update({ funding_mode: 'recurring' })
+    mustT(await admin.from('conversation_plans').update({ funding_mode: 'recurring' })
       .eq('id', plan).select('id'), 'e7 plan repair');
-    const priorEarning = must(await admin.from('companion_earnings')
+    const priorEarning = mustT(await admin.from('companion_earnings')
       .select('id, state, basis_minor, commission_rate_pct, commission_minor, net_minor')
       .eq('booking_id', priorPlanBooking.id).maybeSingle(), 'e7 prior earning');
     if (!priorEarning?.id) {
-      must(await comp.client.rpc('submit_companion_attendance', { p_booking: priorPlanBooking.id, p_outcome: 'took_place', p_explanation: null }), 'e7 attendance (resumed)');
+      mustT(await comp.client.rpc('submit_companion_attendance', { p_booking: priorPlanBooking.id, p_outcome: 'took_place', p_explanation: null }), 'e7 attendance (resumed)');
     }
-    const earning = must(await admin.from('companion_earnings')
+    const earning = mustT(await admin.from('companion_earnings')
       .select('id, state, basis_minor, commission_rate_pct, commission_minor, net_minor')
       .eq('booking_id', priorPlanBooking.id).maybeSingle(), 'e7 earning read');
     cases.E7_plan_call = { bookingId: priorPlanBooking.id, orderId: null, earningId: earning?.id ?? null, earning };
   } else {
-    const planRow2 = must(await admin.from('conversation_plans')
+    const planRow2 = mustT(await admin.from('conversation_plans')
       .select('id, allowance_purchase_id').eq('id', plan).single(), 'e7 plan row');
     cases.E7_plan_call = await makeCase(S, comp, 'e7', { offerId: S.single_offer_id, orderType: 'plan_period_call', subtotal: REGULAR_MINOR, commission: REGULAR_COMMISSION, credit: 0, card: 0, endedHoursAgo: 34, planId: plan, periodId: period, allowanceId: planRow2.allowance_purchase_id });
   }
@@ -417,7 +417,7 @@ async function prepareEarnings() {
   // E8 issue-held: completed call, then a REAL open issue from the coordinator.
   cases.E8_issue_held = await makeCase(S, comp, 'e8', { offerId: S.single_offer_id, orderType: 'one_off', subtotal: REGULAR_MINOR, commission: REGULAR_COMMISSION, credit: 0, card: REGULAR_MINOR, endedHoursAgo: 36 });
   S.cases = cases; saveSnap(S);
-  const existingIssue = must(await admin.from('conversation_issues')
+  const existingIssue = mustT(await admin.from('conversation_issues')
     .select('id').eq('booking_id', cases.E8_issue_held.bookingId).maybeSingle(), 'e8 issue check');
   if (existingIssue?.id) {
     cases.E8_issue_held.issue = existingIssue.id;
@@ -425,7 +425,7 @@ async function prepareEarnings() {
     const coordClient = createClient(URL_, ANON, { auth: { persistSession: false } });
     const si = await coordClient.auth.signInWithPassword({ email: S.coordinator.email, password: S.coordinator.password });
     if (si.error) fail(`coordinator sign-in: ${si.error.message}`);
-    const issue = must(await coordClient.rpc('report_conversation_issue', {
+    const issue = mustT(await coordClient.rpc('report_conversation_issue', {
       p_booking: cases.E8_issue_held.bookingId, p_category: 'audio_video_problem',
       p_description: 'Stage 3E validation: deliberate issue hold (E8).',
     }), 'e8 issue');
@@ -435,8 +435,8 @@ async function prepareEarnings() {
   // E9 release path: ended 26h ago -> the REAL scheduled function must
   // release it exactly once (run twice, idempotent).
   cases.E9_release = await makeCase(S, comp, 'e9', { offerId: S.single_offer_id, orderType: 'one_off', subtotal: REGULAR_MINOR, commission: REGULAR_COMMISSION, credit: 0, card: REGULAR_MINOR, endedHoursAgo: 38 });
-  const rel1 = must(await admin.rpc('release_eligible_earnings'), 'release run 1');
-  const rel2 = must(await admin.rpc('release_eligible_earnings'), 'release run 2');
+  const rel1 = mustT(await admin.rpc('release_eligible_earnings'), 'release run 1');
+  const rel2 = mustT(await admin.rpc('release_eligible_earnings'), 'release run 2');
   cases.release_runs = { first: rel1, second: rel2 };
 
   S.cases = cases; saveSnap(S);
@@ -452,12 +452,12 @@ async function enableIsolatedTransfers() {
   const si = await ops.auth.signInWithPassword({ email: S.ops.email, password: S.ops.password });
   if (si.error) fail(`ops sign-in: ${si.error.message}`);
   // Allowlist ONLY the fixture destination (support-gated, audited RPC).
-  must(await ops.rpc('support_set_transfer_destination_allowlist', {
+  mustT(await ops.rpc('support_set_transfer_destination_allowlist', {
     p_stripe_account_id: S.connected_account_id, p_active: true,
     p_reason: `Stage 3E hosted validation ${S.suffix}`,
   }), 'allowlist');
   // Raise ceilings to the fixture minimum (service-side config update).
-  must(await admin.from('financial_operations_config').update({
+  mustT(await admin.from('financial_operations_config').update({
     provider_transfer_amount_ceiling_minor: PER_TRANSFER_CEILING,
     provider_transfer_daily_ceiling_minor: DAILY_CEILING,
   }).eq('id', true).select('id'), 'ceilings');
@@ -481,7 +481,7 @@ async function restoreControls() {
       });
     }
   }
-  must(await admin.from('financial_operations_config').update({
+  mustT(await admin.from('financial_operations_config').update({
     provider_transfer_amount_ceiling_minor: 0, provider_transfer_daily_ceiling_minor: 0,
   }).eq('id', true).select('id'), 'restore ceilings');
   await assertRestingState();
@@ -500,10 +500,10 @@ async function inspect(partial = false) {
     out.suffix = S.suffix;
     out.cases = Object.fromEntries(Object.entries(S.cases ?? {}).filter(([k]) => k.startsWith('E')).map(([k, v]) => [k, { booking: v.bookingId, earning: v.earningId }]));
     if (S.companion?.account_id) {
-      const earnings = must(await admin.from('companion_earnings')
+      const earnings = mustT(await admin.from('companion_earnings')
         .select('id, state, transfer_state, net_minor').eq('companion_account_id', S.companion.account_id), 'earnings');
       out.earnings = earnings;
-      const attempts = must(await admin.from('companion_transfer_attempts')
+      const attempts = mustT(await admin.from('companion_transfer_attempts')
         .select('id, earning_id, state, stripe_transfer_id, amount_minor').eq('companion_account_id', S.companion.account_id), 'attempts');
       out.attempts = attempts;
     }
@@ -548,28 +548,37 @@ async function runTransferCases() {
   // of the deployed scoped-stripe-transfers Edge Function. transfer_finalise
   // is armed to scoped_execution ONLY around execution and hard-restored in
   // finally, exactly like execute-c3-transfer.mjs.
-  const setControl = async (from, to) => must(await ops.rpc('support_set_financial_control', {
-    p_control: 'transfer_finalise', p_expected_state: from, p_new_state: to,
-    p_reason: `Stage 3E matrix ${to}`, p_expires_at: null, p_confirmation: null,
-  }), `control ${from}->${to}`);
+  // Throwing variant so the FINALLY restore always runs (fail()/process.exit
+  // would skip finally — the exact bug that once left the control armed).
+  const mustT = (r, w) => { if (r.error) throw new Error(`${w}: ${JSON.stringify(r.error)}`); return r.data; };
+  const controlState = async () => mustT(await admin.from('financial_operation_controls')
+    .select('state').eq('control_name', 'transfer_finalise').single(), 'read control').state;
+  const setControlTo = async (to) => {
+    const cur = await controlState();
+    if (cur === to) { say(`transfer_finalise already ${to} (idempotent)`); return; }
+    mustT(await ops.rpc('support_set_financial_control', {
+      p_control: 'transfer_finalise', p_expected_state: cur, p_new_state: to,
+      p_reason: `Stage 3E matrix ${to}`, p_expires_at: null, p_confirmation: null,
+    }), `control ${cur}->${to}`);
+  };
 
   S.transfers = S.transfers ?? {};
   try {
-    await setControl('disabled', 'scoped_execution');
+    await setControlTo('scoped_execution');
     for (const key of ['E5_credit_only', 'E6_mixed']) {
       if (S.transfers[key]?.completed) { say(`${key} already transferred — skipping (idempotent).`); continue; }
       const earningId = mustUuid(S.cases[key].earningId, `${key} earning`);
-      const rq = must(await ops.rpc('support_request_operation_run', {
+      const rq = mustT(await ops.rpc('support_request_operation_run', {
         p_operation_type: 'transfer_finalise', p_execution_mode: 'execute_scoped', p_scope_type: 'record_ids',
         p_scoped_ids: [earningId], p_batch_limit: null, p_reason: `Stage 3E ${key}`,
         p_idempotency_key: `3e-exec-${earningId}`,
       }), `${key} run request`);
       const runId = mustUuid(rq.run_id, `${key} run id`);
       const token = rq.confirmation_token; // memory only — never persisted/printed
-      must(await ops.rpc('support_preview_operation_run', { p_run_id: runId }), `${key} preview`);
-      must(await ops.rpc('support_confirm_operation_run', { p_run_id: runId, p_confirmation_token: token }), `${key} confirm`);
+      mustT(await ops.rpc('support_preview_operation_run', { p_run_id: runId }), `${key} preview`);
+      mustT(await ops.rpc('support_confirm_operation_run', { p_run_id: runId, p_confirmation_token: token }), `${key} confirm`);
       const r = await edge('scoped-stripe-transfers', opsJwt, { run_id: runId, confirmation_token: token });
-      if (r.status !== 200) fail(`${key} edge execution: ${r.status} ${JSON.stringify(r.body).slice(0, 300)}`);
+      if (r.status !== 200) throw new Error(`${key} edge execution: ${r.status} ${JSON.stringify(r.body).slice(0, 300)}`);
       S.transfers[key] = { runId, completed: true, summary: r.body?.summary ?? null };
       saveSnap(S);
       say({ [key]: { runId, completed: true } });
@@ -580,14 +589,14 @@ async function runTransferCases() {
     // the transfer layer (0048 claim exclusion / 0075 evaluator / 0077
     // classify), which is the payout-blocking invariant the stage demands.
     const e8id = mustUuid(S.cases.E8_issue_held.earningId, 'E8 earning');
-    const rq8 = must(await ops.rpc('support_request_operation_run', {
+    const rq8 = mustT(await ops.rpc('support_request_operation_run', {
       p_operation_type: 'transfer_finalise', p_execution_mode: 'execute_scoped', p_scope_type: 'record_ids',
       p_scoped_ids: [e8id], p_batch_limit: null, p_reason: 'Stage 3E E8 issue-hold probe',
       p_idempotency_key: `3e-e8probe-${e8id}`,
     }), 'E8 run request');
     const run8 = mustUuid(rq8.run_id, 'E8 run id');
-    const prev8 = must(await ops.rpc('support_preview_operation_run', { p_run_id: run8 }), 'E8 preview');
-    must(await ops.rpc('support_cancel_operation_run', { p_run_id: run8, p_reason: 'E8 probe complete' }), 'E8 cancel');
+    const prev8 = mustT(await ops.rpc('support_preview_operation_run', { p_run_id: run8 }), 'E8 preview');
+    mustT(await ops.rpc('support_cancel_operation_run', { p_run_id: run8, p_reason: 'E8 probe complete' }), 'E8 cancel');
     S.transfers.E8_hold_probe = { runId: run8, preview: prev8 };
     saveSnap(S);
     say({ E8_hold_probe: prev8 });
@@ -595,19 +604,19 @@ async function runTransferCases() {
     // E10: a SECOND run scoped to the already-transferred E5 earning must
     // show ZERO eligible records (no second transfer is even preparable).
     const e5 = mustUuid(S.cases.E5_credit_only.earningId, 'E5 earning');
-    const rq2 = must(await ops.rpc('support_request_operation_run', {
+    const rq2 = mustT(await ops.rpc('support_request_operation_run', {
       p_operation_type: 'transfer_finalise', p_execution_mode: 'execute_scoped', p_scope_type: 'record_ids',
       p_scoped_ids: [e5], p_batch_limit: null, p_reason: 'Stage 3E E10 duplicate-request probe',
       p_idempotency_key: `3e-e10probe-${e5}`,
     }), 'E10 run request');
     const run2 = mustUuid(rq2.run_id, 'E10 run id');
-    const prev2 = must(await ops.rpc('support_preview_operation_run', { p_run_id: run2 }), 'E10 preview');
-    must(await ops.rpc('support_cancel_operation_run', { p_run_id: run2, p_reason: 'E10 probe complete' }), 'E10 cancel');
+    const prev2 = mustT(await ops.rpc('support_preview_operation_run', { p_run_id: run2 }), 'E10 preview');
+    mustT(await ops.rpc('support_cancel_operation_run', { p_run_id: run2, p_reason: 'E10 probe complete' }), 'E10 cancel');
     S.transfers.E10_duplicate_probe = { runId: run2, preview: prev2 };
     saveSnap(S);
     say({ E10_duplicate_probe: prev2 });
   } finally {
-    await setControl('scoped_execution', 'disabled'); // hard restore even on failure
+    await setControlTo('disabled'); // hard restore even on failure
   }
   say('transfer cases complete — run --restore-controls, then --verify.');
 }
