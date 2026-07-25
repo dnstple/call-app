@@ -338,16 +338,13 @@ async function prepareEarnings() {
     card_amount_minor: REGULAR_MINOR * 2, total_minor: REGULAR_MINOR * 2, commission_rate_pct: 5,
     commission_minor: REGULAR_COMMISSION * 2, idempotency_key: `3efx-e7ord-${S.suffix}`,
   }).select('id').single(), 'e7 plan order').id;
-  const pkgOffer = must(await admin.from('package_offers').insert({
-    companion_id: S.companion_profile_id, kind: 'package', title: `3E plan allowance ${S.suffix}`,
-    duration_mins: 30, call_count: 2, cadence: 'weekly', validity_days: 60,
-    price_pence: REGULAR_MINOR * 2, active: false,
-  }).select('id').single(), 'e7 package offer').id;
+  // Allowance purchase exactly as public.create_conversation_plan (0011)
+  // creates it: offer-less, simulated, snapshot columns only.
   const allowance = must(await admin.from('package_purchases').insert({
-    buyer_id: S.member_profile_id, member_id: S.member_profile_id,
-    companion_id: S.companion_profile_id, offer_id: pkgOffer, calls_total: 2, calls_used: 0,
-    expires_at: new Date(Date.now() + 60 * 86_400_000).toISOString(), status: 'active',
-    transaction_ref: `3efx-${S.suffix}`,
+    buyer_account_id: S.coordinator.account_id, member_profile_id: S.member_profile_id,
+    companion_profile_id: S.companion_profile_id, package_offer_id: null,
+    title: 'Conversation plan allowance', conversation_count: 2, duration_minutes: 30,
+    price_minor: REGULAR_MINOR * 2, currency: 'GBP', is_simulated: true,
   }).select('id').single(), 'e7 allowance').id;
   const plan = must(await admin.from('conversation_plans').insert({
     member_profile_id: S.member_profile_id, companion_profile_id: S.companion_profile_id,
