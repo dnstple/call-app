@@ -261,7 +261,7 @@ async function verifyConnect() {
 // authoritative path production uses — creates the earning. Release happens
 // ONLY through the real public functions. No production eligibility rule is
 // weakened; there is no test clock — bookings simply *are* in the past.
-async function makeCase(S, comp, key, { offerId, orderType, subtotal, commission, credit, card, endedHoursAgo, planId = null, periodId = null }) {
+async function makeCase(S, comp, key, { offerId, orderType, subtotal, commission, credit, card, endedHoursAgo, planId = null, periodId = null, allowanceId = null }) {
   // Idempotent resume: if this case's order already exists (unique
   // idempotency key), reuse its booking/earning instead of recreating —
   // the companion no-overlap exclusion constraint makes duplicates impossible
@@ -288,7 +288,14 @@ async function makeCase(S, comp, key, { offerId, orderType, subtotal, commission
     platform_fee_rate: orderType === 'trial' ? 0 : 5, platform_fee_minor: commission,
     companion_amount_minor: subtotal - commission, is_trial: orderType === 'trial',
   };
-  if (planId) { bookingIns.plan_id = planId; bookingIns.booking_source = 'package_credit'; }
+  if (planId) {
+    // Real recurring-plan occurrence shape (bookings_source_shape check):
+    // package_credit bookings carry the allowance purchase and NO offer.
+    bookingIns.plan_id = planId;
+    bookingIns.booking_source = 'package_credit';
+    bookingIns.offer_id = null;
+    bookingIns.package_purchase_id = allowanceId;
+  }
   const bookingId = must(await admin.from('bookings').insert(bookingIns).select('id').single(), `${key} booking`).id;
   let orderId = null;
   if (orderType !== 'plan_period_call') {
@@ -376,11 +383,15 @@ async function prepareEarnings() {
   const priorPlanBooking = must(await admin.from('bookings')
     .select('id, timezone').eq('plan_id', plan).maybeSingle(), 'e7 prior booking');
   if (priorPlanBooking?.id) {
-    // Repair earlier partial rows to the REAL recurring-plan shape (the
-    // 0068 Path B gate requires booking_source='package_credit' on the
-    // booking AND funding_mode='recurring' on the plan).
+    // Repair earlier partial rows to the REAL recurring-plan shape: the 0068
+    // Path B gate requires booking_source='package_credit' + funding_mode=
+    // 'recurring', and bookings_source_shape requires the allowance purchase
+    // with NO offer on package_credit bookings.
+    const planRow = must(await admin.from('conversation_plans')
+      .select('id, allowance_purchase_id').eq('id', plan).single(), 'e7 plan row');
     must(await admin.from('bookings')
-      .update({ timezone: 'Europe/London', booking_source: 'package_credit' })
+      .update({ timezone: 'Europe/London', booking_source: 'package_credit',
+                offer_id: null, package_purchase_id: planRow.allowance_purchase_id })
       .eq('id', priorPlanBooking.id).select('id'), 'e7 booking repair');
     must(await admin.from('conversation_plans').update({ funding_mode: 'recurring' })
       .eq('id', plan).select('id'), 'e7 plan repair');
@@ -395,7 +406,9 @@ async function prepareEarnings() {
       .eq('booking_id', priorPlanBooking.id).maybeSingle(), 'e7 earning read');
     cases.E7_plan_call = { bookingId: priorPlanBooking.id, orderId: null, earningId: earning?.id ?? null, earning };
   } else {
-    cases.E7_plan_call = await makeCase(S, comp, 'e7', { offerId: S.single_offer_id, orderType: 'plan_period_call', subtotal: REGULAR_MINOR, commission: REGULAR_COMMISSION, credit: 0, card: 0, endedHoursAgo: 34, planId: plan, periodId: period });
+    const planRow2 = must(await admin.from('conversation_plans')
+      .select('id, allowance_purchase_id').eq('id', plan).single(), 'e7 plan row');
+    cases.E7_plan_call = await makeCase(S, comp, 'e7', { offerId: S.single_offer_id, orderType: 'plan_period_call', subtotal: REGULAR_MINOR, commission: REGULAR_COMMISSION, credit: 0, card: 0, endedHoursAgo: 34, planId: plan, periodId: period, allowanceId: planRow2.allowance_purchase_id });
   }
   cases.E7_plan_call.planId = plan; cases.E7_plan_call.periodId = period; cases.E7_plan_call.planOrderId = planOrder;
   S.cases = cases; saveSnap(S);
