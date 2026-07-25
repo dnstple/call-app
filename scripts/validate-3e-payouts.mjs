@@ -560,8 +560,9 @@ async function runTransferCases() {
       if (S.transfers[key]?.completed) { say(`${key} already transferred — skipping (idempotent).`); continue; }
       const earningId = mustUuid(S.cases[key].earningId, `${key} earning`);
       const rq = must(await ops.rpc('support_request_operation_run', {
-        p_operation_type: 'transfer_finalise', p_execution_mode: 'execute', p_scope_type: 'record_ids',
+        p_operation_type: 'transfer_finalise', p_execution_mode: 'execute_scoped', p_scope_type: 'record_ids',
         p_scoped_ids: [earningId], p_batch_limit: null, p_reason: `Stage 3E ${key}`,
+        p_idempotency_key: `3e-exec-${earningId}`,
       }), `${key} run request`);
       const runId = mustUuid(rq.run_id, `${key} run id`);
       const token = rq.confirmation_token; // memory only — never persisted/printed
@@ -580,8 +581,9 @@ async function runTransferCases() {
     // classify), which is the payout-blocking invariant the stage demands.
     const e8id = mustUuid(S.cases.E8_issue_held.earningId, 'E8 earning');
     const rq8 = must(await ops.rpc('support_request_operation_run', {
-      p_operation_type: 'transfer_finalise', p_execution_mode: 'execute', p_scope_type: 'record_ids',
+      p_operation_type: 'transfer_finalise', p_execution_mode: 'execute_scoped', p_scope_type: 'record_ids',
       p_scoped_ids: [e8id], p_batch_limit: null, p_reason: 'Stage 3E E8 issue-hold probe',
+      p_idempotency_key: `3e-e8probe-${e8id}`,
     }), 'E8 run request');
     const run8 = mustUuid(rq8.run_id, 'E8 run id');
     const prev8 = must(await ops.rpc('support_preview_operation_run', { p_run_id: run8 }), 'E8 preview');
@@ -594,8 +596,9 @@ async function runTransferCases() {
     // show ZERO eligible records (no second transfer is even preparable).
     const e5 = mustUuid(S.cases.E5_credit_only.earningId, 'E5 earning');
     const rq2 = must(await ops.rpc('support_request_operation_run', {
-      p_operation_type: 'transfer_finalise', p_execution_mode: 'execute', p_scope_type: 'record_ids',
+      p_operation_type: 'transfer_finalise', p_execution_mode: 'execute_scoped', p_scope_type: 'record_ids',
       p_scoped_ids: [e5], p_batch_limit: null, p_reason: 'Stage 3E E10 duplicate-request probe',
+      p_idempotency_key: `3e-e10probe-${e5}`,
     }), 'E10 run request');
     const run2 = mustUuid(rq2.run_id, 'E10 run id');
     const prev2 = must(await ops.rpc('support_preview_operation_run', { p_run_id: run2 }), 'E10 preview');
