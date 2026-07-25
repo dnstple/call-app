@@ -283,6 +283,7 @@ async function makeCase(S, comp, key, { offerId, orderType, subtotal, commission
     member_profile_id: S.member_profile_id, companion_profile_id: S.companion_profile_id,
     booked_by_account_id: S.coordinator.account_id, offer_id: offerId,
     starts_at: start.toISOString(), ends_at: end.toISOString(), communication_method: 'in_app',
+    timezone: 'Europe/London',
     status: 'confirmed', duration_minutes: 30, price_minor: subtotal, currency: 'GBP',
     platform_fee_rate: orderType === 'trial' ? 0 : 5, platform_fee_minor: commission,
     companion_amount_minor: subtotal - commission, is_trial: orderType === 'trial',
@@ -369,7 +370,29 @@ async function prepareEarnings() {
     credit_applied_minor: 0, card_amount_minor: REGULAR_MINOR * 2,
   }).select('id').single(), 'e7 period').id;
   }
-  cases.E7_plan_call = await makeCase(S, comp, 'e7', { offerId: S.single_offer_id, orderType: 'plan_period_call', subtotal: REGULAR_MINOR, commission: REGULAR_COMMISSION, credit: 0, card: 0, endedHoursAgo: 34, planId: plan, periodId: period });
+  // Resume/repair: the plan-funded booking (no order row) is found by its
+  // plan linkage; a missing timezone from an earlier partial run is repaired
+  // (the plan-period month match is timezone-aware).
+  const priorPlanBooking = must(await admin.from('bookings')
+    .select('id, timezone').eq('plan_id', plan).maybeSingle(), 'e7 prior booking');
+  if (priorPlanBooking?.id) {
+    if (!priorPlanBooking.timezone) {
+      must(await admin.from('bookings').update({ timezone: 'Europe/London' })
+        .eq('id', priorPlanBooking.id).select('id'), 'e7 timezone repair');
+    }
+    const priorEarning = must(await admin.from('companion_earnings')
+      .select('id, state, basis_minor, commission_rate_pct, commission_minor, net_minor')
+      .eq('booking_id', priorPlanBooking.id).maybeSingle(), 'e7 prior earning');
+    if (!priorEarning?.id) {
+      must(await comp.client.rpc('submit_companion_attendance', { p_booking: priorPlanBooking.id, p_outcome: 'took_place', p_explanation: null }), 'e7 attendance (resumed)');
+    }
+    const earning = must(await admin.from('companion_earnings')
+      .select('id, state, basis_minor, commission_rate_pct, commission_minor, net_minor')
+      .eq('booking_id', priorPlanBooking.id).maybeSingle(), 'e7 earning read');
+    cases.E7_plan_call = { bookingId: priorPlanBooking.id, orderId: null, earningId: earning?.id ?? null, earning };
+  } else {
+    cases.E7_plan_call = await makeCase(S, comp, 'e7', { offerId: S.single_offer_id, orderType: 'plan_period_call', subtotal: REGULAR_MINOR, commission: REGULAR_COMMISSION, credit: 0, card: 0, endedHoursAgo: 34, planId: plan, periodId: period });
+  }
   cases.E7_plan_call.planId = plan; cases.E7_plan_call.periodId = period; cases.E7_plan_call.planOrderId = planOrder;
   S.cases = cases; saveSnap(S);
   }
