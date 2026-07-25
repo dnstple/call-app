@@ -426,7 +426,7 @@ async function prepareEarnings() {
     const si = await coordClient.auth.signInWithPassword({ email: S.coordinator.email, password: S.coordinator.password });
     if (si.error) fail(`coordinator sign-in: ${si.error.message}`);
     const issue = must(await coordClient.rpc('report_conversation_issue', {
-      p_booking: cases.E8_issue_held.bookingId, p_category: 'call_quality',
+      p_booking: cases.E8_issue_held.bookingId, p_category: 'audio_video_problem',
       p_description: 'Stage 3E validation: deliberate issue hold (E8).',
     }), 'e8 issue');
     cases.E8_issue_held.issue = issue?.id ?? issue;
