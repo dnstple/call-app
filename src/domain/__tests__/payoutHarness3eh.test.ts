@@ -63,7 +63,11 @@ describe('3E-H harness: idempotency, checkpointing and control restoration', () 
     expect(cl).not.toMatch(/\.delete\(/);
   });
   it('11. controls are restored even after a failed matrix step (finally) and restore asserts the resting state', () => {
-    expect(H).toMatch(/finally \{\s*\n\s*await setControl\('scoped_execution', 'disabled'\); \/\/ hard restore even on failure/);
+    // The armed window uses a throwing must variant + state-aware idempotent
+    // arm/restore, and the finally always disables (fail()/process.exit would
+    // have skipped finally — the exact bug this guards against).
+    expect(H).toMatch(/finally \{\s*\n\s*await setControlTo\('disabled'\); \/\/ hard restore even on failure/);
+    expect(H).toContain('const mustT =');
     const rc = H.slice(H.indexOf('async function restoreControls'), H.indexOf('/* ------------------------------ inspect'));
     expect(rc).toContain('provider_transfer_amount_ceiling_minor: 0');
     expect(rc).toContain('provider_transfer_daily_ceiling_minor: 0');
