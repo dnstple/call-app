@@ -1,24 +1,26 @@
 // @vitest-environment jsdom
 /**
- * Stage 3A — CallPage frontend behaviour (mocked adapters; no LiveKit, no token).
- *
- * Proves the audio-only pre-join → in-call → post-call flow: eligibility gating,
- * microphone permission handling, token success/failure, waiting/connected,
- * muted/reconnecting/autoplay states, that Leave clears the call (disconnect),
- * and that no camera/recording controls exist.
+ * Sprint v1 (Block 1) — CallPage video-call behaviour (mocked adapters; no
+ * LiveKit, no token). Proves the pre-join → in-call → post-call flow:
+ * eligibility gating, microphone permission handling (camera optional), token
+ * success/failure, waiting/connected, muted/reconnecting/autoplay states,
+ * camera on/off, remote-video attach, that Leave clears the call (disconnect),
+ * and that camera controls exist while recording/screen-share controls do NOT.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import type { AudioCallHandlers } from '../../calls/audioCall';
+import type { VideoCallHandlers } from '../../calls/videoCall';
 
 const repo = vi.hoisted(() => ({
   getCallEligibility: vi.fn(),
   requestCallToken: vi.fn(),
 }));
 const adapter = vi.hoisted(() => ({
-  connectAudioCall: vi.fn(),
-  listMicrophones: vi.fn(async () => [{ deviceId: 'd1', label: 'Built-in mic' }]),
+  connectVideoCall: vi.fn(),
+  listMicrophones: vi.fn(async () => [{ deviceId: 'm1', label: 'Built-in mic' }]),
+  listCameras: vi.fn(async () => [{ deviceId: 'c1', label: 'Built-in camera' }]),
+  listSpeakers: vi.fn(async () => [{ deviceId: 's1', label: 'Built-in speaker' }]),
 }));
 
 vi.mock('../../config/dataMode', () => ({ isSupabaseMode: () => true, getDataMode: () => 'supabase' }));
@@ -27,9 +29,11 @@ vi.mock('../../repositories/callRepository', () => ({
   requestCallToken: repo.requestCallToken,
   CallError: class extends Error {},
 }));
-vi.mock('../../calls/audioCall', () => ({
-  connectAudioCall: adapter.connectAudioCall,
+vi.mock('../../calls/videoCall', () => ({
+  connectVideoCall: adapter.connectVideoCall,
   listMicrophones: adapter.listMicrophones,
+  listCameras: adapter.listCameras,
+  listSpeakers: adapter.listSpeakers,
 }));
 
 import CallPage from '../../pages/CallPage';
@@ -50,7 +54,7 @@ const eligible = {
   call_session_id: 's1',
 };
 
-function grantMic() {
+function grantMedia() {
   (navigator as unknown as { mediaDevices: unknown }).mediaDevices = {
     getUserMedia: vi.fn(async () => ({ getTracks: () => [{ stop() {} }] })),
     enumerateDevices: vi.fn(async () => []),
@@ -62,23 +66,30 @@ function denyMic(name = 'NotAllowedError') {
   };
 }
 
-let capturedHandlers: AudioCallHandlers;
+let capturedHandlers: VideoCallHandlers;
 const fakeCall = {
-  disconnect: vi.fn(async () => {}), setMuted: vi.fn(async () => {}), switchMic: vi.fn(async () => {}),
+  disconnect: vi.fn(async () => {}),
+  setMuted: vi.fn(async () => {}),
+  setCameraEnabled: vi.fn(async () => {}),
+  cameraEnabled: () => true,
+  switchMic: vi.fn(async () => {}),
+  switchCamera: vi.fn(async () => {}),
+  switchSpeaker: vi.fn(async () => {}),
   state: () => 'connected' as const, remoteConnected: () => false, remoteName: () => null,
 };
 
 beforeEach(() => {
   repo.getCallEligibility.mockReset().mockResolvedValue(eligible);
   repo.requestCallToken.mockReset().mockResolvedValue({ ok: true, token: 't', serverUrl: 'wss://x', callSessionId: 's1', role: 'member' });
-  adapter.connectAudioCall.mockReset().mockImplementation(async (_p: unknown, _o: unknown, h: AudioCallHandlers) => { capturedHandlers = h; return fakeCall; });
+  adapter.connectVideoCall.mockReset().mockImplementation(async (_p: unknown, _o: unknown, h: VideoCallHandlers) => { capturedHandlers = h; return fakeCall; });
   adapter.listMicrophones.mockClear();
-  fakeCall.disconnect.mockClear(); fakeCall.setMuted.mockClear();
-  grantMic();
+  adapter.listCameras.mockClear();
+  fakeCall.disconnect.mockClear(); fakeCall.setMuted.mockClear(); fakeCall.setCameraEnabled.mockClear();
+  grantMedia();
 });
 afterEach(() => { cleanup(); });
 
-describe('CallPage — Stage 3A audio flow', () => {
+describe('CallPage — Sprint v1 video-call flow', () => {
   it('shows an eligibility loading state first', async () => {
     let resolve: (v: unknown) => void = () => {};
     repo.getCallEligibility.mockReturnValueOnce(new Promise((r) => { resolve = r; }));
@@ -100,7 +111,7 @@ describe('CallPage — Stage 3A audio flow', () => {
     expect(await screen.findByText(/only the two people talking can join/i)).toBeTruthy();
   });
 
-  it('surfaces a blocked microphone with recovery guidance', async () => {
+  it('surfaces a blocked microphone with recovery guidance and disables Join', async () => {
     denyMic('NotAllowedError');
     renderPage();
     expect(await screen.findByText(/blocking the microphone/i)).toBeTruthy();
@@ -113,12 +124,18 @@ describe('CallPage — Stage 3A audio flow', () => {
     expect(await screen.findByText(/couldn’t find a microphone/i)).toBeTruthy();
   });
 
+  it('offers a camera choice at pre-join (camera is optional)', async () => {
+    renderPage();
+    await screen.findByRole('button', { name: /join call/i });
+    expect(await screen.findByLabelText(/join with my camera on/i)).toBeTruthy();
+  });
+
   it('joins on token success and shows the waiting-for-participant state', async () => {
     renderPage();
     const join = await screen.findByRole('button', { name: /join call/i });
     await waitFor(() => expect((join as HTMLButtonElement).disabled).toBe(false));
     await act(async () => { fireEvent.click(join); });
-    expect(adapter.connectAudioCall).toHaveBeenCalledTimes(1);
+    expect(adapter.connectVideoCall).toHaveBeenCalledTimes(1);
     await act(async () => { capturedHandlers.onState('connected'); });
     expect(await screen.findByText(/waiting for them to join/i)).toBeTruthy();
   });
@@ -129,11 +146,26 @@ describe('CallPage — Stage 3A audio flow', () => {
     await waitFor(() => expect((join as HTMLButtonElement).disabled).toBe(false));
     await act(async () => { fireEvent.click(join); });
     await act(async () => { capturedHandlers.onState('connected'); capturedHandlers.onRemotePresence(true, 'Alex'); });
-    expect(await screen.findByText(/^Connected$/)).toBeTruthy();
+    expect((await screen.findAllByText(/connected/i)).length).toBeGreaterThan(0);
     await act(async () => { capturedHandlers.onRemoteMuted(true); });
-    expect(await screen.findByText(/microphone is muted/i)).toBeTruthy();
+    expect(await screen.findByText(/their microphone is muted/i)).toBeTruthy();
     await act(async () => { capturedHandlers.onState('reconnecting'); });
     expect(await screen.findByText(/reconnecting/i)).toBeTruthy();
+  });
+
+  it('attaches the remote video element when it arrives', async () => {
+    renderPage();
+    const join = await screen.findByRole('button', { name: /join call/i });
+    await waitFor(() => expect((join as HTMLButtonElement).disabled).toBe(false));
+    await act(async () => { fireEvent.click(join); });
+    await act(async () => { capturedHandlers.onState('connected'); capturedHandlers.onRemotePresence(true, 'Alex'); });
+    const stage = screen.getByLabelText(/your conversation partner’s video/i);
+    const remoteVideo = document.createElement('video');
+    await act(async () => { capturedHandlers.onRemoteVideo(remoteVideo); });
+    expect(stage.querySelector('video')).toBe(remoteVideo);
+    // Removing it (partner turned camera off) detaches cleanly.
+    await act(async () => { capturedHandlers.onRemoteVideo(null); });
+    expect(stage.querySelector('video')).toBeNull();
   });
 
   it('offers autoplay recovery when the browser blocks audio', async () => {
@@ -154,8 +186,21 @@ describe('CallPage — Stage 3A audio flow', () => {
     const join = await screen.findByRole('button', { name: /join call/i });
     await waitFor(() => expect((join as HTMLButtonElement).disabled).toBe(false));
     await act(async () => { fireEvent.click(join); });
-    expect(adapter.connectAudioCall).not.toHaveBeenCalled();
+    expect(adapter.connectVideoCall).not.toHaveBeenCalled();
     expect(await screen.findByText(/joining time for this conversation has passed/i)).toBeTruthy();
+  });
+
+  it('toggles the camera in-call via the adapter', async () => {
+    renderPage();
+    const join = await screen.findByRole('button', { name: /join call/i });
+    await waitFor(() => expect((join as HTMLButtonElement).disabled).toBe(false));
+    await act(async () => { fireEvent.click(join); });
+    await act(async () => { capturedHandlers.onState('connected'); });
+    const camBtn = await screen.findByRole('button', { name: /turn my camera off/i });
+    await act(async () => { fireEvent.click(camBtn); });
+    expect(fakeCall.setCameraEnabled).toHaveBeenCalledWith(false);
+    // The control now offers to turn it back on.
+    expect(await screen.findByRole('button', { name: /turn my camera on/i })).toBeTruthy();
   });
 
   it('leaving disconnects (clears the call) and reaches the post-call screen', async () => {
@@ -171,15 +216,15 @@ describe('CallPage — Stage 3A audio flow', () => {
     expect(screen.getByText(/does not complete the booking/i)).toBeTruthy();
   });
 
-  it('exposes accessible controls and NO camera/record controls', async () => {
+  it('exposes accessible mute/camera/leave controls and NO record/screen-share controls', async () => {
     renderPage();
     const join = await screen.findByRole('button', { name: /join call/i });
     await waitFor(() => expect((join as HTMLButtonElement).disabled).toBe(false));
     await act(async () => { fireEvent.click(join); });
     await act(async () => { capturedHandlers.onState('connected'); });
     expect(screen.getByRole('button', { name: /mute my microphone/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /turn my camera off/i })).toBeTruthy();
     expect(screen.getByRole('button', { name: /leave the call/i })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: /camera/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /record/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /share screen/i })).toBeNull();
     expect(screen.getAllByText(/not recorded/i).length).toBeGreaterThan(0);

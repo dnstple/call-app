@@ -241,35 +241,37 @@ describe('token endpoint accepts booking_id only and derives everything else', (
   });
 });
 
-describe('the generated token is a microphone-only, short-lived single-room grant', () => {
+describe('the generated token is a mic+camera, short-lived single-room grant (no screen-share/record)', () => {
   const KEY = 'APItestkey';
   const SECRET = 'secret_secret_secret_secret_secret_1234';
   const ROOM = 'call_' + '0'.repeat(32);
   const ACCT = '11111111-2222-3333-4444-555555555555';
 
   async function mintAndDecode() {
+    // Mirrors the authenticated branch of livekit-token/index.ts: mic + camera.
     const at = new AccessToken(KEY, SECRET, { identity: participantIdentity(ACCT), ttl: TOKEN_TTL_SECONDS });
-    at.addGrant({ ...buildCallGrant(ROOM), canPublishSources: [TrackSource.MICROPHONE] });
+    at.addGrant({ ...buildCallGrant(ROOM), canPublishSources: [TrackSource.MICROPHONE, TrackSource.CAMERA] });
     const jwt = await at.toJwt();
     const payload = JSON.parse(Buffer.from(jwt.split('.')[1], 'base64').toString());
     return payload;
   }
 
-  it('shared grant is mic-only with no camera/screen/data/admin/record', () => {
+  it('shared grant is mic+camera with no screen-share/data/admin/record', () => {
     const g = buildCallGrant(ROOM);
     expect(g.roomJoin).toBe(true);
     expect(g.room).toBe(ROOM);
     expect(g.canPublish).toBe(true);
     expect(g.canSubscribe).toBe(true);
     expect(g.canPublishData).toBe(false);
-    expect(g.canPublishSources).toEqual(['microphone']);
+    expect(g.canPublishSources).toEqual(['microphone', 'camera']);
     expect(g.roomAdmin).toBe(false);
     expect(g.roomCreate).toBe(false);
     expect(g.roomList).toBe(false);
     expect(g.roomRecord).toBe(false);
     expect(g.ingressAdmin).toBe(false);
-    // The grant type has no camera/screen-share/egress keys at all.
-    expect(JSON.stringify(g).toLowerCase()).not.toMatch(/camera|screen|egress|record.*true/);
+    // Camera is permitted; screen-share/egress/recording are NOT.
+    expect(g.canPublishSources).not.toContain('screen_share');
+    expect(JSON.stringify(g).toLowerCase()).not.toMatch(/screen|egress|record.*true/);
   });
 
   it('decoded JWT: issuer=key, subject=account identity, TTL=10m', async () => {
@@ -280,18 +282,29 @@ describe('the generated token is a microphone-only, short-lived single-room gran
     expect(TOKEN_TTL_SECONDS).toBe(600);
   });
 
-  it('decoded JWT video grant: mic only, no camera/screen/data/admin/record', async () => {
+  it('decoded JWT video grant: mic+camera, no screen-share/data/admin/record', async () => {
     const p = await mintAndDecode();
     expect(p.video.roomJoin).toBe(true);
     expect(p.video.room).toBe(ROOM);
     expect(p.video.canPublish).toBe(true);
     expect(p.video.canSubscribe).toBe(true);
     expect(p.video.canPublishData).toBe(false);
-    expect(p.video.canPublishSources).toEqual(['microphone']);
+    expect(p.video.canPublishSources).toContain('microphone');
+    expect(p.video.canPublishSources).toContain('camera');
     expect(p.video.roomAdmin).toBeFalsy();
     expect(p.video.roomRecord).toBeFalsy();
-    expect(p.video.canPublishSources).not.toContain('camera');
     expect(p.video.canPublishSources).not.toContain('screen_share');
+  });
+
+  it('the authenticated token endpoint mints mic+camera (never screen-share/record)', () => {
+    // The camera source is granted; screen-share and egress/recording never are.
+    expect(TOKEN_FN).toContain('[TrackSource.MICROPHONE, TrackSource.CAMERA]');
+    expect(TOKEN_FN).not.toMatch(/TrackSource\.SCREEN_SHARE/);
+    expect(TOKEN_FN).not.toMatch(/roomRecord|\bEgress\b|egressAdmin/);
+    // The legacy guest branch remains microphone-only.
+    const guestBranch = TOKEN_FN.slice(TOKEN_FN.indexOf('handleGuestJoin'), TOKEN_FN.indexOf('Deno.serve'));
+    expect(guestBranch).toContain('canPublishSources: [TrackSource.MICROPHONE]');
+    expect(guestBranch).not.toMatch(/TrackSource\.CAMERA/);
   });
 });
 
@@ -331,22 +344,29 @@ describe('webhook verifies a raw signed body and persists no raw payload', () =>
   });
 });
 
-describe('frontend exposes an AUDIO-only call — no camera/screen-share/record/chat', () => {
-  it('the call page and adapter invoke NO camera / screen-share / recording APIs', () => {
-    // Target real API surfaces (not the words in explanatory comments).
-    for (const src of [PAGE, ADAPTER]) {
-      expect(src).not.toMatch(/setCameraEnabled\s*\(/);
-      expect(src).not.toMatch(/setScreenShareEnabled\s*\(/);
-      expect(src).not.toMatch(/TrackSource\.(CAMERA|SCREEN_SHARE)/);
-      expect(src).not.toMatch(/Track\.Source\.(Camera|ScreenShare)/);
-      expect(src).not.toMatch(/startScreenShare|createLocalVideoTrack/);
-      expect(src).not.toMatch(/\bEgress\b|startRecording|roomRecord/i);
-      // getUserMedia is audio-only (never requests video).
-      expect(src).not.toMatch(/getUserMedia\([^)]*video/);
-    }
-    // The adapter only ever enables the microphone.
+describe('the audio adapter stays audio-only; the call page adds camera but never screen-share/record', () => {
+  it('audioCall.ts (used by the guest flow) invokes NO camera / screen-share / recording APIs', () => {
+    // The audio adapter is the surface the anonymous guest flow uses; it must
+    // remain strictly audio-only (no video capture at all).
+    expect(ADAPTER).not.toMatch(/setCameraEnabled\s*\(/);
+    expect(ADAPTER).not.toMatch(/setScreenShareEnabled\s*\(/);
+    expect(ADAPTER).not.toMatch(/TrackSource\.(CAMERA|SCREEN_SHARE)/);
+    expect(ADAPTER).not.toMatch(/Track\.Source\.(Camera|ScreenShare)/);
+    expect(ADAPTER).not.toMatch(/startScreenShare|createLocalVideoTrack/);
+    expect(ADAPTER).not.toMatch(/\bEgress\b|startRecording|roomRecord/i);
+    expect(ADAPTER).not.toMatch(/getUserMedia\([^)]*video/);
     expect(ADAPTER).toContain('setMicrophoneEnabled');
     expect(ADAPTER).toContain('Track.Kind.Audio');
+  });
+
+  it('the call page may use the camera but NEVER screen-share/recording, and never auto-completes/stores', () => {
+    // Camera is allowed on the authenticated call page (video call). Screen-share
+    // and recording/egress are still forbidden everywhere.
+    expect(PAGE).not.toMatch(/setScreenShareEnabled\s*\(/);
+    expect(PAGE).not.toMatch(/TrackSource\.SCREEN_SHARE/);
+    expect(PAGE).not.toMatch(/Track\.Source\.ScreenShare/);
+    expect(PAGE).not.toMatch(/startScreenShare/);
+    expect(PAGE).not.toMatch(/\bEgress\b|startRecording|roomRecord/i);
     // Clear no-recording safety copy + no auto-completion of the booking.
     expect(PAGE.toLowerCase()).toContain('not recorded');
     expect(PAGE.toLowerCase()).toContain('does not complete the booking');

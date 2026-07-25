@@ -15,9 +15,9 @@
  *  - the room name is server-generated and opaque (`call_<hex>`), never chosen
  *    or seen by the browser except implicitly inside the JWT;
  *  - the token is short-lived (10 min) and grants ONLY: roomJoin on that one
- *    room, subscribe, publish MICROPHONE only, canPublishData=false. No camera,
- *    no screen-share, no data, no room admin/create/list, no recording,
- *    no ingress/egress/SIP.
+ *    room, subscribe, publish MICROPHONE and CAMERA, canPublishData=false. No
+ *    screen-share, no data, no room admin/create/list, no recording,
+ *    no ingress/egress/SIP. (The legacy guest branch stays microphone-only.)
  *
  * The generated JWT is NEVER logged or persisted; only a token-issuance AUDIT
  * (session/booking/account/role/expiry) is recorded.
@@ -197,8 +197,11 @@ Deno.serve(async (req) => {
   if (sessionErr || !sessionRes) return json({ error: 'not_eligible', ...timing }, 200);
   const session = sessionRes as { call_session_id: string; room_name: string };
 
-  // 6. Mint the short-lived, microphone-only token for this one room. The
-  //    identity and room are SERVER-derived; the browser never supplied them.
+  // 6. Mint the short-lived, mic+camera token for this one room. The identity
+  //    and room are SERVER-derived; the browser never supplied them. The token
+  //    permits publishing MICROPHONE and CAMERA only — the client decides
+  //    whether to actually enable the camera (join audio-only vs with video).
+  //    No screen-share, no data channel, no recording/egress, no room admin.
   let jwt: string;
   const expiresAt = new Date(Date.now() + TOKEN_TTL_SECONDS * 1000).toISOString();
   try {
@@ -207,7 +210,7 @@ Deno.serve(async (req) => {
       ttl: TOKEN_TTL_SECONDS,
     });
     const grant = buildCallGrant(session.room_name);
-    at.addGrant({ ...grant, canPublishSources: [TrackSource.MICROPHONE] });
+    at.addGrant({ ...grant, canPublishSources: [TrackSource.MICROPHONE, TrackSource.CAMERA] });
     jwt = await at.toJwt();
   } catch {
     return json({ error: 'token_generation_failed', ...timing }, 200);

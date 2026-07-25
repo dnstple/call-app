@@ -34,14 +34,16 @@ export function accountIdFromIdentity(identity: string): string | null {
 }
 
 /**
- * The narrowest possible grant for a one-to-one AUDIO call:
+ * The narrowest grant for a one-to-one AUDIO/VIDEO call (Sprint v1, Block 1):
  *  - join exactly one server-derived room;
- *  - subscribe + publish audio only (microphone source);
- *  - no data channel, no camera, no screen-share;
- *  - no room create/list/admin, no recording, no ingress/egress/SIP.
+ *  - subscribe + publish MICROPHONE and CAMERA only;
+ *  - no data channel, no SCREEN-SHARE (screen_share source omitted);
+ *  - no room create/list/admin, no recording/egress, no ingress/SIP.
  *
- * `canPublishSources` is the string `'microphone'`; the Edge Function maps it
- * to `TrackSource.MICROPHONE` before handing it to the SDK.
+ * Camera was added to enable video calls; screen-share, recording and group/
+ * SFU-admin capabilities remain excluded. `canPublishSources` is the string
+ * list `['microphone','camera']`; the Edge Function maps each to the SDK's
+ * TrackSource enum before handing it to the SDK.
  */
 export function buildCallGrant(roomName: string): {
   roomJoin: boolean;
@@ -63,7 +65,7 @@ export function buildCallGrant(roomName: string): {
     canSubscribe: true,
     canPublish: true,
     canPublishData: false,
-    canPublishSources: ['microphone'],
+    canPublishSources: ['microphone', 'camera'],
     canUpdateOwnMetadata: false,
     roomCreate: false,
     roomList: false,
