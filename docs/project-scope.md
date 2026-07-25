@@ -334,3 +334,18 @@ Coordinator participation and video (Stage 3E) must be implemented together
 because they alter the same LiveKit room, token, attendance, privacy and
 participant model. The help bot and introduction video must not delay the core
 launch unless they become explicit launch requirements.
+
+## Stage 3E — Companion earnings and payout execution (validated)
+
+Extends the validated financial core with companion payout execution. The
+earning/Connect/transfer architecture pre-existed (2G3/2G6/3B/3C); Stage 3E
+added the daily aggregate transfer ceiling + destination allowlist (0084),
+Companion earnings read projections (0085), the consolidated support payout
+queue (0086), the Companion earnings UI, the payout operations runbook, and a
+guarded hosted validation harness (scripts/validate-3e-payouts.mjs). Validated
+end-to-end in hosted Stripe test mode: E1-E18 all pass, automated verifier
+pass=19 fail=0, two real test-mode transfers executed exactly-once behind
+phrase-gated allowlist+ceiling controls then fully restored, Stage 3D verifier
+integrity preserved (pass=18). Tagged stage-3e-companion-payout-execution-
+validated. No live payout is authorised; see the Stage 3E audit for production
+blockers (APP_ORIGINS, live keys, Connect verification, ceilings, staffing).

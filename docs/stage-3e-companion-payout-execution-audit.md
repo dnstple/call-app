@@ -197,3 +197,59 @@ verification incomplete; production onboarding review pending; transfer +
 daily ceilings must be intentionally configured; payout support staffing;
 refunds/reversals/negative-balance/tax responsibilities need production
 approval. Stage 3E test-mode validation authorises **no** live payout.
+
+## 16. Hosted Stripe TEST-MODE validation outcome (E1–E18)
+
+Executed against project `gwtunmoefapiiybwlelw` in hosted test mode via
+`scripts/validate-3e-payouts.mjs` (fixture suffix `ms0ebluy`). The automated
+Stage 3E verifier returned **VERIFY RESULT pass=19 fail=0**; the full E1–E18
+matrix passed:
+
+- **E1** Companion completed Stripe test-mode Express onboarding
+  (`payouts_enabled=true`, transfers capability active, projection synced
+  from provider truth).
+- **E2** incomplete/again-gated account cannot receive a transfer (allowlist +
+  eligibility deny before enablement).
+- **E3** trial → one earning, 0% commission, net 700.
+- **E4** regular → one earning, 5% snapshot, commission 80 / net 1520.
+- **E5/E6** credit-only and mixed credit+card produce the SAME earning as card
+  (funding-mix independent); each executed exactly one real Stripe test
+  transfer (`tr_1Tx64c…`, `tr_1Tx64f…`), livemode=false, amount/currency/
+  destination matched to the immutable earning.
+- **E7** one completed plan-funded call → exactly one earning; the plan
+  purchase itself and the unused allowance created none.
+- **E8** open conversation issue contains the transfer layer (0 eligible in
+  the scoped preview, 0 attempts, projection untouched).
+- **E9** 12-hour/no-issue earning became payable via the real
+  `release_eligible_earnings` (idempotent across repeated runs).
+- **E10** duplicate release request created no second transfer
+  (`already_transferred`, settled attempt).
+- **E11** re-running execution is idempotent (snapshot + saga recovery).
+- **E12** resent `transfer.created` webhook changed nothing (verifier
+  unchanged).
+- **E13** foreign-id / amount / currency / destination mismatch containment
+  (0078 saga + 0084 guards; verifier provider-truth checks).
+- **E14** genuine failure remains safely classified without damaging the
+  booking (0048 retryable/permanent).
+- **E15** post-transfer issue-sourced refund created exactly one open
+  `customer_refund_after_transfer` settlement adjustment; the earning history
+  stayed byte-identical (no rewrite); support queue `reversal_required` rose.
+- **E16** disabled controls + zero per-transfer and daily ceilings block all
+  execution (resting state asserted after restore).
+- **E17** the Companion earnings projection matches durable state (two
+  transferred earnings).
+- **E18** the Stage 3D customer-payment verifier remains **pass=18 fail=0** on
+  its integrity checks; the point-in-time order/booking deltas (+7/+7) were
+  fully attributed to the seven Stage 3E fixture cases (all `3efx-*` keys, all
+  bookings the fixture companion) and involve no change to any Stage 3D row.
+
+The two real test transfers were executed only inside a phrase-gated,
+destination-allowlisted, ceiling-limited window; `transfer_finalise` was armed
+to `scoped_execution` solely around execution and hard-restored to `disabled`,
+with both ceilings returned to 0 and the fixture allowlist entry deactivated.
+The Stage 3C protected sentinels were re-verified unchanged throughout.
+
+Production blockers remain as in §15 (APP_ORIGINS still targets localhost; no
+live keys; Connect verification; deliberate ceiling configuration; payout
+support staffing; refund/reversal/negative-balance/tax approval). Stage 3E
+test-mode validation authorises no live payout.
