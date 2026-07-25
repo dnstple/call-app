@@ -577,7 +577,15 @@ async function runTransferCases() {
       const token = rq.confirmation_token; // memory only — never persisted/printed
       mustT(await ops.rpc('support_preview_operation_run', { p_run_id: runId }), `${key} preview`);
       mustT(await ops.rpc('support_confirm_operation_run', { p_run_id: runId, p_confirmation_token: token }), `${key} confirm`);
-      const r = await edge('scoped-stripe-transfers', opsJwt, { run_id: runId, confirmation_token: token });
+      // The scoped executor Edge boundary uses the SAME credentials as the
+      // C3 orchestration: service key + x-billing-secret + run credential.
+      const BILLING = process.env.BILLING_WORKER_SECRET ?? '';
+      if (!BILLING) throw new Error('BILLING_WORKER_SECRET required for transfer execution');
+      const r = await fetch(`${URL_.replace(/\/$/, '')}/functions/v1/scoped-stripe-transfers`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', apikey: SVC, Authorization: `Bearer ${SVC}`, 'x-billing-secret': BILLING },
+        body: JSON.stringify({ run_id: runId, confirmation_token: token }),
+      }).then(async (x) => ({ status: x.status, body: await x.json().catch(() => null) }));
       if (r.status !== 200) throw new Error(`${key} edge execution: ${r.status} ${JSON.stringify(r.body).slice(0, 300)}`);
       S.transfers[key] = { runId, completed: true, summary: r.body?.summary ?? null };
       saveSnap(S);
