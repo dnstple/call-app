@@ -57,6 +57,7 @@ function realDeps(admin, ck) {
     insert: async (t, row) => { const q = await admin.from(t).insert(row).select().maybeSingle?.() ?? await admin.from(t).insert(row).select(); if (q.error) throw new Error(`${t} insert: ${q.error.message}`); return Array.isArray(row) ? q.data : (q.data?.[0] ?? q.data); },
     upsert: async (t, row, onConflict) => { const q = await admin.from(t).upsert(row, { onConflict, ignoreDuplicates: false }).select(); if (q.error) throw new Error(`${t} upsert: ${q.error.message}`); return q.data?.[0] ?? null; },
     rpc: async (name, args) => { const q = await admin.rpc(name, args); if (q.error) throw new Error(`rpc ${name}: ${q.error.message}`); return q.data; },
+    update: async (t, matchObj, patch) => { const q = await admin.from(t).update(patch).match(matchObj).select(); if (q.error) throw new Error(`${t} update: ${q.error.message}`); return q.data; },
     createUser: async (email) => {
       core.requireV1Email(email);
       const password = `V1!${randomUUID()}`;

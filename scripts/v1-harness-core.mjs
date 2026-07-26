@@ -180,9 +180,15 @@ export async function prepareFixture(deps, suffix) {
   });
 
   await phase('companion_public_state', async () => {
-    // approved + accepting + public/active. Idempotent upsert on the pk.
+    // approved + accepting. Idempotent upsert on the pk.
     await deps.upsert('companion_profiles', { profile_id: snap.companion_profile_id, is_accepting_new_members: true, moderation_status: 'approved' }, 'profile_id');
-    await deps.rpcSafe?.('noop'); // placeholder for future activate call
+  });
+
+  await phase('companion_visibility', async () => {
+    // profiles.visibility defaults to 'private'; discovery requires active+public.
+    // Service-role update (the completeness guard trigger only fires for the
+    // authenticated client role, not service role).
+    await deps.update('profiles', { id: snap.companion_profile_id }, { profile_status: 'active', visibility: 'public' });
   });
 
   await phase('offers_availability', async () => {

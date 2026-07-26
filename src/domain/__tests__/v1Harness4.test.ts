@@ -37,6 +37,7 @@ function fakeDeps(ck, seed = {}) {
     async insert(t, row) { d.wrote = true; tables[t] = tables[t] || []; const rows = Array.isArray(row) ? row : [row]; const out = rows.map((r) => ({ id: uuid(idc++), ...r })); tables[t].push(...out); return Array.isArray(row) ? out : out[0]; },
     async upsert(t, row, key) { d.wrote = true; tables[t] = tables[t] || []; const i = tables[t].findIndex((r) => r[key] === row[key]); if (i >= 0) { tables[t][i] = { ...tables[t][i], ...row }; return tables[t][i]; } const rec = { id: uuid(idc++), ...row }; tables[t].push(rec); return rec; },
     async rpc(name, args) { d.wrote = true; d.calls.push(name); return null; },
+    async update(t, m, patch) { d.wrote = true; (tables[t] || []).forEach((r) => { if (match(r, m)) Object.assign(r, patch); }); },
     async createUser(email) { d.wrote = true; core.requireV1Email(email); return { id: uuid(idc++), email }; },
     _tables: tables,
   };
@@ -90,7 +91,7 @@ describe('fixture (tests 7-12)', () => {
   });
   it('11 interrupted runs resume from checkpoint', async () => {
     const ck = fakeCk(); const deps = fakeDeps(ck);
-    ck.done = ['accounts', 'profiles', 'companion_public_state', 'offers_availability', 'consent', 'preferences'];
+    ck.done = ['accounts', 'profiles', 'companion_public_state', 'companion_visibility', 'offers_availability', 'consent', 'preferences'];
     ck.snap = { suffix: 'v1pilot-abc' };
     await core.prepareFixture(deps, 'v1pilot-abc');
     expect(deps.wrote).toBe(false); // everything already done → no writes
