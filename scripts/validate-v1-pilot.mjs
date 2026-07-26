@@ -99,9 +99,11 @@ function realDeps(admin, ck) {
       return payload;
     },
     runVerifier: (name) => {
-      const script = name === '3d' ? 'scripts/validate-3dd-payments.mjs' : 'scripts/validate-3e-payouts.mjs';
-      const arg = name === '3d' ? '--verify' : '--report';
-      const out = spawnSync('node', [script, arg], { encoding: 'utf-8', env: process.env });
+      // Both verifiers are read-only in --verify; 3D requires its confirm phrase.
+      const cmd = name === '3d'
+        ? ['scripts/validate-3dd-payments.mjs', '--verify', '--confirm', 'VALIDATE-3DD-TEST-PAYMENTS']
+        : ['scripts/validate-3e-payouts.mjs', '--verify'];
+      const out = spawnSync('node', cmd, { encoding: 'utf-8', env: process.env });
       return (out.stdout ?? '') + (out.stderr ?? '');
     },
   };
