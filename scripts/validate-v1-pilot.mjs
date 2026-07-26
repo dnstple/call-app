@@ -85,16 +85,16 @@ function realDeps(admin, ck) {
       ck.save();
       return { id, email };
     },
-    callToken: async (bookingId, side) => {
-      // Sign in as the side's owner and invoke the real livekit-token Edge fn;
-      // decode the JWT video grant. Hosted-only.
+    callToken: async (bookingId, account) => {
+      // Sign in as the given fixture account and invoke the real livekit-token
+      // Edge fn; decode the JWT video grant. A non-participant receives no token.
       const creds = ck.snap?._creds ?? {};
-      const acct = side === 'companion' ? ck.snap?.companion : ck.snap?.member_owner;
       const cli = createClient(env.url, env.anon, { auth: { persistSession: false } });
-      const si = await cli.auth.signInWithPassword({ email: acct.email, password: creds[acct.email] });
-      if (si.error) throw new Error(`sign-in ${side}: ${si.error.message}`);
+      const si = await cli.auth.signInWithPassword({ email: account.email, password: creds[account.email] });
+      if (si.error) throw new Error(`sign-in ${account.email.split('@')[0]}: ${si.error.message}`);
       const fn = await cli.functions.invoke('livekit-token', { body: { bookingId } });
-      const jwt = fn.data?.token; if (!jwt) return { video: null, error: fn.data?.error };
+      const jwt = fn.data?.token;
+      if (!jwt) return { video: null, error: fn.data?.error ?? 'no_token' };
       const payload = JSON.parse(Buffer.from(jwt.split('.')[1], 'base64').toString());
       return payload;
     },

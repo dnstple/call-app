@@ -248,12 +248,31 @@ export async function verifyNotifications(deps, snap) {
 
 export async function verifyCalls(deps, snap) {
   const r = [];
-  const memberGrant = await deps.callToken(snap.booking_id, 'member');
-  const companionGrant = await deps.callToken(snap.booking_id, 'companion');
-  r.push({ name: 'call:member eligible', pass: !!memberGrant?.video });
-  r.push({ name: 'call:companion eligible', pass: !!companionGrant?.video });
+  // Idempotent short, in-window confirmed booking so a REAL token can be minted.
+  // The booking-trust trigger (0092) still applies: it passes because the
+  // fixture companion is approved + consented and unblocked.
+  const start = new Date(Date.now() - 5 * 60_000).toISOString();
+  const end = new Date(Date.now() + 25 * 60_000).toISOString();
+  if (snap.booking_id) {
+    await deps.update('bookings', { id: snap.booking_id }, { starts_at: start, ends_at: end, status: 'confirmed' });
+  } else {
+    snap.booking_id = (await deps.insert('bookings', {
+      member_profile_id: snap.member_profile_id, companion_profile_id: snap.companion_profile_id,
+      booked_by_account_id: snap.coordinator.account_id, offer_id: snap.trial_offer_id,
+      starts_at: start, ends_at: end, timezone: 'Europe/London', communication_method: 'in_app',
+      status: 'confirmed', duration_minutes: 30, price_minor: 700, currency: 'GBP',
+      platform_fee_rate: 0, platform_fee_minor: 0, companion_amount_minor: 700, is_trial: true,
+    })).id;
+    deps.ck.save();
+  }
+  const memberGrant = await deps.callToken(snap.booking_id, snap.member_owner);
+  const companionGrant = await deps.callToken(snap.booking_id, snap.companion);
+  const strangerGrant = await deps.callToken(snap.booking_id, snap.support); // non-participant
+  r.push({ name: 'call:member eligible (real token issued)', pass: !!memberGrant?.video });
+  r.push({ name: 'call:companion eligible (real token issued)', pass: !!companionGrant?.video });
   r.push({ name: 'call:grant permits mic+camera', pass: grantAllowsMicCamera(memberGrant?.video) });
   r.push({ name: 'call:grant excludes screenshare/record/admin', pass: grantExcludesUnsafe(memberGrant?.video) });
+  r.push({ name: 'call:non-participant denied a token', pass: !strangerGrant?.video });
   return r;
 }
 
