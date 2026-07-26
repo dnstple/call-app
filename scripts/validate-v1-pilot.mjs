@@ -60,10 +60,28 @@ function realDeps(admin, ck) {
     createUser: async (email) => {
       core.requireV1Email(email);
       const password = `V1!${randomUUID()}`;
-      const q = await admin.auth.admin.createUser({ email, password, email_confirm: true });
-      if (q.error && !/already/i.test(q.error.message)) throw new Error(`createUser: ${q.error.message}`);
-      const id = q.data?.user?.id ?? (await admin.auth.admin.listUsers()).data.users.find((u) => u.email === email)?.id;
-      ck.snap = ck.snap ?? {}; ck.snap._creds = { ...(ck.snap._creds ?? {}), [email]: password }; ck.save();
+      let id;
+      const made = await admin.auth.admin.createUser({ email, password, email_confirm: true });
+      if (made.error) {
+        if (!/already|registered|exists/i.test(made.error.message)) throw new Error(`createUser: ${made.error.message}`);
+        // Idempotent re-run: reset the existing user's password so we can sign in.
+        const list = await admin.auth.admin.listUsers();
+        id = list.data.users.find((u) => u.email === email)?.id;
+        if (!id) throw new Error(`createUser: user exists but id not found for ${email.split('@')[0]}`);
+        const upd = await admin.auth.admin.updateUserById(id, { password, email_confirm: true });
+        if (upd.error) throw new Error(`reset password: ${upd.error.message}`);
+      } else {
+        id = made.data.user.id;
+      }
+      // Provision the accounts row via the app RPC (same path as Stage 3E mkUser).
+      const c = createClient(env.url, env.anon, { auth: { persistSession: false } });
+      const si = await c.auth.signInWithPassword({ email, password });
+      if (si.error) throw new Error(`sign-in ${email.split('@')[0]}: ${si.error.message}`);
+      const ens = await c.rpc('ensure_current_account');
+      if (ens.error) throw new Error(`ensure_current_account: ${ens.error.message}`);
+      ck.snap = ck.snap ?? { suffix: env.suffix };
+      ck.snap._creds = { ...(ck.snap._creds ?? {}), [email]: password };
+      ck.save();
       return { id, email };
     },
     callToken: async (bookingId, side) => {

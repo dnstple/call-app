@@ -138,13 +138,17 @@ export async function prepareFixture(deps, suffix) {
   if (!suffixOk(suffix)) throw new Error('fixture suffix must match v1pilot-*');
   const phase = deps.ck.phase.bind(deps.ck);
   const snap = deps.ck.snap ?? { suffix };
+  deps.ck.snap = snap; // single shared checkpoint object (createUser persists into it)
 
   await phase('accounts', async () => {
     for (const role of ['support', 'coordinator', 'member_owner', 'companion']) {
       if (!snap[role]) {
-        const email = `${role}.${suffix}@example.test`;
+        // Domain/shape mirrors the Stage 3E fixture (known-good). The suffix
+        // carries the v1pilot- marker required by requireV1Email.
+        const email = `${role}-${suffix}@example.com`;
         const u = await deps.createUser(email); // generated password lives only in checkpoint
         snap[role] = { account_id: u.id, email };
+        deps.ck.save();
       }
     }
     await deps.upsert('support_admins', { account_id: snap.support.account_id }, 'account_id');
