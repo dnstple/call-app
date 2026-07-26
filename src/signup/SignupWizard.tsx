@@ -10,6 +10,7 @@ import {
   Users,
   Wand2,
   RotateCcw,
+  LogOut,
 } from 'lucide-react';
 import type { Role } from '../types';
 import { getState, newId } from '../state/store';
@@ -302,8 +303,17 @@ export default function SignupWizard() {
         },
       });
     }
+    // Always offer an escape from the wizard for a signed-in account (pilot UX
+    // fix: previously a signed-in-but-incomplete account could get stuck here).
+    if (supabase) {
+      items.push({
+        label: 'Sign out',
+        icon: <LogOut size={18} aria-hidden="true" />,
+        onSelect: () => { void auth.signOut().then(() => navigate('/login', { replace: true })); },
+      });
+    }
     return items;
-  }, [data.role, step]);
+  }, [data.role, step, supabase, auth, navigate]);
 
   const fieldError = (cond: boolean, msg: string) => (attempted && cond ? msg : undefined);
 
