@@ -37,6 +37,7 @@ const PROJECT_REF = 'gwtunmoefapiiybwlelw';
 const PHRASE = 'VALIDATE-3DD-TEST-PAYMENTS';
 const SNAP_FILE = '3dd-snapshot.local.json';
 const STAGE3E_SNAP = '3e-snapshot.local.json';
+const V1_CHECKPOINT = 'v1-checkpoint.local.json';
 
 const args = process.argv.slice(2);
 const argOf = (f) => { const i = args.indexOf(f); return i >= 0 ? args[i + 1] : undefined; };
@@ -368,66 +369,71 @@ async function verify() {
   say({ deltas: d, fixture_orders: orders.length, fixture_bookings: bookings.length });
 
   // Attribution contract: every order/booking added since the 3D baseline must
-  // belong to the EXACT Stage 3D fixture OR the EXACT recognised Stage 3E
-  // fixture (by durable profile identity), with ZERO unexplained residual. The
-  // Stage 3E fixture legitimately adds rows after the 3D baseline was captured;
-  // it is attributed by its exact profile UUIDs, never a count/prefix/date.
+  // belong to the EXACT Stage 3D fixture OR an EXACT recognised isolated fixture
+  // (Stage 3E, and the Block-4 v1 pilot fixture), with ZERO unexplained
+  // residual. Each recognised fixture is attributed by its DURABLE profile
+  // UUIDs — never a count/prefix/date — so a genuinely unrelated or production
+  // row still fails.
   const s3dOrderIds = orders.map((o) => o.id);
   const s3dBookingIds = bookings; // already the fixture booking ids (deduped below)
-  let s3eOrderIds = [], s3eBookingIds = [], s3eSuffix = null;
+  const recognisedOrderIds = [];
+  const recognisedBookingIds = [];
+  const attributedFixtures = [];
   const residualO = d.orders - new Set(s3dOrderIds).size;
   const residualB = d.bookings - new Set(s3dBookingIds).size;
   if (residualO !== 0 || residualB !== 0) {
-    // Extra rows exist since baseline — they MUST resolve to the recognised
-    // Stage 3E fixture. Fail CLOSED if that durable identity is unavailable.
-    if (!existsSync(STAGE3E_SNAP)) {
-      fail(`unexplained rows since baseline (orders +${residualO}, bookings +${residualB}) but ${STAGE3E_SNAP} is absent — cannot attribute; investigate before proceeding`);
+    // Recognised isolated fixtures, each by exact identity. v1-checkpoint stores
+    // identity under `.snap`; the Stage 3E snapshot stores it at top level.
+    const sources = [
+      { label: 'stage3e', file: STAGE3E_SNAP, pick: (o) => o },
+      { label: 'v1', file: V1_CHECKPOINT, pick: (o) => o.snap ?? {} },
+    ].filter((s) => existsSync(s.file));
+    if (sources.length === 0) {
+      fail(`unexplained rows since baseline (orders +${residualO}, bookings +${residualB}) but no recognised fixture snapshot present — cannot attribute; investigate`);
     }
-    let snapObj;
-    try { snapObj = JSON.parse(readFileSync(STAGE3E_SNAP, 'utf-8')); }
-    catch { fail(`${STAGE3E_SNAP} is malformed — cannot attribute Stage 3E fixture`); }
-    let s3e;
-    try { s3e = loadStage3eIdentity(snapObj); }
-    catch (e) { fail(`Stage 3E fixture identity unresolved: ${e.message}`); }
-    s3eSuffix = s3e.suffix;
-    const eo = must(await admin.from('payment_orders').select('id, companion_profile_id, member_profile_id')
-      .eq('companion_profile_id', mustUuid(s3e.companion_profile_id, '3E companion_profile_id'))
-      .eq('member_profile_id', mustUuid(s3e.member_profile_id, '3E member_profile_id')), 'Stage 3E orders');
-    const eb = must(await admin.from('bookings').select('id, companion_profile_id, member_profile_id')
-      .eq('companion_profile_id', s3e.companion_profile_id)
-      .eq('member_profile_id', s3e.member_profile_id), 'Stage 3E bookings');
-    // Recognised rows belong ONLY to the isolated Stage 3E fixture (exact
-    // profiles). Guaranteed by the exact-identity query; a hard fail-guard (NOT
-    // a counted assertion, to keep verify() at exactly 18 checks) defends it.
-    if (!eo.every((o) => o.companion_profile_id === s3e.companion_profile_id && o.member_profile_id === s3e.member_profile_id)
-        || !eb.every((b) => b.companion_profile_id === s3e.companion_profile_id && b.member_profile_id === s3e.member_profile_id)) {
-      fail('Stage 3E attribution query returned a non-3E row — refusing to attribute');
+    for (const src of sources) {
+      let obj;
+      try { obj = loadStage3eIdentity(src.pick(JSON.parse(readFileSync(src.file, 'utf-8')))); }
+      catch (e) { fail(`${src.label} fixture identity unresolved from ${src.file}: ${e.message}`); }
+      const fo = must(await admin.from('payment_orders').select('id, companion_profile_id, member_profile_id')
+        .eq('companion_profile_id', mustUuid(obj.companion_profile_id, `${src.label} companion_profile_id`))
+        .eq('member_profile_id', mustUuid(obj.member_profile_id, `${src.label} member_profile_id`)), `${src.label} orders`);
+      const fb = must(await admin.from('bookings').select('id, companion_profile_id, member_profile_id')
+        .eq('companion_profile_id', obj.companion_profile_id)
+        .eq('member_profile_id', obj.member_profile_id), `${src.label} bookings`);
+      // Exact-identity query guarantees these belong only to that fixture; a hard
+      // fail-guard (NOT a counted assertion) defends it.
+      if (!fo.every((o) => o.companion_profile_id === obj.companion_profile_id && o.member_profile_id === obj.member_profile_id)
+          || !fb.every((b) => b.companion_profile_id === obj.companion_profile_id && b.member_profile_id === obj.member_profile_id)) {
+        fail(`${src.label} attribution query returned a non-fixture row — refusing to attribute`);
+      }
+      recognisedOrderIds.push(...fo.map((o) => o.id));
+      recognisedBookingIds.push(...fb.map((b) => b.id));
+      attributedFixtures.push({ fixture: src.label, orders: fo.length, bookings: fb.length, suffix: obj.suffix ?? null });
     }
-    s3eOrderIds = eo.map((o) => o.id);
-    s3eBookingIds = eb.map((b) => b.id);
   }
   const rec = reconcileAttribution({
     deltaOrders: d.orders, deltaBookings: d.bookings,
     stage3dOrderIds: s3dOrderIds, stage3dBookingIds: s3dBookingIds,
-    stage3eOrderIds: s3eOrderIds, stage3eBookingIds: s3eBookingIds,
+    stage3eOrderIds: recognisedOrderIds, stage3eBookingIds: recognisedBookingIds,
   });
   say({ attribution: {
-    total_delta_orders: d.orders, stage3d_orders: new Set(s3dOrderIds).size, stage3e_orders: rec.stage3eOrders, unexplained_orders: rec.unexplainedOrders,
-    total_delta_bookings: d.bookings, stage3d_bookings: new Set(s3dBookingIds).size, stage3e_bookings: rec.stage3eBookings, unexplained_bookings: rec.unexplainedBookings,
-    stage3e_suffix: s3eSuffix,
+    total_delta_orders: d.orders, stage3d_orders: new Set(s3dOrderIds).size, recognised_orders: rec.stage3eOrders, unexplained_orders: rec.unexplainedOrders,
+    total_delta_bookings: d.bookings, stage3d_bookings: new Set(s3dBookingIds).size, recognised_bookings: rec.stage3eBookings, unexplained_bookings: rec.unexplainedBookings,
+    recognised_fixtures: attributedFixtures,
   } });
   if (rec.unexplainedOrders !== 0 || rec.unexplainedBookings !== 0) {
-    // Safe (UUID-only) diagnostics: current IDs not attributed to 3D or 3E.
+    // Safe (UUID-only) diagnostics: current IDs not attributed to any fixture.
     const allO = must(await admin.from('payment_orders').select('id'), 'all order ids (diag)');
     const allB = must(await admin.from('bookings').select('id'), 'all booking ids (diag)');
     say({ unexplained_candidates: {
       order_ids: allO.map((o) => o.id).filter((id) => !rec.attributedOrderIds.has(id)).slice(0, 25),
       booking_ids: allB.map((b) => b.id).filter((id) => !rec.attributedBookingIds.has(id)).slice(0, 25),
-      note: 'candidates exclude the exact 3D + 3E fixtures; verify against the 3D baseline',
+      note: 'candidates exclude the exact 3D + recognised fixtures; verify against the 3D baseline',
     } });
   }
-  check('every order since baseline is the Stage 3D or recognised Stage 3E fixture (zero unexplained)', rec.unexplainedOrders === 0);
-  check('every booking since baseline is the Stage 3D or recognised Stage 3E fixture (zero unexplained)', rec.unexplainedBookings === 0);
+  check('every order since baseline is the Stage 3D or a recognised isolated fixture (zero unexplained)', rec.unexplainedOrders === 0);
+  check('every booking since baseline is the Stage 3D or a recognised isolated fixture (zero unexplained)', rec.unexplainedBookings === 0);
   check('no unexplained reconciliation findings', d.findings === 0);
 
   // Projection health + support queue.
