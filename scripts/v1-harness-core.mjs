@@ -154,17 +154,28 @@ export async function prepareFixture(deps, suffix) {
     await deps.upsert('support_admins', { account_id: snap.support.account_id }, 'account_id');
   });
 
+  // consent_status is NOT NULL on profile_access; set it explicitly on every row.
+  const ensureAccess = async (row) => {
+    if (!(await deps.getOne('profile_access', { profile_id: row.profile_id, account_id: row.account_id }))) {
+      await deps.insert('profile_access', row);
+    }
+  };
   await phase('profiles', async () => {
     if (!snap.companion_profile_id) {
-      snap.companion_profile_id = (await deps.insert('profiles', { role: 'companion', first_name: `VC-${suffix}`, bio: 'x'.repeat(200), avatar_path: '/v1.png', email: snap.companion.email })).id;
-      await deps.insert('profile_access', { account_id: snap.companion.account_id, profile_id: snap.companion_profile_id, access_role: 'owner', can_edit: true, can_book: true });
+      // Reuse a companion profile from an interrupted run (deterministic marker).
+      const existing = await deps.getOne('profiles', { first_name: `VC-${suffix}`, role: 'companion' });
+      snap.companion_profile_id = existing?.id
+        ?? (await deps.insert('profiles', { role: 'companion', first_name: `VC-${suffix}`, bio: 'x'.repeat(200), avatar_path: '/v1.png', email: snap.companion.email })).id;
+      deps.ck.save();
+      await ensureAccess({ account_id: snap.companion.account_id, profile_id: snap.companion_profile_id, access_role: 'owner', can_edit: true, can_book: true, can_message: true, consent_status: 'confirmed' });
     }
     if (!snap.member_profile_id) {
-      snap.member_profile_id = (await deps.insert('profiles', { role: 'member', first_name: `VM-${suffix}`, email: snap.member_owner.email })).id;
-      await deps.insert('profile_access', [
-        { account_id: snap.member_owner.account_id, profile_id: snap.member_profile_id, access_role: 'owner', can_edit: true, can_book: true },
-        { account_id: snap.coordinator.account_id, profile_id: snap.member_profile_id, access_role: 'coordinator', can_book: true, can_message: true, consent_status: 'confirmed' },
-      ]);
+      const existing = await deps.getOne('profiles', { first_name: `VM-${suffix}`, role: 'member' });
+      snap.member_profile_id = existing?.id
+        ?? (await deps.insert('profiles', { role: 'member', first_name: `VM-${suffix}`, email: snap.member_owner.email })).id;
+      deps.ck.save();
+      await ensureAccess({ account_id: snap.member_owner.account_id, profile_id: snap.member_profile_id, access_role: 'owner', can_edit: true, can_book: true, can_message: true, consent_status: 'confirmed' });
+      await ensureAccess({ account_id: snap.coordinator.account_id, profile_id: snap.member_profile_id, access_role: 'coordinator', can_book: true, can_message: true, consent_status: 'confirmed' });
     }
   });
 
