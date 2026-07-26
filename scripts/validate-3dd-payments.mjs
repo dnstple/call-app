@@ -31,10 +31,12 @@
  */
 import { createClient } from '@supabase/supabase-js';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { loadStage3eIdentity, reconcileAttribution } from './stage3d-attribution.mjs';
 
 const PROJECT_REF = 'gwtunmoefapiiybwlelw';
 const PHRASE = 'VALIDATE-3DD-TEST-PAYMENTS';
 const SNAP_FILE = '3dd-snapshot.local.json';
+const STAGE3E_SNAP = '3e-snapshot.local.json';
 
 const args = process.argv.slice(2);
 const argOf = (f) => { const i = args.indexOf(f); return i >= 0 ? args[i + 1] : undefined; };
@@ -364,8 +366,68 @@ async function verify() {
     with_intent: now.with_intent - S.baseline.with_intent,
   };
   say({ deltas: d, fixture_orders: orders.length, fixture_bookings: bookings.length });
-  check('order delta equals this run’s fixture orders', d.orders === orders.length);
-  check('booking delta equals this run’s fixture bookings', d.bookings === bookings.length);
+
+  // Attribution contract: every order/booking added since the 3D baseline must
+  // belong to the EXACT Stage 3D fixture OR the EXACT recognised Stage 3E
+  // fixture (by durable profile identity), with ZERO unexplained residual. The
+  // Stage 3E fixture legitimately adds rows after the 3D baseline was captured;
+  // it is attributed by its exact profile UUIDs, never a count/prefix/date.
+  const s3dOrderIds = orders.map((o) => o.id);
+  const s3dBookingIds = bookings; // already the fixture booking ids (deduped below)
+  let s3eOrderIds = [], s3eBookingIds = [], s3eSuffix = null;
+  const residualO = d.orders - new Set(s3dOrderIds).size;
+  const residualB = d.bookings - new Set(s3dBookingIds).size;
+  if (residualO !== 0 || residualB !== 0) {
+    // Extra rows exist since baseline — they MUST resolve to the recognised
+    // Stage 3E fixture. Fail CLOSED if that durable identity is unavailable.
+    if (!existsSync(STAGE3E_SNAP)) {
+      fail(`unexplained rows since baseline (orders +${residualO}, bookings +${residualB}) but ${STAGE3E_SNAP} is absent — cannot attribute; investigate before proceeding`);
+    }
+    let snapObj;
+    try { snapObj = JSON.parse(readFileSync(STAGE3E_SNAP, 'utf-8')); }
+    catch { fail(`${STAGE3E_SNAP} is malformed — cannot attribute Stage 3E fixture`); }
+    let s3e;
+    try { s3e = loadStage3eIdentity(snapObj); }
+    catch (e) { fail(`Stage 3E fixture identity unresolved: ${e.message}`); }
+    s3eSuffix = s3e.suffix;
+    const eo = must(await admin.from('payment_orders').select('id, companion_profile_id, member_profile_id')
+      .eq('companion_profile_id', mustUuid(s3e.companion_profile_id, '3E companion_profile_id'))
+      .eq('member_profile_id', mustUuid(s3e.member_profile_id, '3E member_profile_id')), 'Stage 3E orders');
+    const eb = must(await admin.from('bookings').select('id, companion_profile_id, member_profile_id')
+      .eq('companion_profile_id', s3e.companion_profile_id)
+      .eq('member_profile_id', s3e.member_profile_id), 'Stage 3E bookings');
+    // Recognised rows belong ONLY to the isolated Stage 3E fixture (exact
+    // profiles). Guaranteed by the exact-identity query; a hard fail-guard (NOT
+    // a counted assertion, to keep verify() at exactly 18 checks) defends it.
+    if (!eo.every((o) => o.companion_profile_id === s3e.companion_profile_id && o.member_profile_id === s3e.member_profile_id)
+        || !eb.every((b) => b.companion_profile_id === s3e.companion_profile_id && b.member_profile_id === s3e.member_profile_id)) {
+      fail('Stage 3E attribution query returned a non-3E row — refusing to attribute');
+    }
+    s3eOrderIds = eo.map((o) => o.id);
+    s3eBookingIds = eb.map((b) => b.id);
+  }
+  const rec = reconcileAttribution({
+    deltaOrders: d.orders, deltaBookings: d.bookings,
+    stage3dOrderIds: s3dOrderIds, stage3dBookingIds: s3dBookingIds,
+    stage3eOrderIds: s3eOrderIds, stage3eBookingIds: s3eBookingIds,
+  });
+  say({ attribution: {
+    total_delta_orders: d.orders, stage3d_orders: new Set(s3dOrderIds).size, stage3e_orders: rec.stage3eOrders, unexplained_orders: rec.unexplainedOrders,
+    total_delta_bookings: d.bookings, stage3d_bookings: new Set(s3dBookingIds).size, stage3e_bookings: rec.stage3eBookings, unexplained_bookings: rec.unexplainedBookings,
+    stage3e_suffix: s3eSuffix,
+  } });
+  if (rec.unexplainedOrders !== 0 || rec.unexplainedBookings !== 0) {
+    // Safe (UUID-only) diagnostics: current IDs not attributed to 3D or 3E.
+    const allO = must(await admin.from('payment_orders').select('id'), 'all order ids (diag)');
+    const allB = must(await admin.from('bookings').select('id'), 'all booking ids (diag)');
+    say({ unexplained_candidates: {
+      order_ids: allO.map((o) => o.id).filter((id) => !rec.attributedOrderIds.has(id)).slice(0, 25),
+      booking_ids: allB.map((b) => b.id).filter((id) => !rec.attributedBookingIds.has(id)).slice(0, 25),
+      note: 'candidates exclude the exact 3D + 3E fixtures; verify against the 3D baseline',
+    } });
+  }
+  check('every order since baseline is the Stage 3D or recognised Stage 3E fixture (zero unexplained)', rec.unexplainedOrders === 0);
+  check('every booking since baseline is the Stage 3D or recognised Stage 3E fixture (zero unexplained)', rec.unexplainedBookings === 0);
   check('no unexplained reconciliation findings', d.findings === 0);
 
   // Projection health + support queue.
