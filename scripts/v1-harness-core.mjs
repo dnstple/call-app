@@ -154,6 +154,15 @@ export async function prepareFixture(deps, suffix) {
     await deps.upsert('support_admins', { account_id: snap.support.account_id }, 'account_id');
   });
 
+  await phase('accounts_onboarded', async () => {
+    // accounts.onboarding_complete defaults false; the app routes any account
+    // with it false to the signup wizard. Mark the fixture accounts complete so
+    // the operator lands straight in the app (no synthetic-signup detour).
+    for (const role of ['support', 'coordinator', 'member_owner', 'companion']) {
+      await deps.update('accounts', { id: snap[role].account_id }, { onboarding_complete: true });
+    }
+  });
+
   // consent_status is NOT NULL on profile_access; set it explicitly on every row.
   const ensureAccess = async (row) => {
     if (!(await deps.getOne('profile_access', { profile_id: row.profile_id, account_id: row.account_id }))) {

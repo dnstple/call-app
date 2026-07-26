@@ -91,7 +91,7 @@ describe('fixture (tests 7-12)', () => {
   });
   it('11 interrupted runs resume from checkpoint', async () => {
     const ck = fakeCk(); const deps = fakeDeps(ck);
-    ck.done = ['accounts', 'profiles', 'companion_public_state', 'companion_visibility', 'offers_availability', 'consent', 'preferences'];
+    ck.done = ['accounts', 'accounts_onboarded', 'profiles', 'companion_public_state', 'companion_visibility', 'offers_availability', 'consent', 'preferences'];
     ck.snap = { suffix: 'v1pilot-abc' };
     await core.prepareFixture(deps, 'v1pilot-abc');
     expect(deps.wrote).toBe(false); // everything already done → no writes
