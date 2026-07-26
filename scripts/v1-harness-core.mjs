@@ -251,8 +251,11 @@ export async function verifyCalls(deps, snap) {
   // Idempotent short, in-window confirmed booking so a REAL token can be minted.
   // The booking-trust trigger (0092) still applies: it passes because the
   // fixture companion is approved + consented and unblocked.
-  const start = new Date(Date.now() - 5 * 60_000).toISOString();
-  const end = new Date(Date.now() + 25 * 60_000).toISOString();
+  // Single base so ends_at === starts_at + 30 min EXACTLY (bookings_check1),
+  // with the window currently open (starts 5m ago, ends 25m ahead).
+  const base = Date.now();
+  const start = new Date(base - 5 * 60_000).toISOString();
+  const end = new Date(base + 25 * 60_000).toISOString();
   if (snap.booking_id) {
     await deps.update('bookings', { id: snap.booking_id }, { starts_at: start, ends_at: end, status: 'confirmed' });
   } else {
