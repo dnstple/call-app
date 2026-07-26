@@ -187,9 +187,11 @@ export async function prepareFixture(deps, suffix) {
 
   await phase('offers_availability', async () => {
     if (!snap.trial_offer_id) {
-      snap.trial_offer_id = (await deps.insert('conversation_offers', { companion_profile_id: snap.companion_profile_id, offer_type: 'trial', duration_minutes: 30, price_minor: 0, active: true, supported_methods: ['in_app'] })).id;
+      // price_minor must be within 100..100000 (£1–£1000); timezone is NOT NULL.
+      snap.trial_offer_id = (await deps.insert('conversation_offers', { companion_profile_id: snap.companion_profile_id, offer_type: 'trial', duration_minutes: 30, price_minor: 700, active: true, supported_methods: ['in_app'] })).id;
       snap.single_offer_id = (await deps.insert('conversation_offers', { companion_profile_id: snap.companion_profile_id, offer_type: 'single', duration_minutes: 30, price_minor: 1600, active: true, supported_methods: ['in_app'] })).id;
-      await deps.insert('availability_rules', { companion_profile_id: snap.companion_profile_id, day_of_week: 1, start_local_time: '09:00', end_local_time: '18:00', active: true });
+      deps.ck.save();
+      await deps.insert('availability_rules', { companion_profile_id: snap.companion_profile_id, day_of_week: 1, start_local_time: '09:00', end_local_time: '18:00', timezone: 'Europe/London', active: true });
     }
   });
 
