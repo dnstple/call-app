@@ -10,6 +10,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "tsc -b",
+    "scan:bundle": "node scripts/scan-bundle-secrets.mjs",
+    "build:verify": "npm run build && npm run scan:bundle",
     "types:generate": "supabase gen types typescript --linked > src/supabase/database.types.ts",
     "test:rls": "vitest run rls.integration"
   },
