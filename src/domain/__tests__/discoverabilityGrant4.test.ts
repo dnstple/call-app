@@ -30,3 +30,22 @@ describe('0095 restores EXECUTE needed by the security-invoker discovery view', 
     expect(M95).not.toMatch(/insert into|update\s+public\.|delete from|drop /i);
   });
 });
+
+describe('0096 restores EXECUTE on profile_owner_account for invoker-context RLS', () => {
+  const M96 = M('0096_profile_owner_account_execute_grant.sql');
+  const M90 = M('0090_user_blocking.sql');
+  const M88b = M('0088_versioned_consent.sql');
+  it('the user_blocks + consent RLS policies call profile_owner_account (the cause)', () => {
+    expect(M90).toContain('app_private.profile_owner_account(member_profile_id) = auth.uid()');
+    expect(M88b).toContain('app_private.profile_owner_account(subject_profile_id) = auth.uid()');
+  });
+  it('the security-invoker discovery view reads user_blocks (triggers the policy)', () => {
+    expect(M92).toContain('from public.user_blocks ub');
+    expect(M92).toContain('security_invoker = true');
+  });
+  it('0096 grants EXECUTE to authenticated + service_role, anon still excluded, additive', () => {
+    expect(M96).toMatch(/grant execute on function app_private\.profile_owner_account\(uuid\) to authenticated, service_role/);
+    expect(M96).not.toMatch(/to anon\b/);
+    expect(M96).not.toMatch(/insert into|update\s+public\.|delete from|drop /i);
+  });
+});
