@@ -125,3 +125,67 @@ validated, ready for a controlled pilot** — not unrestricted public launch.
 Referrals; SMS + push notifications; group calls; screen sharing; call
 recording; AI features; multi-currency; quiet-hours / digest email; a full
 visual redesign; production email/Stripe/LiveKit activation (operator config).
+
+---
+
+## Validation outcome — Block 4 completed (hosted TEST, project gwtunmoefapiiybwlelw)
+
+**Result: v1 pilot journey validated — `VERIFY RESULT pass=18 fail=0`.**
+
+Hosted changes applied:
+- Migrations **0087–0096** applied in order (0088 seeded 3 consent policies;
+  0091 backfilled moderation approved only for already-discoverable companions;
+  0095 + 0096 are the two corrective EXECUTE grants found during validation —
+  see below). No other data changed.
+- Edge Function **`livekit-token` deployed** (authenticated grant = microphone +
+  camera; guest branch microphone-only; no screen-share/recording/egress/admin).
+  No other function redeployed.
+- Booking-reminder cron: function present; production `pg_cron` activation
+  remains an operator step.
+
+Regression + integrated results:
+- **Stage 3E** payout verifier: `pass=19 fail=0`.
+- **Stage 3D** payment verifier: `pass=18 fail=0` — the global-delta guard now
+  attributes the exact Stage 3D + Stage 3E + v1 pilot fixtures by profile
+  identity, zero unexplained (see `scripts/stage3d-attribution.mjs`).
+- **v1 integrated** (`validate-v1-pilot.mjs`): trust (consent/moderation/
+  discovery), notifications/outbox (test adapter, no live send), calls (real
+  mic+camera tokens, screenshare/record excluded, non-participant denied),
+  financial projections — all pass; final `VERIFY RESULT pass=18 fail=0`.
+- **Browser evidence** (`v1-browser-evidence.local.txt`, 12 markers): real
+  camera/mic permission, self-preview, device selection, two-person room render
+  (simultaneous two-way limited only by a single shared webcam on one machine),
+  mute/camera toggles, reconnect banner, notification-preferences UI, report +
+  block UI, support Trust & Safety console, mobile ≤390px no-overflow.
+
+Defects found and fixed during validation (all committed on this branch):
+- **0095** — `discoverable_companions` (security-invoker) calls
+  `has_current_consent`; 0088 had revoked EXECUTE from authenticated → Explore
+  errored. Granted EXECUTE to authenticated + service_role.
+- **0096** — the `user_blocks`/`consent_acknowledgements` RLS policies call
+  `profile_owner_account`; the discovery view reads `user_blocks` as invoker →
+  Explore + profile 403. Granted EXECUTE to authenticated + service_role.
+- **Signup wizard sign-out** — a signed-in, not-yet-onboarded account could get
+  stuck in the wizard with no exit; added a Sign out affordance.
+- **Date-robust test selector** — `conversationsRedesign` used a bare
+  `getByText('1')` that collides with a day-of-month "1" cell; scoped to the
+  count pill (test-only; unrelated to Block 4 code).
+
+Local battery (final): full unit suite **1482 passed / 92 files, 0 failed**;
+typecheck clean; production build clean; all validation scripts `node --check`
+clean; secret scan clean; `.local` evidence files git-ignored.
+
+Final hosted safety state (confirmed): Stripe live disabled; payout execution
+disabled; per-transfer + daily ceilings 0; isolated allowlist inactive; no
+production email provider; no recording/egress; no unexpected cron.
+
+Known pilot items (not launch blockers):
+- **Call/lobby visual polish** — functional and safe but visually rough;
+  recommended as the next task after tagging (see roadmap).
+- **Stale `.test` fixture accounts** from the first (failed) prepare-fixture
+  attempt are orphaned (no profiles; unused by harness/verifiers) and may be
+  deleted post-pilot; harmless.
+
+Status: **code-complete v1, hosted-test validated, ready for a controlled pilot**
+once the external launch configuration in section F is completed. NOT
+unrestricted-public-launch ready until those clear.

@@ -223,9 +223,12 @@ describe('Conversations page', () => {
     // Not in an attention panel — the panel does not render at all.
     expect(screen.queryByLabelText('Needs your attention')).toBeNull();
     expect(screen.queryByText(/Needs your attention/i)).toBeNull();
-    // The date count still includes the awaiting-reply conversation.
+    // The date count still includes the awaiting-reply conversation. Scope to
+    // the count pill: a day-of-month cell can also read "1" (e.g. the 1st of a
+    // month falling in the visible 7-day strip), so a bare getByText('1') is
+    // date-dependent and ambiguous.
     const strip = screen.getByRole('group', { name: 'Choose a day' });
-    expect(within(strip).getByText('1')).toBeTruthy();
+    expect(within(strip).getByText('1', { selector: '.date-strip-count' })).toBeTruthy();
   });
 
   it('4+5+8. genuine actions render inside the DISTINCT attention panel with buttons', async () => {
