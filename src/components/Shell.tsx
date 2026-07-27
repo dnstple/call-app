@@ -26,6 +26,31 @@ import { APP_NAME } from '../config/branding';
  */
 type NavItem = { to: string; label: string; Icon: typeof HomeIcon };
 
+/**
+ * The mobile bottom navigation. It is fed the SAME role-filtered `navForRole`
+ * list the desktop sidebar renders, so Explore (and every other destination)
+ * appears on mobile exactly when — and only when — it appears on desktop.
+ * There is no second nav definition and no duplicate Explore route.
+ */
+export function BottomNav({ items, badgeFor }: {
+  items: NavItem[];
+  badgeFor?: (to: string) => ReactNode;
+}) {
+  return (
+    <nav className="bottomnav" aria-label="Primary mobile">
+      {items.map(({ to, label, Icon }) => (
+        <NavLink key={to} to={to} end={to === '/'}>
+          <span style={{ position: 'relative' }}>
+            <Icon size={22} aria-hidden="true" />
+            {badgeFor?.(to)}
+          </span>
+          {label}
+        </NavLink>
+      ))}
+    </nav>
+  );
+}
+
 export function navForRole(role: string): NavItem[] {
   const home = { to: '/', label: 'Home', Icon: HomeIcon };
   const explore = { to: '/explore', label: 'Explore', Icon: Compass };
@@ -188,17 +213,7 @@ export function Shell({ children }: { children: ReactNode }) {
         </div>
       </div>
 
-      <nav className="bottomnav" aria-label="Primary mobile">
-        {nav.map(({ to, label, Icon }) => (
-          <NavLink key={to} to={to} end={to === '/'}>
-            <span style={{ position: 'relative' }}>
-              <Icon size={22} aria-hidden="true" />
-              {navBadge(to)}
-            </span>
-            {label}
-          </NavLink>
-        ))}
-      </nav>
+      <BottomNav items={nav} badgeFor={navBadge} />
 
       <ToastStack />
     </div>
