@@ -60,14 +60,14 @@ export default function InternalTrust() {
   };
 
   return (
-    <div className="mx-auto w-full max-w-4xl px-4 py-8">
+    <>
       <PageHeader title="Trust & safety" subtitle="Companion moderation, safeguarding reports and blocks" />
-      {error && <div className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">{error}</div>}
+      {error && <div className="banner banner-danger mb-4" role="alert">{error}</div>}
 
       {health && (
-        <section className="mt-6">
-          <h2 className="text-base font-semibold text-stone-800">Operational health</h2>
-          <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
+        <section className="section-tight">
+          <h2>Operational health</h2>
+          <div className="stat-grid">
             {([
               ['Open concerns', health.open_concerns],
               ['Pending moderation', health.companions_pending_moderation],
@@ -76,60 +76,60 @@ export default function InternalTrust() {
               ['Emails pending', health.email_pending],
               ['Emails failed', health.email_failed],
             ] as [string, number][]).map(([label, n]) => (
-              <div key={label} className="rounded-xl border border-stone-200 bg-white p-3">
-                <div className="text-2xl font-semibold text-stone-800">{n}</div>
-                <div className="text-xs text-stone-500">{label}</div>
+              <div key={label} className="card card-tight stat-tile">
+                <div className="stat-value">{n}</div>
+                <div className="muted small">{label}</div>
               </div>
             ))}
           </div>
         </section>
       )}
 
-      <section className="mt-6">
-        <h2 className="text-base font-semibold text-stone-800">Companion moderation</h2>
-        <div className="mt-2 space-y-2">
-          {mods.length === 0 && <p className="text-sm text-stone-500">No companions.</p>}
+      <section className="section-tight">
+        <h2>Companion moderation</h2>
+        <div className="stack-list">
+          {mods.length === 0 && <p className="muted small">No companions.</p>}
           {mods.map((m) => (
-            <div key={m.profile_id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-stone-200 bg-white p-3">
-              <div className="text-sm">
-                <span className="font-medium text-stone-800">{m.first_name} {m.last_initial}.</span>
-                <span className="ml-2 rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-600">{m.moderation_status}</span>
-                <span className="ml-2 text-xs text-stone-400">{m.completion_pct}% complete</span>
+            <div key={m.profile_id} className="card card-tight row between wrap">
+              <div className="row-wrap">
+                <span className="bold">{m.first_name} {m.last_initial}.</span>
+                <span className="badge badge-neutral">{m.moderation_status}</span>
+                <span className="muted small">{m.completion_pct}% complete</span>
               </div>
-              <div className="flex gap-2">
-                {m.moderation_status !== 'approved' && <button disabled={busy} className="btn btn-ghost text-sm" onClick={() => void moderate(m.profile_id, 'approved')}>Approve</button>}
-                {m.moderation_status !== 'suspended' && <button disabled={busy} className="btn btn-ghost text-sm" onClick={() => void moderate(m.profile_id, 'suspended')}>Suspend</button>}
-                {m.moderation_status !== 'rejected' && <button disabled={busy} className="btn btn-ghost text-sm" onClick={() => void moderate(m.profile_id, 'rejected')}>Reject</button>}
+              <div className="row-wrap">
+                {m.moderation_status !== 'approved' && <button disabled={busy} className="btn btn-secondary btn-small" onClick={() => void moderate(m.profile_id, 'approved')}>Approve</button>}
+                {m.moderation_status !== 'suspended' && <button disabled={busy} className="btn btn-ghost btn-small" onClick={() => void moderate(m.profile_id, 'suspended')}>Suspend</button>}
+                {m.moderation_status !== 'rejected' && <button disabled={busy} className="btn btn-ghost btn-small btn-danger" onClick={() => void moderate(m.profile_id, 'rejected')}>Reject</button>}
               </div>
             </div>
           ))}
         </div>
       </section>
 
-      <section className="mt-8">
-        <h2 className="text-base font-semibold text-stone-800">Safeguarding & concern reports</h2>
-        <div className="mt-2 space-y-2">
-          {concerns.length === 0 && <p className="text-sm text-stone-500">No open concerns.</p>}
+      <section className="section">
+        <h2>Safeguarding &amp; concern reports</h2>
+        <div className="stack-list">
+          {concerns.length === 0 && <p className="muted small">No open concerns.</p>}
           {concerns.map((c) => (
-            <div key={c.concern_id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-stone-200 bg-white p-3">
-              <div className="text-sm">
-                {c.priority === 'high' && <span className="mr-2 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">High</span>}
-                <span className="font-medium text-stone-800">{c.category.replace(/_/g, ' ')}</span>
-                <span className="ml-2 text-xs text-stone-500">by {c.reporter_role}</span>
-                {c.earning_held && <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-800">payout held</span>}
+            <div key={c.concern_id} className="card card-tight row between wrap">
+              <div className="row-wrap">
+                {c.priority === 'high' && <span className="badge badge-danger">High</span>}
+                <span className="bold">{c.category.replace(/_/g, ' ')}</span>
+                <span className="muted small">by {c.reporter_role}</span>
+                {c.earning_held && <span className="badge badge-pending">payout held</span>}
               </div>
-              <button disabled={busy} className="btn btn-ghost text-sm" onClick={() => void resolve(c.concern_id)}>Resolve</button>
+              <button disabled={busy} className="btn btn-secondary btn-small" onClick={() => void resolve(c.concern_id)}>Resolve</button>
             </div>
           ))}
         </div>
       </section>
 
-      <section className="mt-8">
-        <h2 className="text-base font-semibold text-stone-800">Active blocks</h2>
-        <div className="mt-2 space-y-1">
-          {blocks.length === 0 && <p className="text-sm text-stone-500">No active blocks.</p>}
+      <section className="section">
+        <h2>Active blocks</h2>
+        <div className="stack-list" style={{ gap: 'var(--space-2)' }}>
+          {blocks.length === 0 && <p className="muted small">No active blocks.</p>}
           {blocks.map((b) => (
-            <div key={b.block_id} className="rounded-lg border border-stone-100 bg-white px-3 py-2 text-xs text-stone-600">
+            <div key={b.block_id} className="card card-tight muted small">
               {b.direction.replace(/_/g, ' ')} {b.coordinator_authority ? '(coordinator)' : ''} · {new Date(b.created_at).toLocaleDateString('en-GB')}
             </div>
           ))}
@@ -137,18 +137,18 @@ export default function InternalTrust() {
       </section>
 
       {conflicts.length > 0 && (
-        <section className="mt-8">
-          <h2 className="text-base font-semibold text-red-700">Blocks colliding with future bookings</h2>
-          <p className="mt-1 text-xs text-stone-500">These are surfaced for manual review. Bookings are never auto-cancelled or refunded.</p>
-          <div className="mt-2 space-y-1">
+        <section className="section">
+          <h2 style={{ color: 'var(--color-danger-text)' }}>Blocks colliding with future bookings</h2>
+          <p className="muted small">These are surfaced for manual review. Bookings are never auto-cancelled or refunded.</p>
+          <div className="stack-list" style={{ gap: 'var(--space-2)' }}>
             {conflicts.map((c) => (
-              <div key={c.block_id + c.booking_id} className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-800">
+              <div key={c.block_id + c.booking_id} className="banner banner-danger small">
                 Booking {c.booking_id.slice(0, 8)} on {new Date(c.starts_at).toLocaleString('en-GB')} — {c.direction.replace(/_/g, ' ')}
               </div>
             ))}
           </div>
         </section>
       )}
-    </div>
+    </>
   );
 }

@@ -63,26 +63,26 @@ export function ConsentPanel() {
   if (items.length === 0) return null;
   return (
     <section>
-      <h2 className="text-base font-semibold text-stone-800">Your agreements</h2>
-      {error && <div className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">{error}</div>}
-      <div className="mt-2 space-y-3">
+      <h2>Your agreements</h2>
+      {error && <div className="banner banner-danger mt-2" role="alert">{error}</div>}
+      <div className="stack-list mt-2">
         {items.map((it) => {
           const copy = CONSENT_COPY[it.consent_type];
           return (
-            <div key={it.consent_type + it.profile_id} className="rounded-2xl border border-stone-200 bg-white p-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-stone-800">{copy?.title ?? it.consent_type}</h3>
+            <div key={it.consent_type + it.profile_id} className="card card-tight">
+              <div className="row between">
+                <h3 style={{ margin: 0 }}>{copy?.title ?? it.consent_type}</h3>
                 {it.satisfied
-                  ? <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">Accepted</span>
-                  : <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-800">Action needed</span>}
+                  ? <span className="badge badge-success">Accepted</span>
+                  : <span className="badge badge-pending">Action needed</span>}
               </div>
               {copy && (
-                <ul className="mt-2 list-disc pl-5 text-sm text-stone-600">
+                <ul className="muted small" style={{ margin: 'var(--space-3) 0 0', paddingLeft: '1.25rem' }}>
                   {copy.points.map((p) => <li key={p}>{p}</li>)}
                 </ul>
               )}
               {!it.satisfied && it.authority && (
-                <button className="btn btn-primary mt-3 text-sm" disabled={busy !== null} onClick={() => void ack(it)}>
+                <button className="btn btn-primary btn-small mt-4" disabled={busy !== null} onClick={() => void ack(it)}>
                   {busy === it.consent_type + it.profile_id ? 'Saving…' : 'I understand and accept'}
                 </button>
               )}
@@ -121,37 +121,40 @@ export function ReportConcernButton({ conversationId }: { conversationId: string
 
   if (!open) {
     return (
-      <button className="inline-flex items-center gap-1 text-sm text-stone-500 hover:text-red-600" onClick={() => setOpen(true)}>
-        <Flag size={14} /> Report a concern
+      <button className="btn btn-ghost btn-small btn-danger" onClick={() => setOpen(true)}>
+        <Flag size={15} aria-hidden="true" /> Report a concern
       </button>
     );
   }
   return (
-    <div className="mt-2 rounded-2xl border border-stone-200 bg-white p-4">
+    <div className="card card-tight mt-2">
       {done ? (
         <div>
-          <p className="text-sm font-medium text-stone-800">Thank you — your report has been received.</p>
-          <p className="mt-1 text-sm text-stone-500">Our support team will review it. If someone is in immediate danger, contact emergency services.</p>
-          <button className="btn btn-ghost mt-3 text-sm" onClick={() => setOpen(false)}>Close</button>
+          <p className="bold" style={{ margin: 0 }}>Thank you — your report has been received.</p>
+          <p className="muted small mt-2">Our support team will review it. If someone is in immediate danger, contact emergency services.</p>
+          <button className="btn btn-secondary btn-small mt-4" onClick={() => setOpen(false)}>Close</button>
         </div>
       ) : (
         <div>
-          <h3 className="text-sm font-semibold text-stone-800">Report a concern</h3>
-          <p className="mt-1 text-xs text-stone-500">This is not for emergencies. If someone is in immediate danger, contact emergency services.</p>
-          <label className="mt-3 block text-sm font-medium text-stone-600" htmlFor="report-category">What’s happened?</label>
-          <select id="report-category" value={category} onChange={(e) => setCategory(e.target.value as ConcernCategory)}
-            className="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2 text-base">
-            {REPORT_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-          </select>
-          <label className="mt-3 block text-sm font-medium text-stone-600" htmlFor="report-desc">Tell us more</label>
-          <textarea id="report-desc" value={description} onChange={(e) => setDescription(e.target.value)} rows={4}
-            className="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2 text-base" placeholder="Describe what happened" />
-          {error && <div className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">{error}</div>}
-          <div className="mt-3 flex gap-2">
-            <button className="btn btn-primary text-sm" disabled={busy || description.trim().length === 0} onClick={() => void submit()}>
+          <h3 style={{ margin: 0 }}>Report a concern</h3>
+          <p className="muted small mt-2">This is not for emergencies. If someone is in immediate danger, contact emergency services.</p>
+          <div className="field mt-4">
+            <label htmlFor="report-category">What’s happened?</label>
+            <select id="report-category" value={category} onChange={(e) => setCategory(e.target.value as ConcernCategory)}>
+              {REPORT_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="report-desc">Tell us more</label>
+            <textarea id="report-desc" value={description} onChange={(e) => setDescription(e.target.value)} rows={4}
+              placeholder="Describe what happened" />
+          </div>
+          {error && <div className="banner banner-danger mb-4" role="alert">{error}</div>}
+          <div className="row">
+            <button className="btn btn-primary btn-small" disabled={busy || description.trim().length === 0} onClick={() => void submit()}>
               {busy ? 'Sending…' : 'Send report'}
             </button>
-            <button className="btn btn-ghost text-sm" onClick={() => setOpen(false)}>Cancel</button>
+            <button className="btn btn-ghost btn-small" onClick={() => setOpen(false)}>Cancel</button>
           </div>
         </div>
       )}
@@ -183,28 +186,28 @@ export function BlockControl({ memberProfileId, companionProfileId, initiallyBlo
   if (blocked) {
     return (
       <div>
-        <button className="inline-flex items-center gap-1 text-sm text-stone-500 hover:text-stone-700" disabled={busy} onClick={() => void doUnblock()}>
-          <ShieldOff size={14} /> Unblock
+        <button className="btn btn-ghost btn-small" disabled={busy} onClick={() => void doUnblock()}>
+          <ShieldOff size={15} aria-hidden="true" /> Unblock
         </button>
-        {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
+        {error && <p className="small mt-2" style={{ color: 'var(--color-danger-text)' }}>{error}</p>}
       </div>
     );
   }
   if (confirming) {
     return (
-      <div className="rounded-xl border border-stone-200 bg-white p-3">
-        <p className="text-sm text-stone-700">Block this person? They won’t be able to book, message or call you, and won’t appear in your searches. Existing history is kept.</p>
-        {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
-        <div className="mt-2 flex gap-2">
-          <button className="btn btn-primary text-sm" disabled={busy} onClick={() => void doBlock()}>{busy ? 'Blocking…' : 'Block'}</button>
-          <button className="btn btn-ghost text-sm" onClick={() => setConfirming(false)}>Cancel</button>
+      <div className="card card-tight">
+        <p className="small" style={{ margin: 0 }}>Block this person? They won’t be able to book, message or call you, and won’t appear in your searches. Existing history is kept.</p>
+        {error && <p className="small mt-2" style={{ color: 'var(--color-danger-text)' }}>{error}</p>}
+        <div className="row mt-4">
+          <button className="btn btn-primary btn-small" disabled={busy} onClick={() => void doBlock()}>{busy ? 'Blocking…' : 'Block'}</button>
+          <button className="btn btn-ghost btn-small" onClick={() => setConfirming(false)}>Cancel</button>
         </div>
       </div>
     );
   }
   return (
-    <button className="inline-flex items-center gap-1 text-sm text-stone-500 hover:text-red-600" onClick={() => setConfirming(true)}>
-      <Shield size={14} /> Block
+    <button className="btn btn-ghost btn-small btn-danger" onClick={() => setConfirming(true)}>
+      <Shield size={15} aria-hidden="true" /> Block
     </button>
   );
 }
@@ -232,20 +235,24 @@ export function NotificationPreferencesPanel() {
 
   if (!prefs) return null;
   const row = (label: string, key: keyof NotificationPreferences, disabled = false) => (
-    <label className="flex items-center justify-between gap-3 py-1 text-sm text-stone-700">
+    <div className="switch-row">
       <span>{label}</span>
-      <input type="checkbox" checked={prefs[key]} disabled={busy || disabled}
-        onChange={(e) => void update({ [key]: e.target.checked } as Partial<NotificationPreferences>)} />
-    </label>
+      <span className="switch">
+        <input type="checkbox" checked={prefs[key]} disabled={busy || disabled}
+          aria-label={label}
+          onChange={(e) => void update({ [key]: e.target.checked } as Partial<NotificationPreferences>)} />
+        <span className="track" />
+      </span>
+    </div>
   );
   return (
     <section>
-      <h2 className="text-base font-semibold text-stone-800">Email notifications</h2>
-      <p className="mt-1 text-xs text-stone-500">In-app notifications always stay on. Email is optional.</p>
-      {error && <div className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">{error}</div>}
-      <div className="mt-2 rounded-2xl border border-stone-200 bg-white p-4">
+      <h2>Email notifications</h2>
+      <p className="muted small mt-2">In-app notifications always stay on. Email is optional.</p>
+      {error && <div className="banner banner-danger mt-2" role="alert">{error}</div>}
+      <div className="settings-group mt-2" style={{ padding: '0 var(--space-5)' }}>
         {row('Email me notifications', 'email_enabled')}
-        <div className={prefs.email_enabled ? '' : 'pointer-events-none opacity-50'}>
+        <div style={prefs.email_enabled ? undefined : { pointerEvents: 'none', opacity: 0.5 }}>
           {row('Messages', 'email_messages', !prefs.email_enabled)}
           {row('Bookings & reminders', 'email_bookings', !prefs.email_enabled)}
           {row('Billing & payments', 'email_billing', !prefs.email_enabled)}
@@ -258,9 +265,9 @@ export function NotificationPreferencesPanel() {
 
 export function SafetyNotice() {
   return (
-    <section className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
-      <h2 className="text-base font-semibold text-stone-800">Your safety</h2>
-      <ul className="mt-2 list-disc pl-5 text-sm text-stone-600">
+    <section className="card card-muted">
+      <h2 style={{ marginTop: 0 }}>Your safety</h2>
+      <ul className="muted small" style={{ margin: 0, paddingLeft: '1.25rem' }}>
         <li>This is a social-companionship service — not healthcare, counselling or emergency support.</li>
         <li>If someone is in immediate danger, contact your local emergency services.</li>
         <li>Never share passwords, bank details or financial credentials with anyone.</li>

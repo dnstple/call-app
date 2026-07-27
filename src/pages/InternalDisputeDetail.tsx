@@ -50,8 +50,8 @@ function when(iso: string | null | undefined): string {
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="rounded-xl border border-stone-200 bg-white p-4">
-      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-stone-500">{title}</h2>
+    <section className="card">
+      <h2 className="section-label">{title}</h2>
       {children}
     </section>
   );
@@ -59,9 +59,9 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="flex justify-between gap-4 py-1 text-sm">
-      <span className="text-stone-500">{label}</span>
-      <span className="text-right font-medium text-stone-800">{value ?? '—'}</span>
+    <div className="row between small" style={{ padding: '4px 0', gap: 'var(--space-4)' }}>
+      <span className="muted">{label}</span>
+      <span className="bold" style={{ textAlign: 'right' }}>{value ?? '—'}</span>
     </div>
   );
 }
@@ -113,25 +113,25 @@ export default function InternalDisputeDetail() {
 
   if (loadError) {
     return (
-      <div className="mx-auto w-full max-w-3xl px-4 py-6">
-        <Link to="/internal/disputes" className="mb-4 inline-flex items-center gap-1 text-sm text-stone-500 hover:text-stone-700">
-          <ArrowLeft size={14} /> Back to disputes
+      <>
+        <Link to="/internal/disputes" className="call-lobby-back">
+          <ArrowLeft size={16} aria-hidden="true" /> Back to disputes
         </Link>
         <EmptyState title="Unavailable" body={loadError} />
-      </div>
+      </>
     );
   }
 
   if (!detail) {
     return (
-      <div className="mx-auto w-full max-w-3xl px-4 py-6">
-        <div className="space-y-3" aria-hidden>
-          {[0, 1, 2, 3].map((i) => <div key={i} className="h-24 animate-pulse rounded-xl bg-stone-100" />)}
+      <>
+        <div className="stack-list" style={{ gap: 'var(--space-3)' }} aria-hidden>
+          {[0, 1, 2, 3].map((i) => <div key={i} className="skeleton-block" style={{ height: 96 }} />)}
         </div>
-        <div className="mt-4 flex items-center justify-center gap-2 text-sm text-stone-400">
-          <Loader2 size={14} className="animate-spin" /> Loading dispute…
+        <div className="row mt-4 muted small" style={{ justifyContent: 'center' }}>
+          <Loader2 size={14} className="call-waiting-pulse" /> Loading dispute…
         </div>
-      </div>
+      </>
     );
   }
 
@@ -147,20 +147,20 @@ export default function InternalDisputeDetail() {
   const currency = d.currency ?? 'GBP';
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-6">
-      <Link to="/internal/disputes" className="mb-4 inline-flex items-center gap-1 text-sm text-stone-500 hover:text-stone-700">
-        <ArrowLeft size={14} /> Back to disputes
+    <>
+      <Link to="/internal/disputes" className="call-lobby-back">
+        <ArrowLeft size={16} aria-hidden="true" /> Back to disputes
       </Link>
       <PageHeader title={`Dispute ${formatMinor(d.disputed_amount_minor ?? 0, currency)}`} subtitle={d.stripe_dispute_id} />
 
-      <p className="mb-4 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+      <p className="banner banner-warning small mb-4">
         Evidence submission to Stripe is a <strong>manual</strong> step done in the Stripe dashboard. This tool never submits evidence automatically.
       </p>
 
-      {opError && <div className="mb-3 flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700"><AlertTriangle size={15} /> {opError}</div>}
-      {opOk && <div className="mb-3 rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">{opOk}</div>}
+      {opError && <div className="banner banner-danger mb-4 row small"><AlertTriangle size={15} aria-hidden="true" /> {opError}</div>}
+      {opOk && <div className="banner banner-success mb-4 small">{opOk}</div>}
 
-      <div className="space-y-3">
+      <div className="stack-list" style={{ gap: 'var(--space-3)' }}>
         <Section title="Dispute summary">
           <Field label="Internal state" value={d.internal_state} />
           <Field label="Provider status" value={d.provider_status} />
@@ -171,7 +171,7 @@ export default function InternalDisputeDetail() {
           <Field label="Funds reinstated" value={d.funds_reinstated ? when(d.funds_reinstated_at) : 'No'} />
           <Field label="Closed" value={when(d.closed_at)} />
           {d.is_unresolved_mapping && (
-            <p className="mt-2 rounded bg-purple-50 px-2 py-1 text-xs text-purple-700">Not yet mapped to a payment order.</p>
+            <p className="banner banner-info small mt-2">Not yet mapped to a payment order.</p>
           )}
         </Section>
 
@@ -180,35 +180,35 @@ export default function InternalDisputeDetail() {
           <Field label="Deadline" value={when(d.evidence_due_at)} />
           <Field label="Countdown" value={alerts ? countdown(alerts.seconds_remaining) : '—'} />
           {alerts?.escalation_active && (
-            <p className="mt-2 rounded bg-red-50 px-2 py-1 text-xs font-medium text-red-700">
+            <p className="banner banner-danger small mt-2">
               Actively escalated for immediate review{alerts.escalated_at ? ` · ${when(alerts.escalated_at)}` : ''}.
             </p>
           )}
           {alerts?.escalated && !alerts?.escalation_active && (
-            <p className="mt-2 text-xs text-stone-400">Previously escalated (no longer actionable).</p>
+            <p className="muted small mt-2">Previously escalated (no longer actionable).</p>
           )}
-          <p className="mt-2 text-xs text-stone-500">
+          <p className="muted small mt-2">
             Urgency is computed server-side from the Stripe deadline. Evidence must be prepared and submitted <strong>manually</strong> in Stripe — this tool never submits it.
           </p>
-          <div className="mt-3 flex items-center gap-2">
+          <div className="row mt-4">
             <button
               disabled={busy !== null}
               onClick={() => void run('recheck', async () => { await recheckDisputeAlerts(disputeId); }, 'Alerts rechecked.')}
-              className="rounded-lg bg-stone-100 px-3 py-1.5 text-sm font-medium text-stone-700 disabled:opacity-50"
+              className="btn btn-secondary btn-small"
             >
               {busy === 'recheck' ? 'Rechecking…' : 'Recheck alerts now'}
             </button>
           </div>
           {alerts?.alerts?.length > 0 ? (
-            <ul className="mt-3 space-y-1 text-xs text-stone-500">
+            <ul className="muted small" style={{ margin: 'var(--space-3) 0 0', paddingLeft: '1.1rem' }}>
               {alerts.alerts.map((a: any) => (
                 <li key={a.id}>
-                  {when(a.created_at)} · <span className="font-medium text-stone-700">{a.threshold}</span> · {a.urgency_snapshot} · {a.channel} · {a.delivery_state}
+                  {when(a.created_at)} · <span className="bold">{a.threshold}</span> · {a.urgency_snapshot} · {a.channel} · {a.delivery_state}
                 </li>
               ))}
             </ul>
           ) : (
-            <p className="mt-3 text-xs text-stone-400">No alerts yet.</p>
+            <p className="muted small mt-2">No alerts yet.</p>
           )}
         </Section>
 
@@ -219,7 +219,7 @@ export default function InternalDisputeDetail() {
             <Field label="Card charged" value={formatMinor(order.card_amount_minor ?? 0, currency)} />
             <Field label="Credit applied" value={formatMinor(order.credit_applied_minor ?? 0, currency)} />
             {bookings.map((b) => (
-              <div key={b.booking_id} className="mt-2 border-t border-stone-100 pt-2 text-xs text-stone-500">
+              <div key={b.booking_id} className="muted small mt-2" style={{ borderTop: '1px solid var(--color-border)', paddingTop: 'var(--space-2)' }}>
                 {when(b.starts_at)} · {b.duration_minutes}m · {b.communication_method} · {b.status}
               </div>
             ))}
@@ -230,28 +230,28 @@ export default function InternalDisputeDetail() {
           <Field label="Handling status" value={c?.handling_status ?? 'unassigned'} />
           <Field label="Owner" value={c?.assigned_display_name ?? 'Unclaimed'} />
           <Field label="Claimed" value={when(c?.claimed_at)} />
-          <div className="mt-3 flex flex-wrap gap-2">
+          <div className="row-wrap mt-4">
             <button
               disabled={busy !== null}
               onClick={() => void run('claim', async () => { await claimDispute(disputeId); }, 'Case claimed.')}
-              className="rounded-lg bg-stone-800 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+              className="btn btn-primary btn-small"
             >
               {busy === 'claim' ? 'Claiming…' : 'Claim'}
             </button>
             <button
               disabled={busy !== null}
               onClick={() => void run('release', async () => { await releaseDispute(disputeId); }, 'Case released.')}
-              className="rounded-lg bg-stone-100 px-3 py-1.5 text-sm font-medium text-stone-700 disabled:opacity-50"
+              className="btn btn-secondary btn-small"
             >
               {busy === 'release' ? 'Releasing…' : 'Release'}
             </button>
-            <label className="ml-auto flex items-center gap-2 text-sm">
-              <span className="text-stone-500">Status</span>
+            <label className="row small" style={{ marginLeft: 'auto' }}>
+              <span className="muted">Status</span>
               <select
                 disabled={busy !== null}
                 value={c?.handling_status ?? 'unassigned'}
                 onChange={(e) => void run('status', async () => { await setCaseStatus(disputeId, e.target.value as HandlingStatus); }, 'Status updated.')}
-                className="rounded-lg border border-stone-200 px-2 py-1 text-sm"
+                className="quiet"
               >
                 {HANDLING.map((h) => <option key={h.value} value={h.value}>{h.label}</option>)}
               </select>
@@ -261,13 +261,13 @@ export default function InternalDisputeDetail() {
 
         {d.is_unresolved_mapping && (
           <Section title="Unresolved mapping">
-            <p className="mb-2 text-sm text-stone-500">Reconcile using provider identifiers only. You cannot choose a payment order.</p>
-            <div className="flex flex-wrap items-center gap-2">
+            <p className="muted small mb-2">Reconcile using provider identifiers only. You cannot choose a payment order.</p>
+            <div className="row-wrap">
               <input
                 value={piInput}
                 onChange={(e) => setPiInput(e.target.value)}
                 placeholder="PaymentIntent id (pi_…)"
-                className="flex-1 rounded-lg border border-stone-200 px-3 py-1.5 text-sm"
+                className="grow"
               />
               <button
                 disabled={busy !== null}
@@ -275,7 +275,7 @@ export default function InternalDisputeDetail() {
                   const res = await reconcileDispute(d.stripe_dispute_id, piInput.trim() || null, null);
                   setOpOk(`Reconciliation result: ${res.result}.`);
                 }, undefined)}
-                className="rounded-lg bg-stone-800 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+                className="btn btn-primary btn-small"
               >
                 {busy === 'reconcile' ? 'Reconciling…' : 'Attempt reconcile'}
               </button>
@@ -284,35 +284,35 @@ export default function InternalDisputeDetail() {
         )}
 
         <Section title="Evidence packet (manual)">
-          <p className="mb-2 text-sm text-stone-500">A privacy-safe, read-only summary to copy into Stripe by hand. No message bodies or private review text are included.</p>
+          <p className="muted small mb-2">A privacy-safe, read-only summary to copy into Stripe by hand. No message bodies or private review text are included.</p>
           <button
             disabled={busy !== null}
             onClick={() => void run('packet', async () => { setPacket(await getEvidencePacket(disputeId)); }, 'Packet generated.')}
-            className="rounded-lg bg-stone-100 px-3 py-1.5 text-sm font-medium text-stone-700 disabled:opacity-50"
+            className="btn btn-secondary btn-small"
           >
             {busy === 'packet' ? 'Generating…' : 'Generate evidence packet'}
           </button>
           {packet && (
-            <pre className="mt-3 max-h-80 overflow-auto rounded-lg bg-stone-50 p-3 text-xs text-stone-700">
+            <pre className="card-muted" style={{ marginTop: 'var(--space-3)', maxHeight: '20rem', overflow: 'auto', padding: 'var(--space-3)', fontSize: '0.8em', borderRadius: 'var(--radius-m)' }}>
               {JSON.stringify(packet.shareable, null, 2)}
             </pre>
           )}
         </Section>
 
         <Section title="Record a manual Stripe submission">
-          <p className="mb-2 text-sm text-stone-500">Log that you submitted evidence in the Stripe dashboard. This does not call Stripe.</p>
+          <p className="muted small mb-2">Log that you submitted evidence in the Stripe dashboard. This does not call Stripe.</p>
           <input
             value={evReference}
             onChange={(e) => setEvReference(e.target.value)}
             placeholder="Stripe reference (optional)"
-            className="mb-2 w-full rounded-lg border border-stone-200 px-3 py-1.5 text-sm"
+            style={{ marginBottom: 'var(--space-2)' }}
           />
           <textarea
             value={evSummary}
             onChange={(e) => setEvSummary(e.target.value)}
             placeholder="Short summary of what was submitted"
             rows={2}
-            className="mb-2 w-full rounded-lg border border-stone-200 px-3 py-1.5 text-sm"
+            style={{ marginBottom: 'var(--space-2)' }}
           />
           <button
             disabled={busy !== null}
@@ -326,12 +326,12 @@ export default function InternalDisputeDetail() {
               });
               setEvReference(''); setEvSummary('');
             }, 'Manual submission recorded.')}
-            className="rounded-lg bg-stone-800 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+            className="btn btn-primary btn-small"
           >
             {busy === 'evidence' ? 'Recording…' : 'Record submission'}
           </button>
           {manualEvidence.length > 0 && (
-            <ul className="mt-3 space-y-1 text-xs text-stone-500">
+            <ul className="muted small" style={{ margin: 'var(--space-3) 0 0', paddingLeft: '1.1rem' }}>
               {manualEvidence.map((m) => (
                 <li key={m.id}>{when(m.submitted_at)} · {m.summary ?? 'Submitted'} {m.provider_reference ? `· ${m.provider_reference}` : ''}</li>
               ))}
@@ -341,38 +341,38 @@ export default function InternalDisputeDetail() {
 
         <Section title="Affected earnings & holds">
           {allocations.length === 0 ? (
-            <p className="text-sm text-stone-500">No allocations.</p>
+            <p className="muted small">No allocations.</p>
           ) : allocations.map((a) => (
-            <div key={a.earning_id} className="flex justify-between py-1 text-sm">
-              <span className="text-stone-500">{formatMinor(a.allocated_minor ?? 0, currency)}</span>
-              <span className="text-stone-700">{a.hold_state} · {a.earning_transfer_state}</span>
+            <div key={a.earning_id} className="row between small" style={{ padding: '4px 0' }}>
+              <span className="muted">{formatMinor(a.allocated_minor ?? 0, currency)}</span>
+              <span>{a.hold_state} · {a.earning_transfer_state}</span>
             </div>
           ))}
         </Section>
 
         <Section title="Settlement adjustments">
           {adjustments.length === 0 ? (
-            <p className="text-sm text-stone-500">No adjustments.</p>
+            <p className="muted small">No adjustments.</p>
           ) : adjustments.map((a) => (
-            <div key={a.id} className="border-t border-stone-100 py-2 first:border-t-0">
-              <div className="flex justify-between text-sm">
-                <span className="font-medium text-stone-800">{formatMinor(a.amount_minor ?? 0, currency)}</span>
-                <span className="text-stone-500">{a.state}</span>
+            <div key={a.id} style={{ borderTop: '1px solid var(--color-border)', padding: 'var(--space-2) 0' }}>
+              <div className="row between small">
+                <span className="bold">{formatMinor(a.amount_minor ?? 0, currency)}</span>
+                <span className="muted">{a.state}</span>
               </div>
-              {a.resolution_reason && <p className="mt-1 text-xs text-stone-500">Reason: {a.resolution_reason}</p>}
+              {a.resolution_reason && <p className="muted small mt-2">Reason: {a.resolution_reason}</p>}
               {a.state !== 'resolved' && (
-                <div className="mt-2 flex gap-2">
+                <div className="row-wrap mt-2">
                   <button
                     disabled={busy !== null}
                     onClick={() => void run(`ack-${a.id}`, async () => { await acknowledgeAdjustment(a.id); }, 'Adjustment acknowledged.')}
-                    className="rounded-lg bg-stone-100 px-2.5 py-1 text-xs font-medium text-stone-700 disabled:opacity-50"
+                    className="btn btn-secondary btn-small"
                   >
                     Acknowledge
                   </button>
                   <button
                     disabled={busy !== null}
                     onClick={() => { setConfirmResolve(a.id); setResolveReason(''); }}
-                    className="rounded-lg bg-stone-800 px-2.5 py-1 text-xs font-medium text-white disabled:opacity-50"
+                    className="btn btn-primary btn-small"
                   >
                     Resolve
                   </button>
@@ -388,20 +388,20 @@ export default function InternalDisputeDetail() {
             onChange={(e) => setNoteBody(e.target.value)}
             placeholder="Add an internal note (support-only, never shared)"
             rows={2}
-            className="mb-2 w-full rounded-lg border border-stone-200 px-3 py-1.5 text-sm"
+            style={{ marginBottom: 'var(--space-2)' }}
           />
           <button
             disabled={busy !== null || noteBody.trim().length === 0}
             onClick={() => void run('note', async () => { await addNote(disputeId, noteBody.trim()); setNoteBody(''); }, 'Note added.')}
-            className="rounded-lg bg-stone-800 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+            className="btn btn-primary btn-small"
           >
             {busy === 'note' ? 'Saving…' : 'Add note'}
           </button>
-          <ul className="mt-3 space-y-2">
+          <ul className="stack-list" style={{ margin: 'var(--space-3) 0 0', gap: 'var(--space-2)', listStyle: 'none', padding: 0 }}>
             {notes.map((n) => (
-              <li key={n.id} className="rounded-lg bg-stone-50 px-3 py-2 text-sm text-stone-700">
-                <div className="whitespace-pre-wrap">{n.body}</div>
-                <div className="mt-1 text-xs text-stone-400">{when(n.created_at)}</div>
+              <li key={n.id} className="card-muted small" style={{ borderRadius: 'var(--radius-m)', padding: 'var(--space-3)' }}>
+                <div style={{ whiteSpace: 'pre-wrap' }}>{n.body}</div>
+                <div className="muted mt-2" style={{ fontSize: '0.85em' }}>{when(n.created_at)}</div>
               </li>
             ))}
           </ul>
@@ -409,9 +409,9 @@ export default function InternalDisputeDetail() {
 
         <Section title="Audit history">
           {audit.length === 0 ? (
-            <p className="text-sm text-stone-500">No actions yet.</p>
+            <p className="muted small">No actions yet.</p>
           ) : (
-            <ul className="space-y-1 text-xs text-stone-500">
+            <ul className="muted small" style={{ margin: 0, paddingLeft: '1.1rem' }}>
               {audit.map((a) => <li key={a.id}>{when(a.created_at)} · {a.action_type}</li>)}
             </ul>
           )}
@@ -423,13 +423,12 @@ export default function InternalDisputeDetail() {
           title="Resolve adjustment"
           body={
             <div>
-              <p className="mb-2 text-sm text-stone-600">A resolution reason is required and cannot be edited later.</p>
+              <p className="muted small mb-2">A resolution reason is required and cannot be edited later.</p>
               <textarea
                 value={resolveReason}
                 onChange={(e) => setResolveReason(e.target.value)}
                 placeholder="Internal resolution reason"
                 rows={3}
-                className="w-full rounded-lg border border-stone-200 px-3 py-2 text-sm"
               />
             </div>
           }
@@ -445,6 +444,6 @@ export default function InternalDisputeDetail() {
           onClose={() => setConfirmResolve(null)}
         />
       )}
-    </div>
+    </>
   );
 }

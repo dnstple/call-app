@@ -40,13 +40,13 @@ const HANDLING_LABEL: Record<string, string> = {
 // Server-derived urgency label + style (browser never classifies urgency).
 function urgencyStyle(u: QueueUrgency): { label: string; cls: string } {
   switch (u) {
-    case 'overdue': return { label: 'Overdue', cls: 'bg-red-100 text-red-700' };
-    case 'critical': return { label: 'Critical (<24h)', cls: 'bg-red-100 text-red-700' };
-    case 'urgent': return { label: 'Urgent (<72h)', cls: 'bg-amber-100 text-amber-700' };
-    case 'due_soon': return { label: 'Due soon', cls: 'bg-yellow-100 text-yellow-700' };
-    case 'normal': return { label: 'On track', cls: 'bg-stone-100 text-stone-600' };
-    case 'closed': return { label: 'Closed', cls: 'bg-stone-100 text-stone-500' };
-    default: return { label: 'No deadline', cls: 'bg-stone-100 text-stone-500' };
+    case 'overdue': return { label: 'Overdue', cls: 'badge-danger' };
+    case 'critical': return { label: 'Critical (<24h)', cls: 'badge-danger' };
+    case 'urgent': return { label: 'Urgent (<72h)', cls: 'badge-pending' };
+    case 'due_soon': return { label: 'Due soon', cls: 'badge-pending' };
+    case 'normal': return { label: 'On track', cls: 'badge-neutral' };
+    case 'closed': return { label: 'Closed', cls: 'badge-neutral' };
+    default: return { label: 'No deadline', cls: 'badge-neutral' };
   }
 }
 
@@ -95,19 +95,18 @@ export default function InternalDisputes() {
   }, [rows, tab, meId]);
 
   return (
-    <div className="mx-auto w-full max-w-4xl px-4 py-6">
+    <>
       <PageHeader title="Disputes" subtitle="Internal support queue — chargebacks and evidence handling." />
 
-      <div className="mb-4 flex gap-2 overflow-x-auto" role="tablist" aria-label="Dispute filters">
+      <div className="tabs mb-4" role="tablist" aria-label="Dispute filters" style={{ overflowX: 'auto' }}>
         {TABS.map((t) => (
           <button
             key={t.key}
             role="tab"
             aria-selected={tab === t.key}
             onClick={() => setTab(t.key)}
-            className={`whitespace-nowrap rounded-full px-3 py-1.5 text-sm font-medium transition ${
-              tab === t.key ? 'bg-stone-800 text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
-            }`}
+            className="tab"
+            style={{ whiteSpace: 'nowrap' }}
           >
             {t.label}
           </button>
@@ -115,15 +114,15 @@ export default function InternalDisputes() {
       </div>
 
       {error && (
-        <div className="mb-4 flex items-center gap-2 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">
-          <AlertTriangle size={16} /> {error}
-          <button onClick={() => void load()} className="ml-auto font-medium underline">Retry</button>
+        <div className="banner banner-danger mb-4 row small">
+          <AlertTriangle size={16} aria-hidden="true" /> <span className="grow">{error}</span>
+          <button onClick={() => void load()} className="btn btn-ghost btn-small">Retry</button>
         </div>
       )}
 
       {rows === null && !error && (
-        <div className="space-y-2" aria-hidden>
-          {[0, 1, 2].map((i) => <div key={i} className="h-20 animate-pulse rounded-xl bg-stone-100" />)}
+        <div className="stack-list" style={{ gap: 'var(--space-2)' }} aria-hidden>
+          {[0, 1, 2].map((i) => <div key={i} className="skeleton-block" />)}
         </div>
       )}
 
@@ -131,37 +130,24 @@ export default function InternalDisputes() {
         <EmptyState title="Nothing here" body="No disputes match this filter." />
       )}
 
-      <ul className="space-y-2">
+      <ul className="stack-list">
         {filtered.map((r) => {
           const u = urgencyStyle(r.urgency);
           return (
             <li key={r.id}>
-              <Link
-                to={`/internal/disputes/${r.id}`}
-                className="block rounded-xl border border-stone-200 bg-white p-4 transition hover:border-stone-300 hover:shadow-sm"
-              >
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-semibold text-stone-800">{formatMinor(r.disputedAmountMinor, r.currency)}</span>
-                  <span className="rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-600">{r.internalState}</span>
-                  {r.providerStatus && (
-                    <span className="rounded-full bg-stone-50 px-2 py-0.5 text-xs text-stone-500">Stripe: {r.providerStatus}</span>
-                  )}
-                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${u.cls}`}>{u.label}</span>
-                  {r.escalationActive && (
-                    <span className="rounded-full bg-red-600 px-2 py-0.5 text-xs font-medium text-white">Escalated</span>
-                  )}
-                  {r.isUnresolvedMapping && (
-                    <span className="rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-700">Unresolved</span>
-                  )}
-                  {r.hasManualEvidence && (
-                    <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">Evidence logged</span>
-                  )}
-                  {r.hasOpenAdjustment && (
-                    <span className="rounded-full bg-orange-100 px-2 py-0.5 text-xs font-medium text-orange-700">Adjustment</span>
-                  )}
-                  <span className="ml-auto text-xs text-stone-400">{timeRemaining(r.secondsRemaining)}</span>
+              <Link to={`/internal/disputes/${r.id}`} className="card card-tight card-click" style={{ display: 'block' }}>
+                <div className="row-wrap">
+                  <span className="bold">{formatMinor(r.disputedAmountMinor, r.currency)}</span>
+                  <span className="badge badge-neutral">{r.internalState}</span>
+                  {r.providerStatus && <span className="badge badge-neutral">Stripe: {r.providerStatus}</span>}
+                  <span className={`badge ${u.cls}`}>{u.label}</span>
+                  {r.escalationActive && <span className="badge badge-danger">Escalated</span>}
+                  {r.isUnresolvedMapping && <span className="badge badge-info">Unresolved</span>}
+                  {r.hasManualEvidence && <span className="badge badge-success">Evidence logged</span>}
+                  {r.hasOpenAdjustment && <span className="badge badge-pending">Adjustment</span>}
+                  <span className="muted small" style={{ marginLeft: 'auto' }}>{timeRemaining(r.secondsRemaining)}</span>
                 </div>
-                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-stone-500">
+                <div className="row-wrap muted small mt-2">
                   {r.reason && <span>Reason: {r.reason}</span>}
                   <span>Handling: {HANDLING_LABEL[r.handlingStatus] ?? r.handlingStatus}</span>
                   <span>{r.assignedDisplayName ? `Owner: ${r.assignedDisplayName}` : 'No owner'}</span>
@@ -174,10 +160,10 @@ export default function InternalDisputes() {
       </ul>
 
       {rows === null && !error && (
-        <div className="mt-6 flex items-center justify-center gap-2 text-sm text-stone-400">
-          <Loader2 size={14} className="animate-spin" /> Loading disputes…
+        <div className="row mt-5 muted small" style={{ justifyContent: 'center' }}>
+          <Loader2 size={14} className="call-waiting-pulse" /> Loading disputes…
         </div>
       )}
-    </div>
+    </>
   );
 }

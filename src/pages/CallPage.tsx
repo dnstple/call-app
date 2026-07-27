@@ -16,7 +16,10 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, Loader2, Mic, MicOff, PhoneOff, Video, VideoOff, Volume2 } from 'lucide-react';
+import {
+  ArrowLeft, Calendar, Loader2, Mic, MicOff, PhoneOff, Settings, ShieldCheck,
+  Video, VideoOff, Volume2, X,
+} from 'lucide-react';
 import { EmptyState, PageHeader } from '../components/ui';
 import { isSupabaseMode } from '../config/dataMode';
 import {
@@ -38,6 +41,12 @@ function fmtTime(sec: number): string {
 function fmtWhen(iso?: string): string {
   if (!iso) return '';
   return new Date(iso).toLocaleString('en-GB', { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+}
+function fmtDateTime(iso?: string): string {
+  if (!iso) return '';
+  return new Date(iso).toLocaleString('en-GB', {
+    weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit',
+  });
 }
 
 const INELIGIBLE_COPY: Record<string, { title: string; body: string }> = {
@@ -83,6 +92,8 @@ export default function CallPage() {
   const [muteOnEntry, setMuteOnEntry] = useState(false);
   const [joining, setJoining] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
+  const [showLobbySettings, setShowLobbySettings] = useState(false);
+  const [showCallSettings, setShowCallSettings] = useState(false);
 
   // In-call state.
   const callRef = useRef<ActiveVideoCall | MockVideoCall | null>(null);
@@ -197,9 +208,9 @@ export default function CallPage() {
   };
 
   /* ---------------- join ---------------- */
-  const join = useCallback(async () => {
+  const join = useCallback(async (opts?: { camera?: boolean }) => {
     setJoining(true); setJoinError(null);
-    const wantCamera = joinWithCamera && cameraPermission === 'granted';
+    const wantCamera = (opts?.camera ?? joinWithCamera) && cameraPermission === 'granted';
     try {
       if (mock) {
         callRef.current = connectMockVideoCall({ mutedOnEntry: muteOnEntry, cameraOnEntry: wantCamera }, handlers);
@@ -257,9 +268,9 @@ export default function CallPage() {
   /* ========================= render ========================= */
   if (phase === 'loading') {
     return (
-      <div className="mx-auto w-full max-w-xl px-4 py-10 text-center">
-        <Loader2 size={24} className="mx-auto animate-spin text-stone-400" aria-hidden="true" />
-        <p className="mt-2 text-stone-500" aria-live="polite">Checking your call…</p>
+      <div className="call-lobby" style={{ textAlign: 'center', paddingTop: 'var(--space-7)' }}>
+        <Loader2 size={26} className="call-waiting-pulse" aria-hidden="true" style={{ color: 'var(--color-brand-strong)' }} />
+        <p className="muted mt-2" aria-live="polite">Checking your call…</p>
       </div>
     );
   }
@@ -267,7 +278,7 @@ export default function CallPage() {
   if (phase === 'ineligible') {
     const copy = INELIGIBLE_COPY[ineligibleReason] ?? INELIGIBLE_COPY.not_found;
     return (
-      <div className="mx-auto w-full max-w-xl px-4 py-8">
+      <div className="call-lobby">
         <BackLink bookingId={bookingId} />
         <EmptyState
           title={copy.title}
@@ -281,14 +292,17 @@ export default function CallPage() {
 
   if (phase === 'left') {
     return (
-      <div className="mx-auto w-full max-w-xl px-4 py-10 text-center">
+      <div className="call-lobby" style={{ textAlign: 'center', paddingTop: 'var(--space-6)' }}>
+        <div className="call-avatar call-avatar-lg" aria-hidden="true" style={{ margin: '0 auto var(--space-4)' }}>
+          <PhoneOff size={40} />
+        </div>
         <PageHeader title="You’ve left the call" subtitle="Your conversation is not recorded." />
-        <p className="mt-2 text-sm text-stone-500">
+        <p className="muted small" style={{ maxWidth: 420, margin: '0 auto' }}>
           You can re-join while the call is still open. Leaving does not complete the booking.
         </p>
-        <div className="mt-6 flex justify-center gap-3">
-          <button className="btn btn-primary" onClick={() => { setElapsed(0); setPhase('prejoin'); }}>Re-join</button>
-          <Link to={`/conversations/${bookingId}`} className="btn btn-ghost">Back to booking</Link>
+        <div className="call-actions" style={{ maxWidth: 320, margin: 'var(--space-5) auto 0' }}>
+          <button className="btn btn-primary" onClick={() => { setElapsed(0); setPhase('prejoin'); }}>Re-join call</button>
+          <Link to={`/conversations/${bookingId}`} className="btn btn-secondary">Back to booking</Link>
         </div>
       </div>
     );
@@ -296,97 +310,148 @@ export default function CallPage() {
 
   if (phase === 'prejoin') {
     const camReady = cameraPermission === 'granted';
+    const micReady = mock || micPermission === 'granted';
+    const showPreview = !mock && camReady && joinWithCamera;
+    const hasDeviceChoice = !mock && (mics.length > 1 || (camReady && cameras.length > 1));
     return (
-      <div className="mx-auto w-full max-w-xl px-4 py-8">
+      <div className="call-lobby">
         <BackLink bookingId={bookingId} />
-        <PageHeader title="Get ready for your call" subtitle="This is a video call. You choose whether to turn your camera on." />
         {mock && <MockBanner />}
 
-        {/* Self-preview */}
-        {!mock && camReady && joinWithCamera && (
-          <div className="mt-4 overflow-hidden rounded-2xl bg-stone-900">
-            <CameraPreview deviceId={selectedCamera} />
+        {/* Large camera preview */}
+        <div className="call-preview">
+          {showPreview
+            ? <CameraPreview deviceId={selectedCamera} />
+            : (
+              <div className="call-preview-off">
+                <div className="call-avatar call-avatar-lg" aria-hidden="true"><VideoOff size={40} /></div>
+                <p style={{ margin: 0 }}>
+                  {mock ? 'Camera preview appears here' : camReady ? 'Your camera is off' : 'Joining with audio only'}
+                </p>
+              </div>
+            )}
+          <span className="call-not-recorded"><ShieldCheck size={14} aria-hidden="true" /> Not recorded</span>
+        </div>
+
+        {/* Call info */}
+        <div className="call-meta">
+          <h1>Get ready for your call</h1>
+          {elig?.scheduled_start
+            ? <span className="call-meta-when"><Calendar size={15} aria-hidden="true" /> {fmtDateTime(elig.scheduled_start)}</span>
+            : <span className="muted small">This is a video call — you choose whether your camera is on.</span>}
+        </div>
+
+        {/* Simple mic + camera controls */}
+        <div className="call-toggles">
+          <button
+            type="button"
+            className={`call-ctrl call-toggle${muteOnEntry ? ' is-off' : ''}`}
+            aria-pressed={!muteOnEntry}
+            aria-label="Join with my microphone muted"
+            disabled={!micReady}
+            onClick={() => setMuteOnEntry((v) => !v)}
+          >
+            <span className="call-ctrl-ico">{muteOnEntry ? <MicOff size={20} /> : <Mic size={20} />}</span>
+            <span className="call-ctrl-label">{muteOnEntry ? 'Mic off' : 'Mic on'}</span>
+          </button>
+          <button
+            type="button"
+            className={`call-ctrl call-toggle${!joinWithCamera ? ' is-off' : ''}`}
+            aria-pressed={joinWithCamera}
+            aria-label="Join with my camera on"
+            disabled={!camReady}
+            onClick={() => setJoinWithCamera((v) => !v)}
+          >
+            <span className="call-ctrl-ico">{joinWithCamera ? <Video size={20} /> : <VideoOff size={20} />}</span>
+            <span className="call-ctrl-label">{joinWithCamera ? 'Camera on' : 'Camera off'}</span>
+          </button>
+        </div>
+
+        {/* Permission guidance */}
+        {micPermission === 'unknown' && (
+          <p className="muted small" aria-live="polite" style={{ textAlign: 'center' }}>Checking your microphone…</p>
+        )}
+        {micPermission === 'denied' && (
+          <div className="call-hint call-hint-warn" role="alert">
+            <MicOff size={18} aria-hidden="true" />
+            <span>Your browser is blocking the microphone. Select the padlock in the address bar, allow the
+              microphone, then <button onClick={() => void requestDevices()}>try again</button>.</span>
+          </div>
+        )}
+        {micPermission === 'missing' && (
+          <div className="call-hint call-hint-warn" role="alert">
+            <MicOff size={18} aria-hidden="true" />
+            <span>We couldn’t find a microphone. Please connect one, then
+              <button style={{ marginLeft: 4 }} onClick={() => void requestDevices()}>check again</button>.</span>
+          </div>
+        )}
+        {cameraPermission === 'denied' && (
+          <div className="call-hint call-hint-info">
+            <VideoOff size={18} aria-hidden="true" />
+            <span>Your camera is blocked — you can still join with audio, or allow it in the address bar and
+              <button style={{ marginLeft: 4 }} onClick={() => void requestDevices()}>try again</button>.</span>
           </div>
         )}
 
-        <section className="mt-4 rounded-2xl border border-stone-200 bg-white p-5">
-          <h2 className="text-base font-semibold text-stone-800">Your microphone</h2>
+        {/* Device settings behind a compact disclosure */}
+        {hasDeviceChoice && (
+          <div>
+            <button
+              type="button"
+              className="call-settings-toggle"
+              aria-expanded={showLobbySettings}
+              onClick={() => setShowLobbySettings((v) => !v)}
+            >
+              <Settings size={16} aria-hidden="true" /> Audio and video settings
+            </button>
+            {showLobbySettings && (
+              <div className="call-settings-panel">
+                {mics.length > 1 && (
+                  <div className="field">
+                    <label htmlFor="mic-select">Microphone</label>
+                    <select id="mic-select" value={selectedMic} onChange={(e) => setSelectedMic(e.target.value)}>
+                      {mics.map((m) => <option key={m.deviceId} value={m.deviceId}>{m.label}</option>)}
+                    </select>
+                    <MicLevelMeter deviceId={selectedMic} />
+                  </div>
+                )}
+                {camReady && cameras.length > 1 && (
+                  <div className="field">
+                    <label htmlFor="cam-select">Camera</label>
+                    <select id="cam-select" value={selectedCamera} onChange={(e) => setSelectedCamera(e.target.value)}>
+                      {cameras.map((c) => <option key={c.deviceId} value={c.deviceId}>{c.label}</option>)}
+                    </select>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
-          {micPermission === 'unknown' && (
-            <p className="mt-2 text-sm text-stone-500" aria-live="polite">Checking your microphone…</p>
-          )}
-          {micPermission === 'denied' && (
-            <div className="mt-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-800" role="alert">
-              Your browser is blocking the microphone. Select the padlock in the address bar, allow the
-              microphone, then choose <button className="underline" onClick={() => void requestDevices()}>Try again</button>.
-            </div>
-          )}
-          {micPermission === 'missing' && (
-            <div className="mt-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-800" role="alert">
-              We couldn’t find a microphone. Please connect one, then
-              <button className="ml-1 underline" onClick={() => void requestDevices()}>check again</button>.
-            </div>
-          )}
-          {micPermission === 'granted' && !mock && (
-            <div className="mt-3">
-              <label htmlFor="mic-select" className="block text-sm font-medium text-stone-600">Choose microphone</label>
-              <select
-                id="mic-select" value={selectedMic} onChange={(e) => setSelectedMic(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2 text-base"
-              >
-                {mics.map((m) => <option key={m.deviceId} value={m.deviceId}>{m.label}</option>)}
-              </select>
-              <MicLevelMeter deviceId={selectedMic} />
-            </div>
-          )}
+        {joinError && (
+          <div className="call-hint" role="alert" style={{ background: 'var(--color-danger-bg)', color: 'var(--color-danger-text)' }}>
+            {joinError}
+          </div>
+        )}
 
-          <h2 className="mt-5 text-base font-semibold text-stone-800">Your camera</h2>
-          {cameraPermission === 'denied' && (
-            <div className="mt-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-800" role="alert">
-              Your browser is blocking the camera. You can still join with audio only, or allow the camera in
-              the address bar and <button className="underline" onClick={() => void requestDevices()}>try again</button>.
-            </div>
-          )}
-          {cameraPermission === 'missing' && (
-            <p className="mt-2 text-sm text-stone-500">No camera found — you can join with audio only.</p>
-          )}
-          {camReady && !mock && (
-            <>
-              <label className="mt-3 flex items-center gap-2 text-sm text-stone-700">
-                <input type="checkbox" checked={joinWithCamera} onChange={(e) => setJoinWithCamera(e.target.checked)} />
-                Join with my camera on
-              </label>
-              {joinWithCamera && cameras.length > 1 && (
-                <div className="mt-3">
-                  <label htmlFor="cam-select" className="block text-sm font-medium text-stone-600">Choose camera</label>
-                  <select
-                    id="cam-select" value={selectedCamera} onChange={(e) => setSelectedCamera(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-stone-300 px-3 py-2 text-base"
-                  >
-                    {cameras.map((c) => <option key={c.deviceId} value={c.deviceId}>{c.label}</option>)}
-                  </select>
-                </div>
-              )}
-            </>
-          )}
-
-          <label className="mt-4 flex items-center gap-2 text-sm text-stone-700">
-            <input type="checkbox" checked={muteOnEntry} onChange={(e) => setMuteOnEntry(e.target.checked)} />
-            Join with my microphone muted
-          </label>
-        </section>
-
-        {joinError && <div className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">{joinError}</div>}
-
-        <div className="mt-6 flex flex-col gap-3">
+        {/* Actions — primary Join, secondary audio-only */}
+        <div className="call-actions">
           <button
-            className="btn btn-primary w-full py-3 text-lg"
+            className="btn btn-primary call-join-primary"
             disabled={joining || (!mock && micPermission !== 'granted')}
             onClick={() => void join()}
           >
-            {joining ? 'Connecting…' : 'Join call'}
+            {joining ? 'Connecting…' : joinWithCamera ? 'Join call' : 'Join call (audio only)'}
           </button>
-          <Link to={`/conversations/${bookingId}`} className="btn btn-ghost w-full text-center">Back to booking</Link>
+          {joinWithCamera && (
+            <button
+              className="btn btn-secondary"
+              disabled={joining || (!mock && micPermission !== 'granted')}
+              onClick={() => void join({ camera: false })}
+            >
+              Join with audio only
+            </button>
+          )}
         </div>
 
         <SafetyNote />
@@ -396,132 +461,164 @@ export default function CallPage() {
 
   /* -------- in_call -------- */
   const waiting = !remotePresent;
+  const statusText = connState === 'connecting' ? 'Connecting…'
+    : connState === 'reconnecting' ? 'Reconnecting…'
+    : waiting ? 'Waiting for them to join'
+    : remoteMuted ? 'Connected · microphone muted'
+    : 'Connected';
   return (
-    <div className="mx-auto w-full max-w-2xl px-4 py-6">
-      <PageHeader title="Your conversation" subtitle="Video call · not recorded" />
-      {mock && <MockBanner controls={(ev) => (callRef.current as MockVideoCall | null)?.simulate?.(ev)} />}
-
-      {connState === 'reconnecting' && (
-        <div className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800" role="status" aria-live="assertive">
-          Reconnecting… please stay on this screen.
-        </div>
-      )}
-      {resumeAudio && (
-        <button
-          className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-stone-800 px-3 py-2 text-sm font-medium text-white"
-          onClick={() => { void resumeAudio(); setResumeAudio(null); }}
-        >
-          <Volume2 size={16} /> Tap to enable call audio
-        </button>
-      )}
-      {callError && <div className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">{callError}</div>}
-
-      {/* Two-person video stage. */}
-      <section className="relative mt-4 aspect-video w-full overflow-hidden rounded-2xl bg-stone-900">
-        <div ref={remoteStageRef} className="absolute inset-0" aria-label="Your conversation partner’s video" />
+    <div className="call-stage-full">
+      <div className="call-stage">
+        {/* Remote video canvas (dominant) */}
+        <div ref={remoteStageRef} className="call-remote" aria-label="Your conversation partner’s video" />
         {(waiting || !remoteHasVideo) && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-            <div className="flex h-20 w-20 items-center justify-center rounded-full bg-orange-100 text-2xl font-semibold text-orange-700">
+          <div className="call-remote-placeholder">
+            <div className={`call-avatar call-avatar-lg${waiting ? ' call-waiting-pulse' : ''}`} aria-hidden="true">
               {(remoteName ?? 'A').trim().charAt(0).toUpperCase()}
             </div>
-            <p className="mt-3 text-lg font-semibold text-white">{remoteName ?? 'Your conversation partner'}</p>
-            <p className="mt-1 text-sm" aria-live="polite">
-              {waiting
-                ? <span className="text-stone-300">Waiting for them to join…</span>
-                : remoteMuted
-                  ? <span className="text-stone-300">Connected · their microphone is muted · camera off</span>
-                  : <span className="text-green-300">Connected · their camera is off</span>}
-            </p>
+            <div>
+              <p className="call-peer-title">{remoteName ?? 'Your conversation partner'}</p>
+              <p className="call-peer-sub" aria-live="polite">
+                {waiting
+                  ? 'Waiting for them to join…'
+                  : remoteMuted
+                    ? 'Connected · their microphone is muted · camera off'
+                    : 'Connected · their camera is off'}
+              </p>
+            </div>
           </div>
         )}
-        {/* Local mirror inset (hidden when the camera is off). */}
-        <div
-          ref={localInsetRef}
-          className={`absolute bottom-3 right-3 h-24 w-32 overflow-hidden rounded-lg border-2 border-white/70 bg-stone-800 ${cameraOn ? '' : 'hidden'}`}
-          aria-label="Your camera preview"
-        />
-      </section>
 
-      <p className="mt-2 text-center text-sm text-stone-400">
-        <span aria-hidden="true">⏱ </span>
-        <span aria-label="on-screen call timer">{fmtTime(elapsed)}</span>
-        <span className="ml-2">· signal: {quality}</span>
-        {!waiting && remoteMuted && <span className="ml-2">· their mic is muted</span>}
-      </p>
+        {/* Top overlay: name, live state, timer, not-recorded */}
+        <div className="call-topbar">
+          <div className="call-peer">
+            <span className="call-peer-name">{remoteName ?? 'Your conversation'}</span>
+            {/* Purely visual status; spoken state comes from the placeholder (polite)
+                and the reconnecting/error toasts (assertive) to avoid double announcements. */}
+            <span className="call-peer-state">{statusText}</span>
+          </div>
+          <span className="call-timer">
+            <span className="call-recdot"><ShieldCheck size={13} aria-hidden="true" /> Not recorded</span>
+            <span aria-label="on-screen call timer" style={{ marginLeft: 8 }}>{fmtTime(elapsed)}</span>
+          </span>
+        </div>
 
-      <div className="mt-5 flex items-center justify-center gap-4">
+        {/* Local self inset (hidden when camera is off) */}
+        <div ref={localInsetRef} className="call-local" hidden={!cameraOn} aria-label="Your camera preview" />
+
+        {/* Transient overlays */}
+        <div className="call-overlays">
+          {mock && <MockBanner controls={(ev) => (callRef.current as MockVideoCall | null)?.simulate?.(ev)} />}
+          {connState === 'reconnecting' && (
+            <div className="call-toast call-toast-warn" role="status" aria-live="assertive">
+              Reconnecting… please stay on this screen.
+            </div>
+          )}
+          {resumeAudio && (
+            <button
+              className="call-toast-action"
+              onClick={() => { void resumeAudio(); setResumeAudio(null); }}
+            >
+              <Volume2 size={18} aria-hidden="true" /> Tap to enable call audio
+            </button>
+          )}
+          {callError && <div className="call-toast call-toast-danger" role="alert">{callError}</div>}
+          {!waiting && connState === 'connected' && quality === 'poor' && (
+            <div className="call-toast" role="status">Weak connection — video may pause briefly.</div>
+          )}
+        </div>
+
+        {/* In-call device settings sheet */}
+        {showCallSettings && (
+          <>
+            <div className="call-sheet-backdrop" onClick={() => setShowCallSettings(false)} aria-hidden="true" />
+            <div className="call-sheet" role="dialog" aria-label="Audio and video settings">
+              <div className="row between">
+                <h2>Audio and video settings</h2>
+                <button className="icon-btn" aria-label="Close settings" onClick={() => setShowCallSettings(false)}>
+                  <X size={20} />
+                </button>
+              </div>
+              <div className="field">
+                <label htmlFor="mic-switch">Microphone</label>
+                <select
+                  id="mic-switch" value={selectedMic} disabled={mock || mics.length <= 1}
+                  onChange={(e) => { setSelectedMic(e.target.value); void callRef.current?.switchMic(e.target.value); }}
+                >
+                  {mics.length > 0
+                    ? mics.map((m) => <option key={m.deviceId} value={m.deviceId}>{m.label}</option>)
+                    : <option>Default microphone</option>}
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="cam-switch">Camera</label>
+                <select
+                  id="cam-switch" value={selectedCamera} disabled={mock || cameras.length <= 1}
+                  onChange={(e) => { setSelectedCamera(e.target.value); void callRef.current?.switchCamera(e.target.value); }}
+                >
+                  {cameras.length > 0
+                    ? cameras.map((c) => <option key={c.deviceId} value={c.deviceId}>{c.label}</option>)
+                    : <option>Default camera</option>}
+                </select>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Restrained bottom control bar */}
+      <div className="call-bar">
         <button
           onClick={() => void toggleMute()}
           aria-pressed={muted}
           aria-label={muted ? 'Unmute my microphone' : 'Mute my microphone'}
-          className={`flex h-16 w-16 flex-col items-center justify-center rounded-full text-xs font-medium ${muted ? 'bg-stone-800 text-white' : 'bg-stone-100 text-stone-700'}`}
+          className={`call-ctrl${muted ? ' is-active' : ''}`}
         >
           {muted ? <MicOff size={22} /> : <Mic size={22} />}
-          {muted ? 'Muted' : 'Mute'}
+          <span className="call-ctrl-label">{muted ? 'Muted' : 'Mute'}</span>
         </button>
         <button
           onClick={() => void toggleCamera()}
           aria-pressed={!cameraOn}
           aria-label={cameraOn ? 'Turn my camera off' : 'Turn my camera on'}
-          className={`flex h-16 w-16 flex-col items-center justify-center rounded-full text-xs font-medium ${cameraOn ? 'bg-stone-100 text-stone-700' : 'bg-stone-800 text-white'}`}
+          className={`call-ctrl${cameraOn ? '' : ' is-active'}`}
         >
           {cameraOn ? <Video size={22} /> : <VideoOff size={22} />}
-          {cameraOn ? 'Camera' : 'Camera off'}
+          <span className="call-ctrl-label">{cameraOn ? 'Camera' : 'Off'}</span>
+        </button>
+        <button
+          onClick={() => setShowCallSettings((v) => !v)}
+          aria-label="Audio and video settings"
+          aria-expanded={showCallSettings}
+          className="call-ctrl"
+        >
+          <Settings size={22} />
+          <span className="call-ctrl-label">Settings</span>
         </button>
         <button
           onClick={() => void leave()}
           aria-label="Leave the call"
-          className="flex h-16 w-16 flex-col items-center justify-center rounded-full bg-red-600 text-xs font-medium text-white"
+          className="call-ctrl is-danger"
         >
-          <PhoneOff size={22} /> Leave
+          <PhoneOff size={22} />
+          <span className="call-ctrl-label">Leave</span>
         </button>
       </div>
-
-      {!mock && (mics.length > 1 || cameras.length > 1) && (
-        <div className="mt-5 flex flex-wrap justify-center gap-4">
-          {mics.length > 1 && (
-            <div>
-              <label htmlFor="mic-switch" className="block text-center text-xs text-stone-500">Microphone</label>
-              <select
-                id="mic-switch" value={selectedMic}
-                onChange={(e) => { setSelectedMic(e.target.value); void callRef.current?.switchMic(e.target.value); }}
-                className="mt-1 block rounded-lg border border-stone-300 px-3 py-2 text-sm"
-              >
-                {mics.map((m) => <option key={m.deviceId} value={m.deviceId}>{m.label}</option>)}
-              </select>
-            </div>
-          )}
-          {cameras.length > 1 && (
-            <div>
-              <label htmlFor="cam-switch" className="block text-center text-xs text-stone-500">Camera</label>
-              <select
-                id="cam-switch" value={selectedCamera}
-                onChange={(e) => { setSelectedCamera(e.target.value); void callRef.current?.switchCamera(e.target.value); }}
-                className="mt-1 block rounded-lg border border-stone-300 px-3 py-2 text-sm"
-              >
-                {cameras.map((c) => <option key={c.deviceId} value={c.deviceId}>{c.label}</option>)}
-              </select>
-            </div>
-          )}
-        </div>
-      )}
-
-      <SafetyNote />
     </div>
   );
 }
 
 function BackLink({ bookingId }: { bookingId: string }) {
   return (
-    <Link to={`/conversations/${bookingId}`} className="mb-4 inline-flex items-center gap-1 text-sm text-stone-500 hover:text-stone-700">
-      <ArrowLeft size={14} /> Back to booking
+    <Link to={`/conversations/${bookingId}`} className="call-lobby-back">
+      <ArrowLeft size={16} aria-hidden="true" /> Back to booking
     </Link>
   );
 }
 
 function SafetyNote() {
   return (
-    <p className="mt-6 text-center text-xs leading-relaxed text-stone-400">
+    <p className="call-safety">
       Your call is live and is <strong>not recorded</strong> by the app. You can turn your camera off at any time,
       leave the call if you feel uncomfortable, and report a problem from the booking page. This service is not for emergencies.
     </p>
@@ -530,15 +627,15 @@ function SafetyNote() {
 
 function MockBanner({ controls }: { controls?: (ev: 'remote_mute' | 'remote_unmute' | 'reconnecting' | 'reconnected' | 'remote_leave' | 'remote_return') => void }) {
   return (
-    <div className="mt-3 rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-800">
-      Demo mode — no real call is connected and no token is issued.
+    <div className="banner banner-info small" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
+      <span>Demo mode — no real call is connected and no token is issued.</span>
       {controls && (
-        <div className="mt-2 flex flex-wrap gap-2">
-          <button className="rounded bg-white px-2 py-1" onClick={() => controls('remote_mute')}>Remote mute</button>
-          <button className="rounded bg-white px-2 py-1" onClick={() => controls('remote_unmute')}>Remote unmute</button>
-          <button className="rounded bg-white px-2 py-1" onClick={() => controls('reconnecting')}>Reconnecting</button>
-          <button className="rounded bg-white px-2 py-1" onClick={() => controls('reconnected')}>Reconnected</button>
-          <button className="rounded bg-white px-2 py-1" onClick={() => controls('remote_leave')}>Remote leave</button>
+        <div className="row-wrap" style={{ marginTop: 8 }}>
+          <button className="btn btn-small btn-secondary" onClick={() => controls('remote_mute')}>Remote mute</button>
+          <button className="btn btn-small btn-secondary" onClick={() => controls('remote_unmute')}>Remote unmute</button>
+          <button className="btn btn-small btn-secondary" onClick={() => controls('reconnecting')}>Reconnecting</button>
+          <button className="btn btn-small btn-secondary" onClick={() => controls('reconnected')}>Reconnected</button>
+          <button className="btn btn-small btn-secondary" onClick={() => controls('remote_leave')}>Remote leave</button>
         </div>
       )}
     </div>
@@ -561,13 +658,7 @@ function CameraPreview({ deviceId }: { deviceId: string }) {
     })();
     return () => { live = false; stream?.getTracks().forEach((t) => t.stop()); };
   }, [deviceId]);
-  return (
-    <video
-      ref={ref} playsInline muted
-      className="aspect-video w-full -scale-x-100 object-cover"
-      aria-label="Your camera preview"
-    />
-  );
+  return <video ref={ref} playsInline muted aria-label="Your camera preview" />;
 }
 
 /** Local mic level meter for the pre-join test. Never connects to a room. */
@@ -601,10 +692,12 @@ function MicLevelMeter({ deviceId }: { deviceId: string }) {
     };
   }, [deviceId]);
   return (
-    <div className="mt-3">
-      <div className="mb-1 text-xs text-stone-500">Speak to test your microphone</div>
-      <div className="h-2 w-full overflow-hidden rounded-full bg-stone-100" role="meter" aria-label="Microphone level" aria-valuenow={level} aria-valuemin={0} aria-valuemax={100}>
-        <div className="h-full bg-green-500 transition-all" style={{ width: `${level}%` }} />
+    <div style={{ marginTop: 10 }}>
+      <div className="muted small" style={{ marginBottom: 6 }}>Speak to test your microphone</div>
+      <div className="call-mic-meter">
+        <div className="track" role="meter" aria-label="Microphone level" aria-valuenow={level} aria-valuemin={0} aria-valuemax={100}>
+          <div className="fill" style={{ width: `${level}%` }} />
+        </div>
       </div>
     </div>
   );
