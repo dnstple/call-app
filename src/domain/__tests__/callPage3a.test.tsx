@@ -137,7 +137,8 @@ describe('CallPage — Sprint v1 video-call flow', () => {
     await act(async () => { fireEvent.click(join); });
     expect(adapter.connectVideoCall).toHaveBeenCalledTimes(1);
     await act(async () => { capturedHandlers.onState('connected'); });
-    expect(await screen.findByText(/waiting for them to join/i)).toBeTruthy();
+    // The waiting state now shows in both the top status line and the stage placeholder.
+    expect((await screen.findAllByText(/waiting for them to join/i)).length).toBeGreaterThan(0);
   });
 
   it('shows connected, then remote-muted, then reconnecting', async () => {
@@ -150,7 +151,8 @@ describe('CallPage — Sprint v1 video-call flow', () => {
     await act(async () => { capturedHandlers.onRemoteMuted(true); });
     expect(await screen.findByText(/their microphone is muted/i)).toBeTruthy();
     await act(async () => { capturedHandlers.onState('reconnecting'); });
-    expect(await screen.findByText(/reconnecting/i)).toBeTruthy();
+    // Reconnecting shows in the top status line and the assertive banner.
+    expect((await screen.findAllByText(/reconnecting/i)).length).toBeGreaterThan(0);
   });
 
   it('attaches the remote video element when it arrives', async () => {
@@ -214,6 +216,22 @@ describe('CallPage — Sprint v1 video-call flow', () => {
     expect(fakeCall.disconnect).toHaveBeenCalled();
     expect(await screen.findByText(/you’ve left the call/i)).toBeTruthy();
     expect(screen.getByText(/does not complete the booking/i)).toBeTruthy();
+  });
+
+  it('offers a secondary “audio only” join that connects with the camera off', async () => {
+    renderPage();
+    const audioOnly = await screen.findByRole('button', { name: /join with audio only/i });
+    await waitFor(() => expect((audioOnly as HTMLButtonElement).disabled).toBe(false));
+    await act(async () => { fireEvent.click(audioOnly); });
+    expect(adapter.connectVideoCall).toHaveBeenCalledTimes(1);
+    const opts = adapter.connectVideoCall.mock.calls[0][1] as { cameraOnEntry: boolean };
+    expect(opts.cameraOnEntry).toBe(false);
+  });
+
+  it('reassures at pre-join that the call is not recorded', async () => {
+    renderPage();
+    await screen.findByRole('button', { name: /join call/i });
+    expect(screen.getAllByText(/not recorded/i).length).toBeGreaterThan(0);
   });
 
   it('exposes accessible mute/camera/leave controls and NO record/screen-share controls', async () => {

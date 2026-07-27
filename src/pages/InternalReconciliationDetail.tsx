@@ -25,8 +25,8 @@ function when(iso: string | null | undefined): string {
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="rounded-xl border border-stone-200 bg-white p-4">
-      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-stone-500">{title}</h2>
+    <section className="card">
+      <h2 className="section-label">{title}</h2>
       {children}
     </section>
   );
@@ -34,9 +34,9 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="flex justify-between gap-4 py-1 text-sm">
-      <span className="text-stone-500">{label}</span>
-      <span className="text-right font-medium text-stone-800">{value ?? '—'}</span>
+    <div className="row between small" style={{ padding: '4px 0', gap: 'var(--space-4)' }}>
+      <span className="muted">{label}</span>
+      <span className="bold" style={{ textAlign: 'right' }}>{value ?? '—'}</span>
     </div>
   );
 }
@@ -78,25 +78,25 @@ export default function InternalReconciliationDetail() {
 
   if (loadError) {
     return (
-      <div className="mx-auto w-full max-w-3xl px-4 py-6">
-        <Link to="/internal/finance/reconciliation" className="mb-4 inline-flex items-center gap-1 text-sm text-stone-500 hover:text-stone-700">
-          <ArrowLeft size={14} /> Back to reconciliation
+      <>
+        <Link to="/internal/finance/reconciliation" className="call-lobby-back">
+          <ArrowLeft size={16} aria-hidden="true" /> Back to reconciliation
         </Link>
         <EmptyState title="Unavailable" body={loadError} />
-      </div>
+      </>
     );
   }
 
   if (!detail) {
     return (
-      <div className="mx-auto w-full max-w-3xl px-4 py-6">
-        <div className="space-y-3" aria-hidden>
-          {[0, 1, 2].map((i) => <div key={i} className="h-24 animate-pulse rounded-xl bg-stone-100" />)}
+      <>
+        <div className="stack-list" style={{ gap: 'var(--space-3)' }} aria-hidden>
+          {[0, 1, 2].map((i) => <div key={i} className="skeleton-block" style={{ height: 96 }} />)}
         </div>
-        <div className="mt-4 flex items-center justify-center gap-2 text-sm text-stone-400">
-          <Loader2 size={14} className="animate-spin" /> Loading finding…
+        <div className="row mt-4 muted small" style={{ justifyContent: 'center' }}>
+          <Loader2 size={14} className="call-waiting-pulse" /> Loading finding…
         </div>
-      </div>
+      </>
     );
   }
 
@@ -105,20 +105,20 @@ export default function InternalReconciliationDetail() {
   const terminal = f.status === 'cleared' || f.status === 'resolved' || f.status === 'ignored';
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-6">
-      <Link to="/internal/finance/reconciliation" className="mb-4 inline-flex items-center gap-1 text-sm text-stone-500 hover:text-stone-700">
-        <ArrowLeft size={14} /> Back to reconciliation
+    <>
+      <Link to="/internal/finance/reconciliation" className="call-lobby-back">
+        <ArrowLeft size={16} aria-hidden="true" /> Back to reconciliation
       </Link>
       <PageHeader title={f.finding_type} subtitle={`${f.severity} · ${f.status}`} />
 
-      <p className="mb-4 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+      <p className="banner banner-warning small mb-4">
         This is a read-only detection. Rechecking re-runs reconciliation and <strong>never moves money</strong>, issues refunds, or changes any financial amount.
       </p>
 
-      {opError && <div className="mb-3 flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700"><AlertTriangle size={15} /> {opError}</div>}
-      {opOk && <div className="mb-3 rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">{opOk}</div>}
+      {opError && <div className="banner banner-danger mb-4 row small"><AlertTriangle size={15} aria-hidden="true" /> {opError}</div>}
+      {opOk && <div className="banner banner-success mb-4 small">{opOk}</div>}
 
-      <div className="space-y-3">
+      <div className="stack-list" style={{ gap: 'var(--space-3)' }}>
         <Section title="Finding">
           <Field label="Type" value={f.finding_type} />
           <Field label="Severity" value={f.severity} />
@@ -131,14 +131,14 @@ export default function InternalReconciliationDetail() {
         </Section>
 
         <Section title="Expected vs observed (safe summary)">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid-2">
             <div>
-              <div className="mb-1 text-xs font-medium text-stone-500">Expected</div>
-              <pre className="max-h-56 overflow-auto rounded-lg bg-stone-50 p-3 text-xs text-stone-700">{JSON.stringify(f.expected, null, 2)}</pre>
+              <div className="section-label">Expected</div>
+              <pre className="card-muted" style={{ maxHeight: '14rem', overflow: 'auto', padding: 'var(--space-3)', fontSize: '0.8em', borderRadius: 'var(--radius-m)', margin: 0 }}>{JSON.stringify(f.expected, null, 2)}</pre>
             </div>
             <div>
-              <div className="mb-1 text-xs font-medium text-stone-500">Observed</div>
-              <pre className="max-h-56 overflow-auto rounded-lg bg-stone-50 p-3 text-xs text-stone-700">{JSON.stringify(f.observed, null, 2)}</pre>
+              <div className="section-label">Observed</div>
+              <pre className="card-muted" style={{ maxHeight: '14rem', overflow: 'auto', padding: 'var(--space-3)', fontSize: '0.8em', borderRadius: 'var(--radius-m)', margin: 0 }}>{JSON.stringify(f.observed, null, 2)}</pre>
             </div>
           </div>
         </Section>
@@ -157,29 +157,29 @@ export default function InternalReconciliationDetail() {
           <Field label="Acknowledged" value={when(f.acknowledged_at)} />
           {f.resolution_reason && <Field label="Resolution reason" value={f.resolution_reason} />}
           {f.ignored_reason && <Field label="Ignore reason" value={f.ignored_reason} />}
-          <div className="mt-3 flex flex-wrap gap-2">
+          <div className="row-wrap mt-4">
             <button disabled={busy !== null || terminal} onClick={() => void run('assign', async () => { await assignFinding(findingId); }, 'Assigned to you.')}
-              className="rounded-lg bg-stone-100 px-3 py-1.5 text-sm font-medium text-stone-700 disabled:opacity-50">Assign to me</button>
+              className="btn btn-secondary btn-small">Assign to me</button>
             <button disabled={busy !== null || terminal} onClick={() => void run('ack', async () => { await updateFindingStatus(findingId, 'acknowledged'); }, 'Acknowledged.')}
-              className="rounded-lg bg-stone-100 px-3 py-1.5 text-sm font-medium text-stone-700 disabled:opacity-50">Acknowledge</button>
+              className="btn btn-secondary btn-small">Acknowledge</button>
             <button disabled={busy !== null || terminal} onClick={() => void run('inv', async () => { await updateFindingStatus(findingId, 'investigating'); }, 'Marked investigating.')}
-              className="rounded-lg bg-stone-100 px-3 py-1.5 text-sm font-medium text-stone-700 disabled:opacity-50">Investigating</button>
+              className="btn btn-secondary btn-small">Investigating</button>
             <button disabled={busy !== null} onClick={() => void run('recheck', async () => { await recheckFinding(findingId); }, 'Rechecked (no money moved).')}
-              className="rounded-lg bg-stone-100 px-3 py-1.5 text-sm font-medium text-stone-700 disabled:opacity-50">
+              className="btn btn-secondary btn-small">
               {busy === 'recheck' ? 'Rechecking…' : 'Recheck now'}
             </button>
             <button disabled={busy !== null || terminal} onClick={() => { setConfirm('resolved'); setReason(''); }}
-              className="ml-auto rounded-lg bg-stone-800 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50">Resolve</button>
+              className="btn btn-primary btn-small" style={{ marginLeft: 'auto' }}>Resolve</button>
             <button disabled={busy !== null || terminal} onClick={() => { setConfirm('ignored'); setReason(''); }}
-              className="rounded-lg bg-stone-200 px-3 py-1.5 text-sm font-medium text-stone-700 disabled:opacity-50">Ignore</button>
+              className="btn btn-secondary btn-small">Ignore</button>
           </div>
         </Section>
 
         <Section title="History">
           {audit.length === 0 ? (
-            <p className="text-sm text-stone-500">No actions yet.</p>
+            <p className="muted small">No actions yet.</p>
           ) : (
-            <ul className="space-y-1 text-xs text-stone-500">
+            <ul className="muted small" style={{ margin: 0, paddingLeft: '1.1rem' }}>
               {audit.map((a) => <li key={a.id}>{when(a.created_at)} · {a.action_type}</li>)}
             </ul>
           )}
@@ -191,9 +191,8 @@ export default function InternalReconciliationDetail() {
           title={confirm === 'resolved' ? 'Resolve finding' : 'Ignore finding'}
           body={
             <div>
-              <p className="mb-2 text-sm text-stone-600">A reason is required. The finding is retained for audit and does not move any money.</p>
-              <textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Internal reason" rows={3}
-                className="w-full rounded-lg border border-stone-200 px-3 py-2 text-sm" />
+              <p className="muted small mb-2">A reason is required. The finding is retained for audit and does not move any money.</p>
+              <textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Internal reason" rows={3} />
             </div>
           }
           confirmLabel={confirm === 'resolved' ? 'Resolve' : 'Ignore'}
@@ -207,6 +206,6 @@ export default function InternalReconciliationDetail() {
           onClose={() => setConfirm(null)}
         />
       )}
-    </div>
+    </>
   );
 }
