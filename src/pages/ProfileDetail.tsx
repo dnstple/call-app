@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Ban, Flag, Heart, Loader2, UserX } from 'lucide-react';
 import { isSupabaseMode } from '../config/dataMode';
+import { APP_NAME } from '../config/branding';
 import { loadMarketplaceProfile, marketplaceCache } from '../state/marketplace';
 import {
   ensureFavouritesLoaded,
@@ -414,11 +415,14 @@ export default function ProfileDetail() {
           )}
 
           <section className="section-tight">
-            <h2>Boundaries & reliability</h2>
+            <h2>Boundaries</h2>
             <p className="muted">{user.boundaries}</p>
-            <p className="faint simple-hide">
-              Responds to {user.responseRatePct ?? '—'}% of requests · completes {user.completionReliabilityPct ?? '—'}% of booked calls (demo figures)
-            </p>
+            {/* No fabricated reliability percentages. We only ever surface
+                real, evidenced figures; until a Companion has a track record
+                we simply say so rather than inventing metrics. */}
+            {rating.reviewerCount === 0 && (
+              <p className="faint">New to {APP_NAME} — no completed conversations yet.</p>
+            )}
           </section>
         </>
       )}
@@ -445,7 +449,7 @@ export default function ProfileDetail() {
           <span className="faint">One rating per person — repeat conversations update it, never stack.</span>
         </div>
         {comments.length === 0 ? (
-          <p className="faint">No written reviews yet.</p>
+          <p className="muted">No reviews yet — reviews will appear here after completed conversations.</p>
         ) : (
           <div className="stack-list">
             {comments.map((c) => {
