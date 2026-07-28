@@ -3,8 +3,7 @@
  *
  * Create, edit, archive and re-activate real package offers through
  * packageRepository only. Prices are totals in pounds; the approximate
- * per-conversation price is shown as a guide. No payment is taken
- * anywhere — purchases stay simulated until the payments milestone.
+ * per-conversation price is shown as a guide.
  */
 import { useCallback, useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
@@ -116,8 +115,8 @@ export function PackageOfferEditor({ profileId, methods }: { profileId: string; 
     <section className="card section-tight" aria-label="Conversation packages">
       <h2>Conversation packages</h2>
       <div className="banner mb-4">
-        Packages are bundles of conversations at one price. Purchases are simulated for now — no
-        payment is taken until payments are introduced.
+        Packages are bundles of conversations people can buy up front at one price. You can add,
+        edit, or turn a package off at any time.
       </div>
 
       {error && <p className="muted" role="alert">{error}</p>}
