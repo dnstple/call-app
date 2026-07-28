@@ -76,10 +76,12 @@ afterEach(() => {
 /* ================= account model + navigation ================= */
 
 describe('role-based navigation', () => {
-  it('6+8. Coordinators get Explore + Members; Companions get neither', () => {
+  it('6+8. Coordinators get Explore (no Members primary link); Companions get no Explore', () => {
     const coordinator = navForRole('coordinator').map((n) => n.to);
     const companion = navForRole('companion').map((n) => n.to);
-    expect(coordinator).toEqual(['/', '/explore', '/messages', '/conversations', '/members']);
+    // Block 5: the single-managed-Member pilot removed the Members primary link.
+    expect(coordinator).toEqual(['/', '/explore', '/messages', '/conversations']);
+    expect(coordinator).not.toContain('/members');
     expect(companion).toEqual(['/', '/messages', '/conversations', '/profile']);
     expect(companion).not.toContain('/explore');
   });

@@ -13,7 +13,7 @@ describe('app smoke test', () => {
   it('renders the shell and home dashboard with seeded data', () => {
     window.location.hash = '#/';
     render(<App />);
-    expect(screen.getAllByText(/Prototype build — fictional people/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Preview build — sample data/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Alex/).length).toBeGreaterThan(0);
     cleanup();
   });

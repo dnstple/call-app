@@ -1,106 +1,86 @@
 // @vitest-environment jsdom
 /**
- * Explore in the mobile bottom navigation.
+ * Mobile bottom navigation + desktop nav (Block 5).
  *
- * The desktop sidebar and the mobile bottom bar are both rendered from the SAME
- * `navForRole` source, so Explore appears on mobile exactly when it appears on
- * desktop — there is no second Explore route and no duplicate marketplace logic.
- * These tests render the real `<BottomNav>` (the mobile bar) to prove that.
+ * Rules proven here:
+ *  - Settings is the bottom-right mobile item for every signed-in role, once.
+ *  - Explore appears for coordinator + self-managed member (mobile & desktop),
+ *    never for companion.
+ *  - The Coordinator has NO "Members" primary link anywhere.
+ *  - Clicking Explore/Settings navigates to the existing route; active styling
+ *    uses aria-current.
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { Compass } from 'lucide-react';
-import { BottomNav, navForRole } from '../../components/Shell';
+import { Compass, Settings as SettingsIcon } from 'lucide-react';
+import { BottomNav, navForRole, mobileNavForRole } from '../../components/Shell';
 
 afterEach(() => cleanup());
 
-const bottomNames = (role: string) =>
-  navForRole(role).map((n) => n.to);
+const mobile = (role: string) => mobileNavForRole(role).map((n) => n.to);
+const desktop = (role: string) => navForRole(role).map((n) => n.to);
 
-describe('Explore in the mobile bottom navigation', () => {
-  it('appears in the mobile bar for every role that sees it on desktop (coordinator + solo member)', () => {
-    for (const role of ['coordinator', 'member']) {
-      render(
-        <MemoryRouter initialEntries={['/']}>
-          <BottomNav items={navForRole(role)} />
-        </MemoryRouter>,
-      );
-      expect(screen.getByRole('link', { name: /Explore/i })).toBeTruthy();
-      cleanup();
+describe('mobile bottom navigation', () => {
+  it('ends in Settings (bottom-right) for every role', () => {
+    for (const role of ['coordinator', 'member', 'companion']) {
+      const items = mobileNavForRole(role);
+      expect(items[items.length - 1].to).toBe('/settings');
+      // exactly one Settings entry.
+      expect(items.filter((i) => i.to === '/settings')).toHaveLength(1);
+      expect(items[items.length - 1].Icon).toBe(SettingsIcon);
     }
   });
 
-  it('does NOT appear in the mobile bar for Companions (role visibility unchanged)', () => {
-    render(
-      <MemoryRouter initialEntries={['/']}>
-        <BottomNav items={navForRole('companion')} />
-      </MemoryRouter>,
-    );
-    expect(screen.queryByRole('link', { name: /Explore/i })).toBeNull();
-    // The companion still gets their existing destinations.
-    expect(screen.getByRole('link', { name: /Home/i })).toBeTruthy();
-    expect(screen.getByRole('link', { name: /Messages/i })).toBeTruthy();
+  it('coordinator + self-managed member mobile order = Home·Explore·Messages·Conversations·Settings', () => {
+    expect(mobile('coordinator')).toEqual(['/', '/explore', '/messages', '/conversations', '/settings']);
+    expect(mobile('member')).toEqual(['/', '/explore', '/messages', '/conversations', '/settings']);
   });
 
-  it('sits directly after Home and reuses the Compass icon + "Explore" label', () => {
-    const items = navForRole('coordinator');
-    expect(items[0].to).toBe('/');
+  it('companion mobile = Home·Messages·Conversations·Profile·Settings (no Explore)', () => {
+    expect(mobile('companion')).toEqual(['/', '/messages', '/conversations', '/profile', '/settings']);
+    expect(mobile('companion')).not.toContain('/explore');
+  });
+
+  it('there is NO Members link anywhere (mobile or desktop, any role)', () => {
+    for (const role of ['coordinator', 'member', 'companion']) {
+      expect(mobile(role)).not.toContain('/members');
+      expect(desktop(role)).not.toContain('/members');
+    }
+  });
+
+  it('desktop coordinator nav dropped Members: Home·Explore·Messages·Conversations', () => {
+    expect(desktop('coordinator')).toEqual(['/', '/explore', '/messages', '/conversations']);
+  });
+
+  it('Explore uses the Compass icon and sits after Home for coordinator', () => {
+    const items = mobileNavForRole('coordinator');
     expect(items[1].to).toBe('/explore');
-    expect(items[1].label).toBe('Explore');
     expect(items[1].Icon).toBe(Compass);
   });
 
-  it('navigates to the existing /explore route when clicked (no new route)', () => {
+  it('renders Settings + Explore in the bar and navigates to them', () => {
     render(
       <MemoryRouter initialEntries={['/']}>
-        <BottomNav items={navForRole('coordinator')} />
+        <BottomNav items={mobileNavForRole('coordinator')} />
         <Routes>
           <Route path="/" element={<div>home page</div>} />
+          <Route path="/settings" element={<div>settings page</div>} />
           <Route path="/explore" element={<div>explore page</div>} />
         </Routes>
       </MemoryRouter>,
     );
-    expect(screen.getByText('home page')).toBeTruthy();
-    fireEvent.click(screen.getByRole('link', { name: /Explore/i }));
-    expect(screen.getByText('explore page')).toBeTruthy();
+    fireEvent.click(screen.getByRole('link', { name: /Settings/i }));
+    expect(screen.getByText('settings page')).toBeTruthy();
   });
 
-  it('shows the apricot active state on the Explore route (aria-current="page")', () => {
+  it('shows the apricot active state on the current route (aria-current)', () => {
     render(
-      <MemoryRouter initialEntries={['/explore']}>
-        <BottomNav items={navForRole('coordinator')} />
+      <MemoryRouter initialEntries={['/settings']}>
+        <BottomNav items={mobileNavForRole('coordinator')} />
       </MemoryRouter>,
     );
-    const explore = screen.getByRole('link', { name: /Explore/i });
-    expect(explore.getAttribute('aria-current')).toBe('page');
-    // Home must not be co-active on /explore.
+    expect(screen.getByRole('link', { name: /Settings/i }).getAttribute('aria-current')).toBe('page');
     expect(screen.getByRole('link', { name: /Home/i }).getAttribute('aria-current')).toBeNull();
-  });
-
-  it('does not force-activate Explore on /people/:id (profiles are reachable from many places)', () => {
-    // The existing navigation convention does not treat public-profile routes as
-    // Explore-owned, so opening a profile keeps the bottom bar neutral.
-    render(
-      <MemoryRouter initialEntries={['/people/abc-123']}>
-        <BottomNav items={navForRole('coordinator')} />
-      </MemoryRouter>,
-    );
-    expect(screen.getByRole('link', { name: /Explore/i }).getAttribute('aria-current')).toBeNull();
-  });
-
-  it('contains exactly one Explore item (no duplicate)', () => {
-    render(
-      <MemoryRouter initialEntries={['/']}>
-        <BottomNav items={navForRole('coordinator')} />
-      </MemoryRouter>,
-    );
-    expect(screen.getAllByRole('link', { name: /Explore/i })).toHaveLength(1);
-  });
-
-  it('leaves the desktop navigation source unchanged (same role arrays)', () => {
-    expect(bottomNames('coordinator')).toEqual(['/', '/explore', '/messages', '/conversations', '/members']);
-    expect(bottomNames('companion')).toEqual(['/', '/messages', '/conversations', '/profile']);
-    expect(bottomNames('member')).toEqual(['/', '/explore', '/messages', '/conversations', '/profile']);
   });
 });

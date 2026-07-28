@@ -978,6 +978,9 @@ table.plain th { color: var(--color-text-secondary); font-weight: 600; }
 /* ---------- Branding: Apricoti lockup ---------- */
 .brand-lockup { display: inline-flex; align-items: center; gap: 8px; }
 .brand-icon { width: 26px; height: 26px; flex-shrink: 0; }
+/* Logo-only shell brand: the mark alone, no wordmark. */
+.brand-mark { width: 34px; height: 34px; flex-shrink: 0; display: block; }
+.sidenav .brand { padding: 8px 12px 24px; }
 
 /* ---------- Shared multi-step date/time picker (dtp2) ---------- */
 .dtp2 { max-width: 560px; }
