@@ -501,6 +501,98 @@ function FeeLine({ priceMinor, type, rates }: { priceMinor: number; type: 'trial
   );
 }
 
+/**
+ * One standard-conversation offer, shown with its full economics (customer
+ * price, platform fee, estimated earnings) and edited in place — duration and
+ * price with Save / Cancel, saving state, and inline validation. Editing never
+ * deletes the offer.
+ */
+export function SingleOfferRow({
+  offer, rates, busy, editing, onStartEdit, onStopEdit, onSave, onToggle, durationTaken,
+}: {
+  offer: ConversationOfferRow;
+  rates: { trialPct: number; standardPct: number };
+  busy: boolean;
+  editing: boolean;
+  onStartEdit: () => void;
+  onStopEdit: () => void;
+  onSave: (patch: { duration_minutes: number; price_minor: number }) => Promise<void>;
+  onToggle: () => void;
+  durationTaken: (duration: number, exceptId: string) => boolean;
+}) {
+  const [dur, setDur] = useState(offer.duration_minutes);
+  const [price, setPrice] = useState(String(offer.price_minor / 100));
+  const [err, setErr] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (editing) { setDur(offer.duration_minutes); setPrice(String(offer.price_minor / 100)); setErr(null); }
+  }, [editing, offer.duration_minutes, offer.price_minor]);
+
+  const fee = repo.calculateFeePreview(offer.price_minor, 'single', rates);
+
+  if (editing) {
+    const priceMinor = repo.poundsToMinor(price);
+    async function save() {
+      const problem = repo.validateOfferInput({ durationMinutes: dur, priceMinor });
+      if (problem) { setErr(problem); return; }
+      if (offer.active && durationTaken(dur, offer.id)) {
+        setErr('You already offer an active conversation of this length. Turn that one off first, or pick another length.');
+        return;
+      }
+      setSaving(true); setErr(null);
+      try { await onSave({ duration_minutes: dur, price_minor: priceMinor }); }
+      catch (e) { setErr(e instanceof RepoError ? e.message : 'We couldn’t save that.'); setSaving(false); return; }
+      setSaving(false);
+    }
+    return (
+      <div className="card card-tight col" style={{ gap: 10 }}>
+        <div className="row wrap" style={{ gap: 10 }}>
+          <div className="field" style={{ marginBottom: 0, width: 150 }}>
+            <label htmlFor={`edit-dur-${offer.id}`}>Duration</label>
+            <select id={`edit-dur-${offer.id}`} value={dur} onChange={(e) => setDur(Number(e.target.value))} disabled={saving}>
+              {repo.OFFER_DURATIONS.map((d) => <option key={d} value={d}>{d} minutes</option>)}
+            </select>
+          </div>
+          <div className="field" style={{ marginBottom: 0, width: 140 }}>
+            <label htmlFor={`edit-price-${offer.id}`}>Price (£)</label>
+            <input id={`edit-price-${offer.id}`} type="number" min={1} step={0.5} value={price} onChange={(e) => setPrice(e.target.value)} disabled={saving} />
+          </div>
+          <div className="row" style={{ gap: 8, alignSelf: 'flex-end' }}>
+            <button className="btn btn-primary btn-small" disabled={saving} onClick={() => void save()}>{saving ? 'Saving…' : 'Save'}</button>
+            <button className="btn btn-ghost btn-small" disabled={saving} onClick={onStopEdit}>Cancel</button>
+          </div>
+        </div>
+        <FeeLine priceMinor={priceMinor} type="single" rates={rates} />
+        {err && <span className="faint" role="alert" style={{ color: 'var(--color-danger-text)' }}>{err}</span>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="card card-tight row between wrap" style={{ gap: 10 }}>
+      <div className="col" style={{ gap: 2 }}>
+        <span>
+          <span className="bold">{offer.duration_minutes} minutes</span>{' '}
+          <span className="muted">· {repo.formatMinor(offer.price_minor)} to the customer</span>{' '}
+          {offer.active
+            ? <span className="badge badge-success">Active</span>
+            : <span className="badge badge-neutral">Inactive</span>}
+        </span>
+        <span className="faint small">
+          Platform fee ({fee.ratePct}%): {repo.formatMinor(fee.feeMinor)} · you receive {repo.formatMinor(fee.companionMinor)}
+        </span>
+      </div>
+      <div className="row" style={{ gap: 8 }}>
+        <button className="btn btn-secondary btn-small" disabled={busy} onClick={onStartEdit}>Edit</button>
+        <button className="btn btn-ghost btn-small" disabled={busy} onClick={onToggle}>
+          {offer.active ? 'Disable' : 'Enable'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function OffersEditor({
   profileId,
   offers,
@@ -519,8 +611,14 @@ function OffersEditor({
   const [trialPrice, setTrialPrice] = useState(trial ? String(trial.price_minor / 100) : '5');
   const [newPrice, setNewPrice] = useState('10');
   const [newDuration, setNewDuration] = useState(30);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [addError, setAddError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // At most one ACTIVE standard offer per duration.
+  const activeDurationTaken = (duration: number, exceptId: string) =>
+    singles.some((o) => o.active && o.duration_minutes === duration && o.id !== exceptId);
 
   useEffect(() => {
     if (trial) setTrialPrice(String(trial.price_minor / 100));
@@ -596,31 +694,40 @@ function OffersEditor({
       {/* Singles */}
       <div className="card card-tight">
         <h3>Standard conversations</h3>
-        <p className="muted small">The platform takes {rates.standardPct}% on standard conversations.</p>
+        <p className="muted small">The platform takes {rates.standardPct}% on standard conversations. You can offer one active conversation of each length.</p>
         {singles.length > 0 && (
           <div className="stack-list mb-4">
             {singles.map((o) => (
-              <div key={o.id} className="row between wrap">
-                <span>
-                  <span className="bold">{o.duration_minutes} minutes</span>{' '}
-                  <span className="muted">· {repo.formatMinor(o.price_minor)}</span>{' '}
-                  {!o.active && <span className="badge badge-neutral">Off</span>}
-                </span>
-                <button
-                  className="btn btn-ghost btn-small"
-                  disabled={busy}
-                  onClick={() => run(() => repo.updateOffer(o.id, { active: !o.active }), o.active ? 'Offer turned off' : 'Offer turned on')}
-                >
-                  {o.active ? 'Turn off' : 'Turn on'}
-                </button>
-              </div>
+              <SingleOfferRow
+                key={o.id}
+                offer={o}
+                rates={rates}
+                busy={busy}
+                editing={editingId === o.id}
+                onStartEdit={() => { setEditingId(o.id); setError(null); setAddError(null); }}
+                onStopEdit={() => setEditingId(null)}
+                onSave={async (patch) => {
+                  await run(() => repo.updateOffer(o.id, patch), 'Offer updated');
+                  setEditingId(null);
+                }}
+                onToggle={() => {
+                  if (!o.active && activeDurationTaken(o.duration_minutes, o.id)) {
+                    setError('You already offer an active conversation of this length. Turn that one off first.');
+                    return;
+                  }
+                  void run(() => repo.updateOffer(o.id, { active: !o.active }), o.active ? 'Offer disabled' : 'Offer enabled');
+                }}
+                durationTaken={activeDurationTaken}
+              />
             ))}
           </div>
         )}
-        <div className="row wrap" style={{ gap: 10 }}>
+
+        {/* Add a new standard offer. De-emphasised while a row is being edited. */}
+        <div className="row wrap" style={{ gap: 10, opacity: editingId ? 0.5 : 1 }}>
           <div className="field" style={{ marginBottom: 0, width: 150 }}>
             <label htmlFor="single-duration">Duration</label>
-            <select id="single-duration" value={newDuration} onChange={(e) => setNewDuration(Number(e.target.value))}>
+            <select id="single-duration" value={newDuration} onChange={(e) => setNewDuration(Number(e.target.value))} disabled={!!editingId}>
               {repo.OFFER_DURATIONS.map((d) => (
                 <option key={d} value={d}>{d} minutes</option>
               ))}
@@ -628,22 +735,31 @@ function OffersEditor({
           </div>
           <div className="field" style={{ marginBottom: 0, width: 140 }}>
             <label htmlFor="single-price">Price (£)</label>
-            <input id="single-price" type="number" min={1} step={0.5} value={newPrice} onChange={(e) => setNewPrice(e.target.value)} />
+            <input id="single-price" type="number" min={1} step={0.5} value={newPrice} onChange={(e) => setNewPrice(e.target.value)} disabled={!!editingId} />
           </div>
           <button
             className="btn btn-secondary btn-small"
             style={{ alignSelf: 'flex-end' }}
-            disabled={busy}
-            onClick={() =>
-              run(
-                () => repo.createOffer(profileId, 'single', { durationMinutes: newDuration, priceMinor: repo.poundsToMinor(newPrice), supportedMethods: ['in_app'] }),
+            disabled={busy || !!editingId}
+            onClick={() => {
+              const priceMinor = repo.poundsToMinor(newPrice);
+              const problem = repo.validateOfferInput({ durationMinutes: newDuration, priceMinor });
+              if (problem) { setAddError(problem); return; }
+              if (activeDurationTaken(newDuration, '')) {
+                setAddError('You already offer an active conversation of this length. Edit that one instead, or choose another length.');
+                return;
+              }
+              setAddError(null);
+              void run(
+                () => repo.createOffer(profileId, 'single', { durationMinutes: newDuration, priceMinor, supportedMethods: ['in_app'] }),
                 'Offer added',
-              )
-            }
+              );
+            }}
           >
             <Plus size={16} aria-hidden="true" /> Add offer
           </button>
         </div>
+        {addError && <p className="faint" role="alert" style={{ color: 'var(--color-danger-text)', margin: '6px 0 0' }}>{addError}</p>}
         <FeeLine priceMinor={repo.poundsToMinor(newPrice)} type="single" rates={rates} />
       </div>
     </div>
