@@ -331,8 +331,8 @@ export default function AvailabilityRates() {
       <section className="card section-tight">
         <h2>Conversation rates</h2>
         <div className="banner mb-4">
-          Payments are not enabled yet. These prices will be used when bookings and payments are
-          introduced.
+          These are the prices people see and pay when they book a conversation with you. You can
+          update them at any time.
         </div>
         <OffersEditor profileId={profileId} offers={offers} rates={rates} methods={active?.profile.mediums ?? []} onChanged={reloadOffers} />
       </section>

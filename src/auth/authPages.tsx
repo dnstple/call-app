@@ -202,7 +202,7 @@ export function RegisterPage() {
           <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} style={{ width: 24, height: 24, flex: 'none' }} />
           <span className="small">
             I agree to keep conversations kind and respectful, and I understand this service offers
-            companionship, not professional care. (Prototype terms.)
+            companionship, not professional care.
           </span>
         </label>
         <button className="btn btn-primary btn-block" disabled={busy}>
