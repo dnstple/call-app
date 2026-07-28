@@ -127,9 +127,21 @@ Deno.serve(async (req) => {
     if (action === 'create_setup_session') {
       const { customerId } = await ensureCustomer();
       // Return URLs derive ONLY from the allowlisted app origin (3D-B1
-      // central fail-closed policy; the setup return keeps its existing
-      // /#/settings?setup=… contract that BillingPanel already handles).
+      // central fail-closed policy). By default the setup return keeps its
+      // existing /#/settings?setup=… contract that BillingPanel handles.
       const origin = resolveReturnOrigin(typeof body.origin === 'string' ? body.origin : '');
+      // Block 9: an OPTIONAL in-app return target so payment-method-first
+      // booking can resume the exact wizard. It is strictly allowlisted to a
+      // companion profile path ("/people/<uuid>") — never an external URL and
+      // never an arbitrary path — so this can only ever land back in this app.
+      const rp = typeof body.returnPath === 'string' ? body.returnPath : '';
+      const safeResume = /^\/people\/[0-9a-fA-F-]{36}$/.test(rp) ? rp : null;
+      const successUrl = safeResume
+        ? `${origin}/#${safeResume}?resume=booking&setup=success`
+        : `${origin}/#/settings?setup=success`;
+      const cancelUrl = safeResume
+        ? `${origin}/#${safeResume}?resume=booking&setup=cancelled`
+        : `${origin}/#/settings?setup=cancelled`;
       const session = await stripe.checkout.sessions.create(
         {
           mode: 'setup',
@@ -138,8 +150,8 @@ Deno.serve(async (req) => {
           // Metadata rides on the SetupIntent so the existing
           // setup_intent.succeeded webhook handler confirms completion.
           setup_intent_data: { metadata: { account_id: user.id } },
-          success_url: `${origin}/#/settings?setup=success`,
-          cancel_url: `${origin}/#/settings?setup=cancelled`,
+          success_url: successUrl,
+          cancel_url: cancelUrl,
         },
         { idempotencyKey: `setup-session-${user.id}-${Date.now()}` },
       );

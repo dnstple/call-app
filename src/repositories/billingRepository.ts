@@ -53,9 +53,12 @@ export async function getBillingStatus(): Promise<BillingStatus> {
 
 /** Stripe-HOSTED setup-mode Checkout: returns the redirect URL. The
  * webhook — never the redirect — confirms the card was saved. */
-export async function createSetupSession(): Promise<string | null> {
+export async function createSetupSession(returnPath?: string): Promise<string | null> {
+  // returnPath is an optional in-app resume target (Block 9). The Edge function
+  // strictly allowlists it to a companion profile path; anything else falls
+  // back to the default Settings return, so this is safe to pass through.
   const { data, error } = await getSupabaseClient().functions.invoke('stripe-payments', {
-    body: { action: 'create_setup_session', origin: window.location.origin },
+    body: { action: 'create_setup_session', origin: window.location.origin, returnPath: returnPath ?? '' },
   });
   if (error || !data) return null;
   return (data as { url?: string }).url ?? null;
