@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Ban, Flag, Heart, Loader2, UserX } from 'lucide-react';
 import { isSupabaseMode } from '../config/dataMode';
 import { APP_NAME } from '../config/branding';
@@ -38,6 +38,9 @@ import {
 } from '../components/ui';
 import { BookingWizard, PackagePurchaseDialog } from '../components/BookingWizard';
 import { SupabaseBookingWizard } from '../components/SupabaseBookingWizard';
+import { getBillingStatus } from '../repositories/billingRepository';
+import { clearBookingDraft, loadBookingDraft } from '../payments/bookingDraft';
+import { pushToast } from '../state/store';
 import { PublicPackages } from '../components/PackagePurchaseSupabase';
 import { CardRatingSummary, CompanionReviews } from '../components/CompanionReviews';
 import { CompanionPlanHero } from '../components/CompanionPlanHero';
@@ -73,10 +76,47 @@ export default function ProfileDetail() {
   const [realRules, setRealRules] = useState<AvailabilityRuleRow[]>([]);
   const [realBooking, setRealBooking] = useState(false);
   const [showPackages, setShowPackages] = useState(false);
+  // Block 9 — payment-method-first booking resume after the Stripe setup redirect.
+  const [resumeDraft, setResumeDraft] = useState<{ offerId: string; memberId: string; startsAt: string } | null>(null);
+  const location = useLocation();
+  const resumeHandledRef = useRef(false);
 
   useEffect(() => {
     if (supabase) void ensureFavouritesLoaded();
   }, [supabase]);
+
+  // Return from Stripe hosted card setup (?resume=booking&setup=…). We verify
+  // the card SERVER-SIDE (billing_status for this customer) and only then reopen
+  // the exact wizard from the owner-bound draft. A cancelled/unverified setup
+  // keeps the draft and creates nothing.
+  useEffect(() => {
+    if (!supabase || resumeHandledRef.current || !user) return;
+    const params = new URLSearchParams(location.search);
+    if (params.get('resume') !== 'booking') return;
+    resumeHandledRef.current = true;
+    const setupOutcome = params.get('setup');
+    // Strip the query so a refresh or Back can't replay the resume.
+    navigate(`/people/${id}`, { replace: true });
+
+    const accountId = authSnap.userId;
+    if (!accountId) return;
+    const draft = loadBookingDraft(accountId); // owner-bound + fresh, else null
+    if (!draft || draft.companionId !== user.id) return; // not this account's / not this companion
+
+    if (setupOutcome === 'cancelled') {
+      pushToast('No card was added. Your booking is saved — you can try again.', 'neutral');
+      return; // keep the draft; create nothing
+    }
+    // Confirm a usable card actually exists for THIS authenticated customer.
+    void getBillingStatus().then((s) => {
+      if (s.paymentMethodReady) {
+        setResumeDraft({ offerId: draft.offerId, memberId: draft.memberId, startsAt: draft.startsAt });
+        setRealBooking(true);
+      } else {
+        pushToast('We couldn’t confirm your card yet. Your booking is saved — please try again.', 'warn');
+      }
+    }).catch(() => undefined);
+  }, [supabase, location.search, user, id, authSnap.userId, navigate]);
 
   // Genuine availability + offers for Supabase-mode Companion profiles.
   useEffect(() => {
@@ -474,7 +514,12 @@ export default function ProfileDetail() {
 
       {booking && <BookingWizard companion={user} onClose={() => setBooking(false)} />}
       {realBooking && (
-        <SupabaseBookingWizard companion={user} offers={realOffers} onClose={() => setRealBooking(false)} />
+        <SupabaseBookingWizard
+          companion={user}
+          offers={realOffers}
+          resume={resumeDraft}
+          onClose={() => { setRealBooking(false); setResumeDraft(null); }}
+        />
       )}
       {buyPackage && <PackagePurchaseDialog offer={buyPackage} companion={user} onClose={() => setBuyPackage(null)} />}
       {reporting && <ReportDialog reportedUser={user} onClose={() => setReporting(false)} />}
