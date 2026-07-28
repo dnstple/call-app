@@ -1250,3 +1250,85 @@ table.plain th { color: var(--color-text-secondary); font-weight: 600; }
   .call-bar .call-ctrl { width: 64px; height: 64px; }
 }
 /* post-call / left screen reuse standard page; nothing extra needed */
+
+/* ============================================================
+   Public landing page (Block 12). Apricot / ivory brand, built
+   only on the design-system tokens. No new libraries.
+   ============================================================ */
+.landing { background: var(--color-background); color: var(--color-text-primary); }
+.landing-container { width: 100%; max-width: 1080px; margin: 0 auto; padding: 0 var(--space-5); }
+
+/* Header */
+.landing-header { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--color-background) 88%, transparent); backdrop-filter: saturate(1.2) blur(8px); border-bottom: 1px solid var(--color-border); }
+.landing-header-row { display: flex; align-items: center; justify-content: space-between; min-height: 68px; }
+.landing-brand { display: inline-flex; align-items: center; gap: var(--space-2); text-decoration: none; color: var(--color-text-primary); }
+.landing-brand-mark { width: 32px; height: 32px; display: block; }
+.landing-brand-name { font-weight: 800; letter-spacing: -0.02em; font-size: 1.15em; }
+.landing-header-actions { display: flex; align-items: center; gap: var(--space-2); }
+
+/* Hero */
+.landing-hero { background: linear-gradient(180deg, var(--color-brand-subtle) 0%, var(--color-background) 100%); padding: var(--space-8) 0; }
+.landing-hero-inner { max-width: 760px; text-align: center; margin: 0 auto; }
+.landing-eyebrow { text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.78em; font-weight: 700; color: var(--color-brand-strong); margin: 0 0 var(--space-3); }
+.landing-hero h1 { font-size: clamp(2em, 1.3em + 3vw, 3.1em); }
+.landing-lede { font-size: clamp(1.05em, 1em + 0.4vw, 1.2em); color: var(--color-text-secondary); max-width: 620px; margin: var(--space-4) auto var(--space-5); }
+.landing-cta-row { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.landing-hero-inner .landing-cta-row, .landing-cta-center { justify-content: center; }
+.landing-fineprint { margin-top: var(--space-4); color: var(--color-text-muted); font-size: 0.9em; }
+
+/* Trust strip */
+.landing-trust { border-top: 1px solid var(--color-border); border-bottom: 1px solid var(--color-border); background: var(--color-surface); }
+.landing-trust-row { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-4) var(--space-6); padding: var(--space-4) var(--space-5); }
+.landing-trust-item { display: inline-flex; align-items: center; gap: var(--space-2); font-weight: 600; font-size: 0.95em; color: var(--color-text-secondary); }
+.landing-trust-item svg { color: var(--color-brand-strong); }
+
+/* Generic section */
+.landing-section { padding: var(--space-8) 0; }
+.landing-section-muted { background: var(--color-surface-muted); }
+.landing-section-brand { background: var(--color-brand-soft); }
+.landing-section-head { text-align: center; max-width: 640px; margin: 0 auto var(--space-6); }
+.landing-section-head p { color: var(--color-text-secondary); margin: 0; }
+.landing-center { text-align: center; max-width: 680px; margin: 0 auto; }
+.landing-center-icon { color: var(--color-brand-strong); margin-bottom: var(--space-3); }
+.landing-center-lede { color: var(--color-text-secondary); font-size: 1.05em; margin-bottom: var(--space-5); }
+
+/* How it works */
+.landing-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: 1fr; gap: var(--space-4); }
+.landing-steps .landing-step-num { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 50%; background: var(--color-brand); color: var(--color-text-primary); font-weight: 800; margin-bottom: var(--space-3); }
+.landing-steps p { color: var(--color-text-secondary); margin: 0; }
+
+/* Split rows */
+.landing-split { display: grid; grid-template-columns: 1fr; gap: var(--space-6); align-items: center; }
+.landing-split-text .section-label { margin-bottom: var(--space-2); }
+.landing-split-text p { color: var(--color-text-secondary); }
+.landing-ticks { list-style: none; margin: 0 0 var(--space-5); padding: 0; display: grid; gap: var(--space-2); }
+.landing-ticks li { display: flex; align-items: flex-start; gap: var(--space-2); color: var(--color-text-secondary); }
+.landing-ticks svg { color: var(--color-brand-strong); flex-shrink: 0; margin-top: 2px; }
+.landing-split-visual { display: flex; gap: var(--space-4); justify-content: center; align-items: center; padding: var(--space-7); background: var(--color-brand-subtle); border-radius: var(--radius-l); }
+.landing-split-visual svg { color: var(--color-brand-strong); }
+
+/* Safety grid + FAQ */
+.landing-safety-grid p { color: var(--color-text-secondary); margin: 0; }
+.landing-faq { max-width: 760px; margin: 0 auto; }
+.landing-faq-item { border: 1px solid var(--color-border); border-radius: var(--radius-m); background: var(--color-surface); padding: var(--space-4) var(--space-5); margin-bottom: var(--space-3); }
+.landing-faq-item summary { cursor: pointer; font-weight: 600; list-style: none; }
+.landing-faq-item summary::-webkit-details-marker { display: none; }
+.landing-faq-item summary::after { content: '+'; float: right; color: var(--color-brand-strong); font-weight: 800; }
+.landing-faq-item[open] summary::after { content: '–'; }
+.landing-faq-item p { margin: var(--space-3) 0 0; color: var(--color-text-secondary); }
+
+/* Final + footer */
+.landing-final { background: var(--color-brand-soft); }
+.landing-footer { background: var(--color-text-primary); color: var(--color-surface); padding: var(--space-6) 0; }
+.landing-footer-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); justify-content: space-between; }
+.landing-footer .landing-brand, .landing-footer .landing-brand-name { color: var(--color-surface); }
+.landing-footer-links { display: flex; gap: var(--space-5); }
+.landing-footer-links a { color: var(--color-surface); text-decoration: none; opacity: 0.85; }
+.landing-footer-links a:hover { opacity: 1; text-decoration: underline; }
+.landing-footer-note { width: 100%; margin: 0; color: color-mix(in srgb, var(--color-surface) 65%, transparent); font-size: 0.85em; }
+
+@media (min-width: 720px) {
+  .landing-steps { grid-template-columns: repeat(3, 1fr); }
+  .landing-split { grid-template-columns: 1.1fr 0.9fr; gap: var(--space-8); }
+  .landing-split-reverse .landing-split-text { order: 2; }
+}

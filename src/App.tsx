@@ -28,6 +28,7 @@ const InternalOperations = lazy(() => import('./pages/InternalOperations'));
 const InternalTrust = lazy(() => import('./pages/InternalTrust'));
 import Settings from './pages/Settings';
 import AvailabilityRates from './pages/AvailabilityRates';
+import LandingPage from './pages/LandingPage';
 import SignupWizard from './signup/SignupWizard';
 import { hasSeenSignup } from './signup/storage';
 import { EmptyState } from './components/ui';
@@ -79,6 +80,9 @@ function Protected({ children }: { children: ReactNode }) {
     );
   }
   if (auth.status === 'unauthenticated') {
+    // Signed-out visitors landing on the site root see the public marketing
+    // page; deep links still route to sign-in (preserving the return path).
+    if (location.pathname === '/') return <Navigate to="/welcome" replace />;
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
   if (auth.status === 'setup_pending' || auth.status === 'error') {
@@ -186,6 +190,10 @@ function AppRoutes() {
           </Suspense>
         }
       />
+
+      {/* Public marketing landing page — shown at the site root to signed-out
+          visitors; renders outside the app shell. Kept noindex,nofollow. */}
+      <Route path="/welcome" element={<LandingPage />} />
 
       {/* Sign-up wizard renders outside the main shell */}
       <Route path="/signup" element={<SignupWizard />} />
