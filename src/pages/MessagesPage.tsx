@@ -22,6 +22,7 @@ import {
 } from '../messaging/hooks';
 import {
   MESSAGE_MAX_LENGTH,
+  respondToIntroduction,
   respondToMessageRequest,
   type ChatMessage,
 } from '../repositories/messagingRepository';
@@ -502,6 +503,31 @@ function RequestStatePanel({ summary, viewer, threadUnavailable }: {
             </button>
           </>
         )}
+        {error && <p className="small" role="alert" style={{ color: 'var(--color-danger-text)', margin: 0 }}>{error}</p>}
+      </div>
+    );
+  }
+
+  // Member/Coordinator side receiving a COMPANION-initiated introduction
+  // (they did not send it): accept opens the thread, decline closes it.
+  if (!companionSide && summary.status === 'request_pending' && !summary.requestedByMe) {
+    const respondIntro = async (accept: boolean) => {
+      if (busy) return;
+      setBusy(true); setError(null);
+      try { await respondToIntroduction(summary.id, accept); announceMessagesChanged(); }
+      catch (e) { setError(e instanceof Error ? e.message : 'Something went wrong. Please try again.'); }
+      finally { setBusy(false); }
+    };
+    return (
+      <div className="msg-request-panel" role="group" aria-label="Introduction decision">
+        <p className="small" style={{ margin: 0 }}>
+          <strong>{summary.companionName}</strong> would like to say hello. Accept to reply, or
+          decline to close it.
+        </p>
+        <div className="row" style={{ gap: 8 }}>
+          <button className="btn btn-primary btn-small" disabled={busy} onClick={() => void respondIntro(true)}>Accept</button>
+          <button className="btn btn-secondary btn-small" disabled={busy} onClick={() => void respondIntro(false)}>Decline</button>
+        </div>
         {error && <p className="small" role="alert" style={{ color: 'var(--color-danger-text)', margin: 0 }}>{error}</p>}
       </div>
     );

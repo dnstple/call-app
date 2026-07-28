@@ -8,7 +8,7 @@ import { listMyPlans } from '../repositories/planRepository';
 import { SupabaseBookingRow } from './Conversations';
 import { isSupabaseConfigured } from '../supabase/client';
 import { CompanionPlanRequests, ConversationPlans } from '../components/PlanCards';
-import { CompanionFavouriteNote } from '../components/CompanionFavouriteNote';
+import { CompanionInterestedPanel } from '../components/CompanionInterestedPanel';
 import { useAppState } from '../state/store';
 import { useAccountRole } from '../state/managedMember';
 import {
@@ -336,7 +336,7 @@ export default function Home() {
         {/* Role-specific supporting info */}
         {isSupabaseConfigured() && me.role !== 'companion' && planActivity > 0 && <ConversationPlans />}
         {me.role === 'companion' && <CompanionAvailabilitySnapshot />}
-        {isSupabaseConfigured() && accountRole === 'companion' && <CompanionFavouriteNote />}
+        {isSupabaseConfigured() && accountRole === 'companion' && <CompanionInterestedPanel />}
       </div>
     );
   }
