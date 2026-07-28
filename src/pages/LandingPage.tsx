@@ -27,7 +27,7 @@ export default function LandingPage() {
       {/* 1 — Header */}
       <header className="landing-header">
         <div className="landing-container landing-header-row">
-          <Link to="/welcome" className="landing-brand" aria-label={`${APP_NAME} home`}>
+          <Link to="/" className="landing-brand" aria-label={`${APP_NAME} home`}>
             <img src="/icon.svg" alt="" className="landing-brand-mark" />
             <span className="landing-brand-name">{APP_NAME}</span>
           </Link>

@@ -80,9 +80,10 @@ function Protected({ children }: { children: ReactNode }) {
     );
   }
   if (auth.status === 'unauthenticated') {
-    // Signed-out visitors landing on the site root see the public marketing
-    // page; deep links still route to sign-in (preserving the return path).
-    if (location.pathname === '/') return <Navigate to="/welcome" replace />;
+    // The site root IS the public marketing page for signed-out visitors —
+    // rendered directly (no shell, no protected data). Deep links still route
+    // to sign-in, preserving the return path.
+    if (location.pathname === '/') return <LandingPage />;
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
   if (auth.status === 'setup_pending' || auth.status === 'error') {
@@ -191,9 +192,9 @@ function AppRoutes() {
         }
       />
 
-      {/* Public marketing landing page — shown at the site root to signed-out
-          visitors; renders outside the app shell. Kept noindex,nofollow. */}
-      <Route path="/welcome" element={<LandingPage />} />
+      {/* Legacy marketing URL → the canonical public root. The landing page
+          itself renders at `/` for signed-out visitors (see Protected). */}
+      <Route path="/welcome" element={<Navigate to="/" replace />} />
 
       {/* Sign-up wizard renders outside the main shell */}
       <Route path="/signup" element={<SignupWizard />} />
