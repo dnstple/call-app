@@ -941,6 +941,25 @@ function PackagesStep({
   const [custom, setCustom] = useState<Omit<PackageDraft, 'id'>>({
     title: 'Custom package', count: 4, durationMins: 30, price: '40.00', validityDays: 42, recurring: false,
   });
+  // When set, the custom form edits this existing package in place instead of
+  // adding a new one — so a companion can adjust a package without deleting it.
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  function startEditPackage(p: PackageDraft) {
+    setCustom({ title: p.title, count: p.count, durationMins: p.durationMins, price: p.price, validityDays: p.validityDays, recurring: p.recurring });
+    setEditingId(p.id);
+    setShowCustom(true);
+  }
+
+  function saveCustomPackage() {
+    if (editingId) {
+      patch({ packages: data.packages.map((x) => (x.id === editingId ? { ...custom, id: editingId } : x)) });
+    } else {
+      patch({ packages: [...data.packages, { ...custom, id: newId('pkgd') }] });
+    }
+    setEditingId(null);
+    setShowCustom(false);
+  }
 
   const has = (title: string) => data.packages.some((p) => p.title === title);
   function toggleSuggested(s: Omit<PackageDraft, 'id'>) {
@@ -982,12 +1001,15 @@ function PackagesStep({
         </button>
       ))}
 
-      <button className="btn btn-ghost btn-small" style={{ alignSelf: 'flex-start' }} onClick={() => setShowCustom(!showCustom)}>
-        {showCustom ? 'Hide custom package' : 'Create a custom package'}
-      </button>
+      {!showCustom && (
+        <button className="btn btn-ghost btn-small" style={{ alignSelf: 'flex-start' }} onClick={() => { setEditingId(null); setShowCustom(true); }}>
+          Create a custom package
+        </button>
+      )}
 
       {showCustom && (
         <div className="card card-muted col reveal" style={{ gap: 12 }}>
+          <h4 style={{ margin: 0 }}>{editingId ? 'Edit package' : 'New package'}</h4>
           <FormField id="su-pkg-title" label="Package name" value={custom.title} onChange={(v) => setCustom({ ...custom, title: v })} />
           <div className="grid-2" style={{ gap: 12 }}>
             <div className="field" style={{ marginBottom: 0 }}>
@@ -1007,13 +1029,14 @@ function PackagesStep({
             </div>
           </div>
           <Switch label="Recurring" description="Intended to repeat, rather than a one-off bundle" checked={custom.recurring} onChange={(v) => setCustom({ ...custom, recurring: v })} />
-          <button
-            className="btn btn-secondary btn-small"
-            style={{ alignSelf: 'flex-start' }}
-            onClick={() => patch({ packages: [...data.packages, { ...custom, id: newId('pkgd') }] })}
-          >
-            <Plus size={16} aria-hidden="true" /> Add this package
-          </button>
+          <div className="row" style={{ gap: 10 }}>
+            <button className="btn btn-secondary btn-small" style={{ alignSelf: 'flex-start' }} onClick={saveCustomPackage}>
+              <Plus size={16} aria-hidden="true" /> {editingId ? 'Save package' : 'Add this package'}
+            </button>
+            <button className="btn btn-ghost btn-small" onClick={() => { setEditingId(null); setShowCustom(false); }}>
+              Cancel
+            </button>
+          </div>
         </div>
       )}
 
@@ -1026,9 +1049,12 @@ function PackagesStep({
                 <span className="bold">{p.title}</span>{' '}
                 <span className="faint">· {p.count} × {p.durationMins} mins · £{p.price}</span>
               </span>
-              <button className="icon-btn" aria-label={`Remove ${p.title}`} onClick={() => patch({ packages: data.packages.filter((x) => x.id !== p.id) })}>
-                <Trash2 size={18} aria-hidden="true" />
-              </button>
+              <span className="row" style={{ gap: 6 }}>
+                <button className="btn btn-ghost btn-small" onClick={() => startEditPackage(p)}>Edit</button>
+                <button className="icon-btn" aria-label={`Remove ${p.title}`} onClick={() => { if (editingId === p.id) { setEditingId(null); setShowCustom(false); } patch({ packages: data.packages.filter((x) => x.id !== p.id) }); }}>
+                  <Trash2 size={18} aria-hidden="true" />
+                </button>
+              </span>
             </div>
           ))}
         </div>
