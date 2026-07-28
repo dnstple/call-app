@@ -47,10 +47,11 @@ import { isSupabaseMode } from '../config/dataMode';
 import { useAuth } from '../auth/AuthProvider';
 import { AuthAppError } from '../auth/authErrors';
 
-/** Member self-signup is out of the primary product flow (managed Members
- * have no login). Kept as a flag, not deleted — the schema still supports
- * linking a Member account later. */
-const MEMBER_SELF_SIGNUP_ENABLED = false;
+/** Self-arranging Members ARE part of the primary flow: someone can set up
+ * companionship for themselves, managing their own account and bookings. The
+ * flag remains so the choice can be withdrawn again without deleting the
+ * (fully-wired) member step sequence and completion path. */
+const MEMBER_SELF_SIGNUP_ENABLED = true;
 
 const SAMPLE_BIO =
   'I grew up around here and love hearing how the area has changed. I enjoy long walks, old films and a proper natter about anything from family recipes to famous matches. I’m a patient listener and I always keep an eye on the time so calls end when you want them to.';
@@ -352,8 +353,8 @@ export default function SignupWizard() {
               ...(MEMBER_SELF_SIGNUP_ENABLED ? [{
                 role: 'member' as Role,
                 Icon: MessagesSquare,
-                title: 'I would like someone to talk with',
-                text: 'Find a friendly Companion for regular conversations through the app.',
+                title: 'I would like to arrange conversations for myself',
+                text: 'Set up your own regular companionship — you manage your own account and bookings.',
               }] : []),
             ]).map(({ role, Icon, title, text }) => (
               <button

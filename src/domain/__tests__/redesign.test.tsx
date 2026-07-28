@@ -105,8 +105,9 @@ describe('role-based navigation', () => {
     expect(SHELL_SRC).toMatch(/access_role === 'owner'/);
   });
 
-  it('member signup path is removed from the primary chooser (flagged, not deleted)', () => {
-    expect(SIGNUP_SRC).toContain('MEMBER_SELF_SIGNUP_ENABLED = false');
+  it('self-arranging Member is the third primary signup choice (flag enabled)', () => {
+    expect(SIGNUP_SRC).toContain('MEMBER_SELF_SIGNUP_ENABLED = true');
+    expect(SIGNUP_SRC).toContain('arrange conversations for myself');
   });
 
   it('old /plans routes redirect into the unified Conversations family', () => {
