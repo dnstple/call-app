@@ -1,8 +1,8 @@
 /**
  * Availability & rates editor (Supabase mode, Companions).
  * Recurring weekly windows, time off / one-off availability, scheduling
- * settings and conversation offers with fee previews. Payments are NOT
- * enabled yet — prices persist for when booking arrives.
+ * settings and conversation offers with fee previews. Prices are what people
+ * pay when they book a conversation.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -25,20 +25,40 @@ import {
 import type { AvailabilityExceptionRow, ConversationOfferRow } from '../supabase/database.types';
 
 const DAYS = [1, 2, 3, 4, 5, 6, 7];
-const NOTICE_OPTIONS = [0, 6, 12, 24, 48, 72];
+// Minimum-notice choices, stored as whole hours (backend-compatible):
+// No minimum, 1h…12h, then 1/2/3 days and 1 week.
+export const NOTICE_OPTIONS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 24, 48, 72, 168];
 const HORIZON_OPTIONS = [14, 30, 60, 90];
+
+/** Human label for a minimum-notice value expressed in hours. */
+export function noticeLabel(hours: number): string {
+  if (hours <= 0) return 'No minimum';
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'}`;
+  if (hours === 168) return '1 week';
+  const days = hours / 24;
+  return `${days} day${days === 1 ? '' : 's'}`;
+}
 
 export default function AvailabilityRates() {
   const auth = useAuth();
   const navigate = useNavigate();
-  const active = auth.profiles.find((p) => p.profile.id === auth.activeProfileId);
+  const supabase = isSupabaseMode();
+  // Role/access is only authoritative once auth resolves to 'authenticated'
+  // (the provider sets that state only after profiles have loaded). Until then
+  // we must not judge access, or a mid-load render flashes a false rejection.
+  const authoritative = !supabase || auth.status === 'authenticated';
+  const active =
+    auth.profiles.find((p) => p.profile.id === auth.activeProfileId) ??
+    // activeProfileId can briefly lag a fresh sign-up or hard refresh; fall
+    // back to an editable Companion profile the account already holds.
+    auth.profiles.find((p) => p.profile.role === 'companion' && p.access.can_edit);
   const profileId = active?.profile.id ?? '';
-  const allowed =
-    isSupabaseMode() && active?.profile.role === 'companion' && active.access.can_edit;
+  const allowed = supabase && active?.profile.role === 'companion' && !!active.access.can_edit;
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   const [timezone, setTimezone] = useState(browserTimezone());
   const [windows, setWindows] = useState<WindowInput[]>([]);
@@ -60,6 +80,8 @@ export default function AvailabilityRates() {
   useEffect(() => {
     if (!allowed || !profileId) return;
     let live = true;
+    setLoading(true);
+    setError(null);
     (async () => {
       try {
         const [rules, settings, exc, offs, commission] = await Promise.all([
@@ -97,7 +119,7 @@ export default function AvailabilityRates() {
     return () => {
       live = false;
     };
-  }, [allowed, profileId]);
+  }, [allowed, profileId, reloadKey]);
 
   // Unsaved-change warning.
   useEffect(() => {
@@ -109,11 +131,23 @@ export default function AvailabilityRates() {
     return () => window.removeEventListener('beforeunload', handler);
   }, [dirty]);
 
+  // Wait for the authoritative role before deciding anything. A signed-in
+  // account whose profiles are still loading sees a neutral skeleton, never a
+  // false "this isn't your page" rejection.
+  if (supabase && !authoritative) {
+    return (
+      <div className="row" style={{ justifyContent: 'center', padding: 64 }}>
+        <Loader2 size={26} aria-hidden="true" />
+        <span className="muted">Loading your availability…</span>
+      </div>
+    );
+  }
+
   if (!allowed) {
     return (
       <div className="empty-state">
-        <h3>Availability & rates</h3>
-        <p>This page is for Companion profiles you can edit, in Supabase mode.</p>
+        <h3>Availability &amp; rates</h3>
+        <p>This page is for Companions. Switch to your Companion profile to set your availability and rates.</p>
         <button className="btn btn-secondary" onClick={() => navigate('/')}>Go home</button>
       </div>
     );
@@ -211,7 +245,14 @@ export default function AvailabilityRates() {
         subtitle="When are you usually available for conversations, and what do you charge?"
       />
 
-      {error && <div className="banner banner-danger mb-4" role="alert">{error}</div>}
+      {error && (
+        <div className="banner banner-danger mb-4" role="alert">
+          <div className="row between wrap" style={{ gap: 12 }}>
+            <span>{error}</span>
+            <button className="btn btn-secondary btn-small" onClick={() => setReloadKey((k) => k + 1)}>Try again</button>
+          </div>
+        </div>
+      )}
 
       {/* ---------- Weekly availability ---------- */}
       <section className="card">
@@ -293,7 +334,7 @@ export default function AvailabilityRates() {
             <label htmlFor="av-notice">Minimum notice</label>
             <select id="av-notice" value={notice} onChange={(e) => setNotice(Number(e.target.value))}>
               {NOTICE_OPTIONS.map((n) => (
-                <option key={n} value={n}>{n === 0 ? 'No minimum' : `${n} hours`}</option>
+                <option key={n} value={n}>{noticeLabel(n)}</option>
               ))}
             </select>
           </div>
