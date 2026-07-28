@@ -731,7 +731,7 @@ export default function SignupWizard() {
         {step === 'notifications' && (
           <SignupStep
             title="How should we remind you?"
-            intro="Delivery methods are simulated in this prototype."
+            intro="Choose how you'd like to hear about upcoming conversations. You can change this any time in Settings."
             onBack={back}
             onNext={next}
             error={error}
@@ -753,7 +753,7 @@ export default function SignupWizard() {
         {step === 'notifRouting' && (
           <SignupStep
             title="Who should hear about what?"
-            intro="You can route each update to yourself, to them, or to both. Delivery is simulated in the prototype."
+            intro="You can route each update to yourself, to them, or to both."
             onBack={back}
             onNext={next}
             error={error}
@@ -884,7 +884,7 @@ function PricingStep({
   return (
     <SignupStep
       title="Your pricing"
-      intro="You decide what to charge for a 30-minute conversation. Payments are simulated in this prototype."
+      intro="You decide what to charge for a 30-minute conversation. You can change this any time."
       onBack={onBack}
       onNext={onNext}
       error={error}
