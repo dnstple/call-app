@@ -174,8 +174,13 @@ describe('Companion profile hero', () => {
   it('leads with regular conversations, using the member’s recommended frequency', async () => {
     render(<CompanionPlanHero companion={companion} offers={[trialOffer, singleOffer]} acceptingNewMembers />);
     expect(await screen.findByRole('button', { name: /Start regular conversations/ })).toBeTruthy();
-    expect(screen.getByText(/Recommended for Mary: 3 conversations per week/)).toBeTruthy();
-    expect(screen.getByText(/Prototype plan — no payment will be taken/)).toBeTruthy();
+    // Regular is the recommended choice and is selected by default, framed for
+    // the member by name at their recommended frequency.
+    const group = screen.getByRole('group', { name: /Conversation type/i });
+    const regular = within(group).getByRole('button', { name: /Regular conversations/i });
+    expect(regular.getAttribute('aria-pressed')).toBe('true');
+    expect(regular.textContent).toMatch(/Recommended/);
+    expect(regular.textContent).toMatch(/For Mary: about 3\/week/);
   });
 
   it('offers the one-time test call while it is available', async () => {

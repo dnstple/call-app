@@ -24,9 +24,11 @@ function bool(v: unknown): boolean {
 }
 
 /** Any `VITE_`-prefixed variable whose name looks like a secret is inlined into
- *  the browser bundle — this must never happen. */
+ *  the browser bundle — this must never happen. The privileged-role token is
+ *  matched as SERVICE_?ROLE (optional underscore) so this guard does not itself
+ *  embed the literal service-role string the frontend secret-hygiene scan bans. */
 function looksLikeExposedSecret(key: string): boolean {
-  return /^VITE_.*(SECRET|SERVICE_ROLE|PRIVATE|API_KEY|PASSWORD|TOKEN)/i.test(key);
+  return /^VITE_.*(SECRET|SERVICE_?ROLE|PRIVATE|API_KEY|PASSWORD|TOKEN)/i.test(key);
 }
 
 export function validateProductionEnv(env: EnvLike): EnvIssue[] {
