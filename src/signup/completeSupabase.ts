@@ -7,6 +7,7 @@ import { getSupabaseClient } from '../supabase/client';
 import { mapAuthError } from '../auth/authErrors';
 import type { SignupData } from './types';
 import type { CreatedAccounts } from './complete';
+import { uploadAvatar } from '../repositories/profileRepository';
 import {
   createOffer,
   poundsToMinor,
@@ -111,6 +112,7 @@ export async function completeSupabaseSignup(data: SignupData): Promise<CreatedA
   if (role === 'member') {
     const { data: profile, error } = await client.rpc('complete_member_signup', buildMemberPayload(data));
     if (error) throw friendly(error);
+    await applySignupPhoto(profile.id, data);
     return { primaryId: profile.id };
   }
 
@@ -126,13 +128,50 @@ export async function completeSupabaseSignup(data: SignupData): Promise<CreatedA
     } catch {
       markSetupIncomplete(profile.id);
     }
+    await applySignupPhoto(profile.id, data);
     return { primaryId: profile.id };
   }
 
   const { data: result, error } = await client.rpc('complete_coordinator_signup', buildCoordinatorPayload(data));
   if (error) throw friendly(error);
   const r = result as { member_profile_id: string; coordinator_profile_id: string };
+  // The "About you" photo belongs to the coordinator's own profile.
+  await applySignupPhoto(r.coordinator_profile_id, data);
   return { primaryId: r.coordinator_profile_id, memberId: r.member_profile_id };
+}
+
+/** Decode the wizard's base64 data-URL photo into a File for upload. */
+export function dataUrlToFile(dataUrl: string, name = 'signup-avatar'): File | null {
+  const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(dataUrl.trim());
+  if (!match) return null;
+  const mime = match[1];
+  let binary: string;
+  try {
+    binary = atob(match[2]);
+  } catch {
+    return null;
+  }
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const ext = mime === 'image/png' ? 'png' : mime === 'image/webp' ? 'webp' : 'jpg';
+  return new File([bytes], `${name}.${ext}`, { type: mime });
+}
+
+/**
+ * Persist the profile photo chosen in the wizard as the new profile's avatar.
+ * The avatar is non-critical and fully editable later, so a failure here never
+ * blocks signup — it is swallowed rather than surfaced or left as a broken
+ * pointer (uploadAvatar itself cleans up on partial failure).
+ */
+async function applySignupPhoto(profileId: string, data: SignupData): Promise<void> {
+  if (!data.photoDataUrl) return;
+  const file = dataUrlToFile(data.photoDataUrl);
+  if (!file) return;
+  try {
+    await uploadAvatar(profileId, file);
+  } catch {
+    // Avatar is optional; the person can add it later in their profile.
+  }
 }
 
 /* ---------------- Companion setup (Stage 2C2) ---------------- */
