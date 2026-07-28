@@ -1251,6 +1251,12 @@ table.plain th { color: var(--color-text-secondary); font-weight: 600; }
 }
 /* post-call / left screen reuse standard page; nothing extra needed */
 
+/* Shared Regular / One-off booking selector (one selector, two choices).
+   Stacks on narrow screens (works at 390px), two columns above 560px. */
+.booking-type-group { display: grid; grid-template-columns: 1fr; gap: var(--space-3); }
+@media (min-width: 560px) { .booking-type-group { grid-template-columns: 1fr 1fr; } }
+.booking-type-option { gap: 4px; text-align: left; align-items: stretch; }
+
 /* ============================================================
    Public landing page (Block 12). Apricot / ivory brand, built
    only on the design-system tokens. No new libraries.

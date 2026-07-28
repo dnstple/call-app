@@ -269,6 +269,7 @@ export default function ProfileDetail() {
           companion={user}
           offers={realOffers}
           acceptingNewMembers={getMarketMeta(user.id)?.acceptingNewMembers !== false}
+          onBookOneOff={() => setRealBooking(true)}
         />
       )}
 
@@ -348,44 +349,19 @@ export default function ProfileDetail() {
         </section>
       )}
 
-      {/* One-off conversations: deliberately quiet, below the plan. */}
+      {/* Regular & one-off now share ONE selector inside the hero above. This
+          quiet reveal exposes the Companion's prepaid package bundles, which
+          belong with the recurring/regular flow. */}
       {supabase && user.role === 'companion' && realOffers.some((o) => o.offer_type === 'single') && (
         <section className="section-tight">
-          <h2>Prefer a single conversation?</h2>
-          <p className="muted" style={{ marginTop: 0 }}>
-            Most people arrange regular conversations, but you can also book a one-off.
-          </p>
-          <div className="grid-2">
-            {realOffers
-              .filter((o) => o.offer_type === 'single')
-              .map((o) =>
-                canBookReal ? (
-                  // The tile itself opens the full booking flow (all options).
-                  <button
-                    key={o.id}
-                    className="card card-tight card-click row between wrap"
-                    style={{ textAlign: 'left' }}
-                    onClick={() => setRealBooking(true)}
-                    aria-label={`Book a ${o.duration_minutes}-minute conversation with ${user.firstName}`}
-                  >
-                    <div className="faint">{o.duration_minutes}-minute conversation</div>
-                    <span className="bold">{formatMinor(o.price_minor)}</span>
-                  </button>
-                ) : (
-                  <div key={o.id} className="card card-tight row between wrap">
-                    <div className="faint">{o.duration_minutes}-minute conversation</div>
-                    <span className="bold">{formatMinor(o.price_minor)}</span>
-                  </div>
-                ),
-              )}
-          </div>
           {!showPackages ? (
-            <button className="btn btn-ghost btn-small mt-4" onClick={() => setShowPackages(true)}>
-              See more
+            <button className="btn btn-ghost btn-small" onClick={() => setShowPackages(true)}>
+              See conversation packages
             </button>
           ) : (
-            /* "See more" reveals the Companion's package bundles too. */
-            <div className="mt-4">
+            <div>
+              <h2>Conversation packages</h2>
+              <p className="muted" style={{ marginTop: 0 }}>Prepaid bundles you can buy up front.</p>
               <PublicPackages companion={user} />
               {canBookReal && (
                 <button className="btn btn-primary btn-small mt-2" onClick={() => setRealBooking(true)}>
@@ -394,7 +370,6 @@ export default function ProfileDetail() {
               )}
             </div>
           )}
-          <p className="faint mt-2">No payment will be taken yet.</p>
         </section>
       )}
 

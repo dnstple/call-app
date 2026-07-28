@@ -28,10 +28,13 @@ export function CompanionPlanHero({
   companion,
   offers,
   acceptingNewMembers,
+  onBookOneOff = () => undefined,
 }: {
   companion: User;
   offers: ConversationOfferRow[];
   acceptingNewMembers: boolean;
+  /** Opens the existing one-off booking flow (SupabaseBookingWizard). */
+  onBookOneOff?: () => void;
 }) {
   const auth = useAuthSnapshot();
 
@@ -51,6 +54,9 @@ export function CompanionPlanHero({
   const [loading, setLoading] = useState(true);
   const [planOpen, setPlanOpen] = useState(false);
   const [trialOpen, setTrialOpen] = useState(false);
+  // Shared booking-type selector: Regular is the recommended default; One-off
+  // is the secondary choice. Trial is offered separately (above) while eligible.
+  const [bookingType, setBookingType] = useState<'regular' | 'oneoff'>('regular');
 
   const trialOffer = offers.find((o) => o.offer_type === 'trial' && o.active) ?? null;
   const singleOffers = offers.filter((o) => o.offer_type === 'single' && o.active);
@@ -115,6 +121,11 @@ export function CompanionPlanHero({
 
   const canPlan = singleOffers.length > 0 && acceptingNewMembers && !plan;
   const showTrialCard = trial !== 'used' && trialOffer !== null && acceptingNewMembers && !plan;
+  // Cheapest single offer, for the "from £X" hint on the one-off option.
+  const cheapestSingleMinor = singleOffers.reduce(
+    (min, o) => Math.min(min, o.price_minor), Number.POSITIVE_INFINITY,
+  );
+  const oneOffFromLabel = Number.isFinite(cheapestSingleMinor) ? formatMinor(cheapestSingleMinor) : null;
 
   return (
     <div className="col mt-4" style={{ gap: 12 }}>
@@ -177,25 +188,54 @@ export function CompanionPlanHero({
           <span className="faint">See your plan and next conversation on your home page.</span>
         </div>
       ) : canPlan ? (
-        <div className="card card-feature col" style={{ gap: 10 }} aria-label="Start regular conversations">
+        <div className="card card-feature col" style={{ gap: 12 }} aria-label="Book a conversation">
           <div className="col" style={{ gap: 4 }}>
-            <h2 style={{ margin: 0, fontSize: '1.15em' }}>
-              Start regular conversations with {companion.firstName}
-            </h2>
-            <p className="muted" style={{ margin: 0 }}>
-              A weekly rhythm at times that suit {member.first_name} — same companion, every week.
-            </p>
-            <p className="faint" style={{ margin: 0 }}>
-              Recommended for {member.first_name}: {recommended} conversation
-              {recommended === 1 ? '' : 's'} per week · from {PLAN_FREQUENCY_MIN} per week
-            </p>
+            <h2 style={{ margin: 0, fontSize: '1.15em' }}>Book a conversation with {companion.firstName}</h2>
+            <p className="muted" style={{ margin: 0 }}>Choose how you’d like to talk with {companion.firstName}.</p>
           </div>
-          <button className="btn btn-primary" style={{ alignSelf: 'flex-start' }} onClick={() => setPlanOpen(true)}>
-            Start regular conversations
-          </button>
-          <span className="faint longform">
-            {IN_APP_CALL_EXPLAINER} Prototype plan — no payment will be taken.
-          </span>
+
+          {/* One selector, two clear choices. Regular is recommended and
+              selected by default; one-off is secondary but plainly available. */}
+          <div className="booking-type-group" role="group" aria-label="Conversation type">
+            <button
+              type="button"
+              className="card card-tight card-selectable col booking-type-option"
+              aria-pressed={bookingType === 'regular'}
+              onClick={() => setBookingType('regular')}
+            >
+              <span className="row between" style={{ gap: 8 }}>
+                <span className="bold">Regular conversations</span>
+                <span className="badge badge-success">Recommended</span>
+              </span>
+              <span className="faint">
+                Same companion, a weekly rhythm. For {member.first_name}: about {recommended}/week
+                {' '}· from {PLAN_FREQUENCY_MIN} per week.
+              </span>
+            </button>
+            <button
+              type="button"
+              className="card card-tight card-selectable col booking-type-option"
+              aria-pressed={bookingType === 'oneoff'}
+              onClick={() => setBookingType('oneoff')}
+            >
+              <span className="bold">One-off conversation</span>
+              <span className="faint">
+                A single conversation, no ongoing commitment
+                {oneOffFromLabel ? ` · from ${oneOffFromLabel}` : ''}.
+              </span>
+            </button>
+          </div>
+
+          {bookingType === 'regular' ? (
+            <button className="btn btn-primary" style={{ alignSelf: 'flex-start' }} onClick={() => setPlanOpen(true)}>
+              Start regular conversations
+            </button>
+          ) : (
+            <button className="btn btn-primary" style={{ alignSelf: 'flex-start' }} onClick={onBookOneOff}>
+              Book a one-off conversation
+            </button>
+          )}
+          <span className="faint longform">{IN_APP_CALL_EXPLAINER}</span>
         </div>
       ) : (
         acceptingNewMembers && (
