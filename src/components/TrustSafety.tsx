@@ -4,7 +4,7 @@
  * server RPCs in trustRepository; none holds authority logic. Copy is neutral
  * and pilot-appropriate.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Flag, Shield, ShieldOff } from 'lucide-react';
 import {
   acknowledgeConsent, getMyConsentStatus, reportConcern, createBlock, removeBlock,
@@ -214,49 +214,118 @@ export function BlockControl({ memberProfileId, companionProfileId, initiallyBlo
 
 export function NotificationPreferencesPanel() {
   const [prefs, setPrefs] = useState<NotificationPreferences | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // Remember the last change so an error can be retried without losing intent.
+  const lastPatch = useRef<Partial<NotificationPreferences> | null>(null);
+  const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    (async () => {
-      try { setPrefs(await getMyNotificationPreferences()); }
-      catch (e) { setError(e instanceof Error ? e.message : 'Could not load your preferences.'); }
-    })();
-  }, []);
+  const load = async () => {
+    setLoadError(null);
+    try { setPrefs(await getMyNotificationPreferences()); }
+    catch (e) { setLoadError(e instanceof Error ? e.message : 'Could not load your preferences.'); }
+  };
+
+  useEffect(() => { void load(); }, []);
+  useEffect(() => () => { if (savedTimer.current) clearTimeout(savedTimer.current); }, []);
 
   const update = async (patch: Partial<NotificationPreferences>) => {
     if (!prefs) return;
+    lastPatch.current = patch;
     const next = { ...prefs, ...patch };
-    setPrefs(next); setBusy(true); setError(null);
-    try { await setMyNotificationPreferences(next); }
-    catch (e) { setError(e instanceof Error ? e.message : 'Could not save.'); }
-    finally { setBusy(false); }
+    setPrefs(next);
+    setStatus('saving');
+    setError(null);
+    try {
+      await setMyNotificationPreferences(next);
+      setStatus('saved');
+      if (savedTimer.current) clearTimeout(savedTimer.current);
+      savedTimer.current = setTimeout(() => setStatus('idle'), 2000);
+    } catch (e) {
+      setStatus('error');
+      setError(e instanceof Error ? e.message : 'Could not save your change.');
+    }
   };
 
+  const retry = () => { if (lastPatch.current) void update(lastPatch.current); };
+
+  const busy = status === 'saving';
+
+  if (loadError) {
+    return (
+      <section className="card">
+        <h2 style={{ marginTop: 0 }}>Email notifications</h2>
+        <div className="banner banner-danger mt-2" role="alert">{loadError}</div>
+        <button className="btn btn-secondary btn-small mt-2" onClick={() => void load()}>Try again</button>
+      </section>
+    );
+  }
   if (!prefs) return null;
-  const row = (label: string, key: keyof NotificationPreferences, disabled = false) => (
-    <div className="switch-row">
-      <span>{label}</span>
-      <span className="switch">
-        <input type="checkbox" checked={prefs[key]} disabled={busy || disabled}
+
+  const row = (
+    label: string,
+    description: string,
+    key: keyof NotificationPreferences,
+    disabled = false,
+  ) => (
+    <label className="switch-row" style={{ alignItems: 'flex-start', gap: 'var(--space-4)' }}>
+      <span className="col" style={{ gap: 2 }}>
+        <span className="bold">{label}</span>
+        <span className="faint small">{description}</span>
+      </span>
+      <span className="switch" style={{ flexShrink: 0, marginTop: 2 }}>
+        <input
+          type="checkbox"
+          checked={Boolean(prefs[key])}
+          disabled={busy || disabled}
           aria-label={label}
-          onChange={(e) => void update({ [key]: e.target.checked } as Partial<NotificationPreferences>)} />
+          onChange={(e) => void update({ [key]: e.target.checked } as Partial<NotificationPreferences>)}
+        />
         <span className="track" />
       </span>
-    </div>
+    </label>
   );
+
   return (
-    <section>
-      <h2>Email notifications</h2>
-      <p className="muted small mt-2">In-app notifications always stay on. Email is optional.</p>
-      {error && <div className="banner banner-danger mt-2" role="alert">{error}</div>}
-      <div className="settings-group mt-2" style={{ padding: '0 var(--space-5)' }}>
-        {row('Email me notifications', 'email_enabled')}
-        <div style={prefs.email_enabled ? undefined : { pointerEvents: 'none', opacity: 0.5 }}>
-          {row('Messages', 'email_messages', !prefs.email_enabled)}
-          {row('Bookings & reminders', 'email_bookings', !prefs.email_enabled)}
-          {row('Billing & payments', 'email_billing', !prefs.email_enabled)}
-          {row('Safety & support', 'email_safety', !prefs.email_enabled)}
+    <section className="card">
+      <div className="row between" style={{ alignItems: 'flex-start' }}>
+        <div>
+          <h2 style={{ marginTop: 0, marginBottom: 4 }}>Email notifications</h2>
+          <p className="muted small" style={{ margin: 0 }}>
+            In-app notifications always stay on. Choose what we also email you about.
+          </p>
+        </div>
+        <span className="faint small" aria-live="polite" style={{ flexShrink: 0, minWidth: 60, textAlign: 'right' }}>
+          {status === 'saving' ? 'Saving…' : status === 'saved' ? 'Saved' : ''}
+        </span>
+      </div>
+
+      {status === 'error' && (
+        <div className="banner banner-danger mt-4" role="alert">
+          <div className="row between wrap" style={{ gap: 'var(--space-3)' }}>
+            <span>{error}</span>
+            <button className="btn btn-secondary btn-small" onClick={retry}>Try again</button>
+          </div>
+        </div>
+      )}
+
+      <div className="stack-list mt-4">
+        {row(
+          'Email me notifications',
+          'The master switch. Turn this off to pause all email — the categories below stay as you set them.',
+          'email_enabled',
+        )}
+        <div
+          aria-hidden={!prefs.email_enabled}
+          style={prefs.email_enabled ? undefined : { opacity: 0.5 }}
+        >
+          <div className="stack-list">
+            {row('Messages', 'New messages from the people you talk with.', 'email_messages', !prefs.email_enabled)}
+            {row('Bookings & reminders', 'Requests, confirmations, changes and upcoming-conversation reminders.', 'email_bookings', !prefs.email_enabled)}
+            {row('Billing & payments', 'Receipts, upcoming charges and payment issues.', 'email_billing', !prefs.email_enabled)}
+            {row('Safety & support', 'Updates on concerns you raise and important account-safety notices.', 'email_safety', !prefs.email_enabled)}
+          </div>
         </div>
       </div>
     </section>
