@@ -466,7 +466,7 @@ export default function SignupWizard() {
                       reader.readAsDataURL(file);
                     }}
                   />
-                  <span className="hint">Stored only on this device — nothing is uploaded in the prototype.</span>
+                  <span className="hint">Kept on this device until you finish signing up.</span>
                   {data.photoDataUrl && (
                     <button className="btn btn-ghost btn-small" style={{ alignSelf: 'flex-start' }} onClick={() => patch({ photoDataUrl: '' })}>
                       Remove photo
@@ -523,14 +523,46 @@ export default function SignupWizard() {
         {step === 'permission' && (
           <SignupStep
             title="A quick check first"
-            intro="These are prototype confirmations, not final legal consent documents."
+            intro="Please confirm each of these before we set up the profile."
             onBack={back}
             onNext={next}
             error={error}
           >
-            <Switch label={`${data.memberFirstName || 'They'} know${data.memberFirstName ? 's' : ''} this profile is being created`} checked={data.permKnows} onChange={(v) => patch({ permKnows: v })} />
-            <Switch label={`${data.memberFirstName || 'They'} ${data.memberFirstName ? 'has' : 'have'} agreed to receive conversations`} checked={data.permAgreed} onChange={(v) => patch({ permAgreed: v })} />
-            <Switch label="I have permission to manage the bookings" checked={data.permManage} onChange={(v) => patch({ permManage: v })} />
+            {(() => {
+              // Each item starts unchecked, is individually toggleable, and is
+              // required. "Confirm all" is a convenience only — it never
+              // pre-selects on the user's behalf before they act.
+              const items = [
+                { key: 'permKnows' as const, label: `${data.memberFirstName || 'They'} know${data.memberFirstName ? 's' : ''} this profile is being created` },
+                { key: 'permAgreed' as const, label: `${data.memberFirstName || 'They'} ${data.memberFirstName ? 'has' : 'have'} agreed to receive conversations` },
+                { key: 'permManage' as const, label: 'I have permission to manage the bookings' },
+              ];
+              const allChecked = items.every((i) => data[i.key]);
+              return (
+                <>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-small"
+                    style={{ alignSelf: 'flex-start' }}
+                    aria-pressed={allChecked}
+                    disabled={allChecked}
+                    onClick={() => patch({ permKnows: true, permAgreed: true, permManage: true })}
+                  >
+                    Confirm all
+                  </button>
+                  {items.map((i) => (
+                    <div key={i.key} className="col" style={{ gap: 4 }}>
+                      <Switch label={i.label} checked={data[i.key]} onChange={(v) => patch({ [i.key]: v })} />
+                      {attempted && !data[i.key] && (
+                        <span className="faint" role="alert" style={{ color: 'var(--color-danger-text)' }}>
+                          Please confirm this to continue.
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </>
+              );
+            })()}
           </SignupStep>
         )}
 
@@ -766,7 +798,7 @@ export default function SignupWizard() {
         {step === 'trust' && (
           <SignupStep
             title="Trust and expectations"
-            intro="Prototype wording — not final legal documentation."
+            intro="A few shared expectations that keep conversations kind and safe."
             onBack={back}
             onNext={next}
             error={error}
