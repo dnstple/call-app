@@ -86,8 +86,13 @@ export async function connectVideoCall(
   if (!prepared.ok || !prepared.serverUrl || !prepared.token) {
     throw new Error('This call isn’t ready to join.');
   }
-  // adaptiveStream keeps two-person video efficient; dynacast off (1:1, no SFU fan-out need).
-  const room = new Room({ adaptiveStream: true, dynacast: false });
+  // 1:1 call: adaptiveStream is deliberately OFF. With adaptiveStream ON,
+  // LiveKit pauses a remote video track whenever its attached element isn't
+  // visibly sized yet — a very common cause of a permanently BLACK canvas when
+  // the element is attached a frame before layout settles. For a two-person
+  // call the bandwidth saving is negligible, so we take the always-on behaviour.
+  // dynacast stays off too (no SFU simulcast fan-out needed for 1:1).
+  const room = new Room({ adaptiveStream: false, dynacast: false });
   let state: VideoConnectionState = 'connecting';
   let cameraOn = false;
   const audioEls = new Set<HTMLAudioElement>();
@@ -103,6 +108,10 @@ export async function connectVideoCall(
     } else if (track.kind === Track.Kind.Video) {
       const el = track.attach() as HTMLVideoElement;
       el.setAttribute('data-call-remote-video', 'true');
+      // Without playsInline + autoplay a mobile/Safari browser renders a black
+      // frame (or tries to go fullscreen) instead of the live remote video.
+      el.autoplay = true;
+      el.playsInline = true;
       handlers.onRemoteVideo(el);
     }
   };
@@ -140,6 +149,8 @@ export async function connectVideoCall(
       const el = track.attach() as HTMLVideoElement;
       el.setAttribute('data-call-local-video', 'true');
       el.muted = true; // never echo own audio; local preview is silent
+      el.autoplay = true;
+      el.playsInline = true; // otherwise the local mirror is black on mobile/Safari
       handlers.onLocalVideo(el);
     } else {
       handlers.onLocalVideo(null);
