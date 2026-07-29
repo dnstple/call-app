@@ -56,8 +56,8 @@ const INELIGIBLE_COPY: Record<string, { title: string; body: string }> = {
   join_window_closed: { title: 'This call has ended', body: 'The joining time for this conversation has passed.' },
   call_closed: { title: 'Call closed', body: 'This call is no longer available.' },
   coordinator_not_permitted: {
-    title: 'Only the two people talking can join',
-    body: 'As the coordinator you arrange the conversation, but only the member and companion join the call itself.',
+    title: 'The Member joins this call',
+    body: 'You arranged this conversation, and the person you arranged it for joins the call itself. You can follow the booking status here at any time.',
   },
   blocked: {
     title: 'This call isn’t available',

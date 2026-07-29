@@ -58,6 +58,10 @@ export function mapBookingError(e: any, fallback = 'Something went wrong. Please
   if (msg.includes('trial_pending') || msg.includes('one_pending_trial')) {
     return new RepoError('There’s already a trial request with this companion. You can cancel it first if plans changed.', 'conflict');
   }
+  // Section 12 — a used trial is a plain fact, never a raw "not_eligible" code.
+  if (msg.includes('not_eligible') && msg.includes('trial')) {
+    return new RepoError('You have already used your trial conversation with this Companion.', 'conflict');
+  }
   if (msg.includes('outside_availability')) {
     return new RepoError('That time isn’t within the companion’s availability any more. Please pick another time.', 'conflict');
   }
