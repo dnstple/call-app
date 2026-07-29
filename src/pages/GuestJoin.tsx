@@ -227,7 +227,7 @@ export default function GuestJoin() {
   // (camera preview, mic/camera toggles, prominent Join), not a plain card.
   if (phase === 'ready' && details) {
     return (
-      <div className="call-lobby">
+      <div className="call-lobby" style={{ paddingTop: 'var(--space-6)' }}>
         <div className="call-preview">
           {cameraOnEntry
             ? <CameraPreview />
