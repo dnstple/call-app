@@ -87,26 +87,29 @@ export async function connectVideoCall(
   if (!prepared.ok || !prepared.serverUrl || !prepared.token) {
     throw new Error('This call isn’t ready to join.');
   }
-  // 1:1 call: adaptiveStream is deliberately OFF. With adaptiveStream ON,
-  // LiveKit pauses a remote video track whenever its attached element isn't
-  // visibly sized yet — a very common cause of a permanently BLACK canvas when
-  // the element is attached a frame before layout settles. For a two-person
-  // call the bandwidth saving is negligible, so we take the always-on behaviour.
-  // dynacast stays off too (no SFU simulcast fan-out needed for 1:1).
+  // Quality that adapts to each person's connection.
   //
-  // Quality: capture at 720p and publish a single high-bitrate layer (simulcast
-  // off, since there's only one subscriber). This lifts the picture well above
-  // LiveKit's conservative defaults while staying comfortable for a 1:1 call.
+  // We capture at up to 1080p and publish SIMULCAST layers (1080p / 720p / 360p).
+  // The server then sends each viewer the highest layer their DOWNLINK can take,
+  // while the sender's congestion control scales its UPLINK automatically — so a
+  // fast connection gets crisp 1080p and a weak one steps down gracefully to
+  // 720p/360p instead of freezing. dynacast pauses layers nobody is watching, to
+  // save the sender's upload.
+  //
+  // adaptiveStream stays OFF: that feature pauses a remote track when its <video>
+  // element isn't visibly sized yet, which was a cause of a permanently BLACK
+  // canvas. Network adaptation above does not depend on it.
   const room = new Room({
     adaptiveStream: false,
-    dynacast: false,
+    dynacast: true,
     videoCaptureDefaults: {
-      resolution: VideoPresets.h720.resolution,
+      resolution: VideoPresets.h1080.resolution,
     },
     publishDefaults: {
-      simulcast: false,
-      videoEncoding: VideoPresets.h720.encoding,
+      simulcast: true,
       videoCodec: 'vp8',
+      videoEncoding: VideoPresets.h1080.encoding,
+      videoSimulcastLayers: [VideoPresets.h360, VideoPresets.h720],
     },
   });
   let state: VideoConnectionState = 'connecting';
