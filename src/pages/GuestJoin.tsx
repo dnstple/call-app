@@ -13,7 +13,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Camera, CameraOff, Loader2, Mic, MicOff, PhoneOff, Volume2 } from 'lucide-react';
+import { Loader2, Mic, MicOff, PhoneOff, Video, VideoOff, Volume2 } from 'lucide-react';
 import { isSupabaseMode } from '../config/dataMode';
 import { isSupabaseConfigured } from '../supabase/client';
 import {
@@ -154,6 +154,74 @@ export default function GuestJoin() {
       })
     : '';
 
+  // Full-screen in-call experience — the SAME layout the Companion sees, so the
+  // managed Member gets an identical professional call, not a small card.
+  if (phase === 'in_call') {
+    const waiting = !remotePresent;
+    return (
+      <div className="call-stage-full">
+        <div className="call-stage">
+          <div ref={remoteStageRef} className="call-remote" aria-label={`${remoteName ?? 'Your Companion'}’s video`} />
+          {(waiting || !remoteHasVideo) && (
+            <div className="call-remote-placeholder">
+              <div className={`call-avatar call-avatar-lg${waiting ? ' call-waiting-pulse' : ''}`} aria-hidden="true">
+                {(remoteName ?? 'A').trim().charAt(0).toUpperCase()}
+              </div>
+              <div>
+                <p className="call-peer-title">{remoteName ?? 'Your Companion'}</p>
+                <p className="call-peer-sub" aria-live="polite">
+                  {waiting
+                    ? (connState === 'reconnecting' ? 'Reconnecting…' : 'Waiting for your Companion to join…')
+                    : remoteMuted ? 'Connected · their microphone is muted' : 'Connected · their camera is off'}
+                </p>
+              </div>
+            </div>
+          )}
+          <div className="call-topbar">
+            <div className="call-peer">
+              <span className="call-peer-name">{remoteName ?? 'Your Companion'}</span>
+              <span className="call-peer-state">
+                {waiting ? 'Waiting for them to join' : remoteMuted ? 'Connected · microphone muted' : 'Connected'}
+              </span>
+            </div>
+            <span className="call-timer"><span className="call-recdot">Not recorded</span></span>
+          </div>
+          <div ref={localInsetRef} className="call-local" hidden={!cameraOn} aria-label="Your camera preview" />
+          <div className="call-overlays">
+            {connState === 'reconnecting' && (
+              <div className="call-toast call-toast-warn" role="status" aria-live="assertive">
+                Reconnecting… please stay on this screen.
+              </div>
+            )}
+            {resumeAudio && (
+              <button className="call-toast-action" onClick={() => { void resumeAudio(); setResumeAudio(null); }}>
+                <Volume2 size={18} aria-hidden="true" /> Tap to enable call audio
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="call-bar">
+          <button onClick={() => void toggleMute()} aria-pressed={muted}
+            aria-label={muted ? 'Unmute my microphone' : 'Mute my microphone'}
+            className={`call-ctrl${muted ? ' is-active' : ''}`}>
+            {muted ? <MicOff size={22} /> : <Mic size={22} />}
+            <span className="call-ctrl-label">{muted ? 'Muted' : 'Mute'}</span>
+          </button>
+          <button onClick={() => void toggleCamera()} aria-pressed={!cameraOn}
+            aria-label={cameraOn ? 'Turn my camera off' : 'Turn my camera on'}
+            className={`call-ctrl${cameraOn ? '' : ' is-active'}`}>
+            {cameraOn ? <Video size={22} /> : <VideoOff size={22} />}
+            <span className="call-ctrl-label">{cameraOn ? 'Camera' : 'Off'}</span>
+          </button>
+          <button onClick={() => void leave()} aria-label="Leave the call" className="call-ctrl is-danger">
+            <PhoneOff size={22} />
+            <span className="call-ctrl-label">Leave</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="guest-shell">
       <main className="guest-card" aria-live="polite">
@@ -259,58 +327,6 @@ export default function GuestJoin() {
           <div className="row" style={{ gap: 10, justifyContent: 'center' }}>
             <Loader2 size={22} aria-hidden="true" />
             <span className="muted">Joining your conversation…</span>
-          </div>
-        )}
-
-        {phase === 'in_call' && (
-          <div className="col" style={{ gap: 12 }}>
-            {/* Remote video is the main canvas; a camera-off placeholder shows
-                only when the far side genuinely has no video. The local inset
-                mirrors the guest's own camera. */}
-            <div className="guest-stage">
-              <div ref={remoteStageRef} className="guest-remote" aria-label={`${remoteName ?? 'Your Companion'}’s video`} />
-              {!remoteHasVideo && (
-                <div className="guest-remote-placeholder">
-                  {remotePresent
-                    ? `${remoteName ?? 'Your Companion'}’s camera is off`
-                    : connState === 'reconnecting' ? 'Reconnecting…' : 'Waiting for your Companion to join…'}
-                </div>
-              )}
-              <div ref={localInsetRef} className="guest-local-inset" aria-label="Your video" hidden={!cameraOn} />
-            </div>
-            <p className="guest-body" style={{ textAlign: 'center', margin: 0 }} aria-live="polite">
-              {remotePresent
-                ? remoteMuted
-                  ? <>Connected with <strong>{remoteName ?? 'your Companion'}</strong> · their microphone is muted</>
-                  : <>You’re talking with <strong>{remoteName ?? 'your Companion'}</strong></>
-                : connState === 'reconnecting'
-                  ? 'Reconnecting…'
-                  : 'Waiting for your Companion to join…'}
-            </p>
-            {resumeAudio && (
-              <button className="btn btn-secondary btn-small" style={{ alignSelf: 'center' }}
-                onClick={() => { void resumeAudio(); setResumeAudio(null); }}>
-                <Volume2 size={16} aria-hidden="true" /> Tap to enable call audio
-              </button>
-            )}
-            <div className="row wrap" style={{ gap: 8, justifyContent: 'center' }}>
-              <button className="btn btn-secondary btn-small" aria-pressed={muted}
-                aria-label={muted ? 'Unmute microphone' : 'Mute microphone'} onClick={() => void toggleMute()}>
-                {muted ? <MicOff size={16} aria-hidden="true" /> : <Mic size={16} aria-hidden="true" />}
-                {muted ? 'Unmute' : 'Mute'}
-              </button>
-              <button className="btn btn-secondary btn-small" aria-pressed={cameraOn}
-                aria-label={cameraOn ? 'Turn camera off' : 'Turn camera on'} onClick={() => void toggleCamera()}>
-                {cameraOn ? <Camera size={16} aria-hidden="true" /> : <CameraOff size={16} aria-hidden="true" />}
-                {cameraOn ? 'Camera on' : 'Camera off'}
-              </button>
-              <button className="btn btn-danger btn-small" aria-label="Leave call" onClick={() => void leave()}>
-                <PhoneOff size={16} aria-hidden="true" /> Leave
-              </button>
-            </div>
-            <p className="muted small" style={{ textAlign: 'center', margin: 0 }}>
-              Video and audio are live and <strong>not recorded</strong>. This service is not for emergencies.
-            </p>
           </div>
         )}
 
