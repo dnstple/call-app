@@ -1,30 +1,67 @@
+import type { CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
-import {
-  CalendarHeart, Heart, MessageCircle, Phone, Shield, Sparkles,
-  UserRound, Users, Video, CheckCircle2,
-} from 'lucide-react';
+import { CheckCircle2, Heart, Shield, Sparkles, UserRound } from 'lucide-react';
 import { APP_NAME } from '../config/branding';
 import { isSupabaseMode } from '../config/dataMode';
+import { landingCopy, landingImages, type LandingImageSlot } from '../content/landingContent';
 
 /**
- * Public landing page (Block 12).
+ * Public landing page (Block 12 + closeout Sections 9–10).
  *
- * The one page a signed-out visitor sees at the site root. It is deliberately
- * honest: there are no invented testimonials, user counts, outcome statistics,
- * certifications, response-time promises, review scores, or press logos. Every
- * claim describes how the product works, not results we cannot yet evidence.
+ * Copy is sourced from the approved product-scope document via
+ * src/content/landingContent.ts (vision, per-audience value propositions, the
+ * £5 trial, and the safety framing). Terminology (Member/Companion/Coordinator)
+ * is preserved; no testimonials, statistics, ratings, certifications or press
+ * are invented. Photography lives in replaceable image slots — set a slot's
+ * `src` in landingContent.ts to drop in real art; until then a neutral
+ * photo-frame placeholder renders (never developer text in the public UI).
  *
- * The page keeps the noindex,nofollow meta from index.html — it is a public
- * route, not a publicly *indexed* one, during the pilot.
+ * The page keeps index.html's noindex,nofollow during the controlled pilot.
  */
+
+/** One replaceable image area. Real art → set slot.src in landingContent.ts. */
+function LandingImage({ slot, className }: { slot: LandingImageSlot; className?: string }) {
+  const style = {
+    aspectRatio: slot.aspectRatio,
+    ['--landing-object-position' as string]: slot.objectPosition,
+  } as CSSProperties;
+  if (slot.src) {
+    return (
+      <img
+        src={slot.src}
+        alt={slot.alt}
+        loading="lazy"
+        className={`landing-photo landing-photo-${slot.mobileTreatment} ${className ?? ''}`}
+        style={style}
+      />
+    );
+  }
+  // Neutral placeholder: a calm gradient frame, labelled for assistive tech,
+  // with an internal-only note that never shows to normal users.
+  return (
+    <div
+      className={`landing-photo landing-photo-placeholder landing-tone-${slot.tone} ${className ?? ''}`}
+      style={style}
+      role="img"
+      aria-label={slot.alt}
+    >
+      <Sparkles size={26} aria-hidden="true" />
+      <span className="landing-photo-devnote" aria-hidden="true" data-dev-only>
+        Image: {slot.alt}
+      </span>
+    </div>
+  );
+}
+
 export default function LandingPage() {
-  // The primary call to action starts account creation. In hosted mode that
-  // begins with registration; in the local preview it opens the sign-up wizard.
+  const c = landingCopy;
+  // Account creation starts registration in hosted mode; the local preview
+  // opens the sign-up wizard.
   const startTo = isSupabaseMode() ? '/register' : '/signup';
 
   return (
     <div className="landing">
-      {/* 1 — Header */}
+      {/* Header */}
       <header className="landing-header">
         <div className="landing-container landing-header-row">
           <Link to="/" className="landing-brand" aria-label={`${APP_NAME} home`}>
@@ -32,41 +69,43 @@ export default function LandingPage() {
             <span className="landing-brand-name">{APP_NAME}</span>
           </Link>
           <nav className="landing-header-actions" aria-label="Account">
-            <Link to="/login" className="btn btn-ghost btn-small">Sign in</Link>
-            <Link to={startTo} className="btn btn-primary btn-small">Get started</Link>
+            <Link to="/login" className="btn btn-ghost">Sign in</Link>
+            <Link to={startTo} className="btn btn-primary">Get started</Link>
           </nav>
         </div>
       </header>
 
-      {/* 2 — Hero */}
+      {/* Hero — text + image, larger type and CTAs */}
       <section className="landing-hero">
-        <div className="landing-container landing-hero-inner">
-          <p className="landing-eyebrow">Warm, arranged companionship by phone and video</p>
-          <h1>Meaningful conversation, made easy to arrange.</h1>
-          <p className="landing-lede">
-            {APP_NAME} helps you set up regular, friendly conversations with a companion —
-            for a parent, a loved one, or yourself. You choose who, how often, and for
-            how long. We handle the scheduling, the reminders, and keeping it safe.
-          </p>
-          <div className="landing-cta-row">
-            <Link to={startTo} className="btn btn-primary">Get started</Link>
-            <Link to={startTo} className="btn btn-secondary">Become a Companion</Link>
+        <div className="landing-container landing-hero-grid">
+          <div className="landing-hero-text">
+            <p className="landing-eyebrow">{c.hero.eyebrow}</p>
+            <h1>{c.hero.title}</h1>
+            <p className="landing-lede">{c.hero.lede}</p>
+            <div className="landing-cta-row">
+              <Link to={startTo} className="btn btn-primary btn-large">Get started</Link>
+              <Link to={startTo} className="btn btn-secondary btn-large">Become a Companion</Link>
+            </div>
+            <p className="landing-fineprint">{c.hero.fineprint}</p>
           </div>
-          <p className="landing-fineprint">Free to set up. You only pay for conversations you arrange.</p>
+          <LandingImage slot={landingImages.hero} className="landing-hero-photo" />
         </div>
       </section>
 
-      {/* 3 — Trust strip */}
+      {/* Trust strip */}
       <section className="landing-trust" aria-label="What guides us">
         <div className="landing-container landing-trust-row">
-          <span className="landing-trust-item"><Shield size={18} aria-hidden="true" /> Safety-first by design</span>
-          <span className="landing-trust-item"><Heart size={18} aria-hidden="true" /> Kind, unhurried conversation</span>
-          <span className="landing-trust-item"><UserRound size={18} aria-hidden="true" /> Companions you choose yourself</span>
-          <span className="landing-trust-item"><CheckCircle2 size={18} aria-hidden="true" /> Cancel or change any time</span>
+          {c.trust.map((t, i) => (
+            <span key={t} className="landing-trust-item">
+              {[<Shield key="s" size={18} aria-hidden="true" />, <Heart key="h" size={18} aria-hidden="true" />,
+                <UserRound key="u" size={18} aria-hidden="true" />, <CheckCircle2 key="c" size={18} aria-hidden="true" />][i]}
+              {' '}{t}
+            </span>
+          ))}
         </div>
       </section>
 
-      {/* 4 — How it works */}
+      {/* How it works */}
       <section className="landing-section">
         <div className="landing-container">
           <div className="landing-section-head">
@@ -76,13 +115,13 @@ export default function LandingPage() {
           <ol className="landing-steps">
             <li className="card">
               <span className="landing-step-num" aria-hidden="true">1</span>
-              <h3>Browse companions</h3>
-              <p>Read companion profiles and choose someone whose warmth and interests feel right.</p>
+              <h3>Browse Companions</h3>
+              <p>Read Companion profiles and choose someone whose warmth and interests feel right.</p>
             </li>
             <li className="card">
               <span className="landing-step-num" aria-hidden="true">2</span>
               <h3>Arrange a conversation</h3>
-              <p>Pick a time and length. Start with a trial, a one-off chat, or a regular routine.</p>
+              <p>Pick a time and length. Start with a trial, a single conversation, or a regular routine.</p>
             </li>
             <li className="card">
               <span className="landing-step-num" aria-hidden="true">3</span>
@@ -93,141 +132,104 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* 5 — For families / Coordinators */}
+      {/* For families / Coordinators — image left */}
       <section className="landing-section landing-section-muted">
         <div className="landing-container landing-split">
+          <LandingImage slot={landingImages.coordinator} />
           <div className="landing-split-text">
-            <span className="section-label">For families &amp; coordinators</span>
-            <h2>Arrange conversations for someone you care about</h2>
-            <p>
-              Set everything up on their behalf — choose the companion, the schedule, and the
-              format. Your loved one simply answers a call or clicks a link when it is time.
-              You stay in control of the arrangement without having to be on every call.
-            </p>
+            <span className="section-label">{c.coordinator.label}</span>
+            <h2>{c.coordinator.title}</h2>
+            <p>{c.coordinator.body}</p>
             <ul className="landing-ticks">
-              <li><CheckCircle2 size={18} aria-hidden="true" /> Manage it all from one place</li>
-              <li><CheckCircle2 size={18} aria-hidden="true" /> No app or account needed for them to join</li>
-              <li><CheckCircle2 size={18} aria-hidden="true" /> Change or pause the routine whenever life shifts</li>
+              {c.coordinator.ticks.map((t) => (
+                <li key={t}><CheckCircle2 size={18} aria-hidden="true" /> {t}</li>
+              ))}
             </ul>
-            <Link to={startTo} className="btn btn-primary">Arrange for someone else</Link>
-          </div>
-          <div className="landing-split-visual" aria-hidden="true">
-            <Users size={40} />
-            <CalendarHeart size={40} />
+            <Link to={startTo} className="btn btn-primary btn-large">{c.coordinator.cta}</Link>
           </div>
         </div>
       </section>
 
-      {/* 6 — For self */}
+      {/* For self — image right */}
       <section className="landing-section">
         <div className="landing-container landing-split landing-split-reverse">
+          <LandingImage slot={landingImages.self} />
           <div className="landing-split-text">
-            <span className="section-label">For yourself</span>
-            <h2>Set up companionship for your own week</h2>
-            <p>
-              Prefer to arrange it yourself? Create your own account, choose a companion, and
-              build a routine that fits around your life. It is your schedule and your choice —
-              adjust it whenever you like.
-            </p>
+            <span className="section-label">{c.self.label}</span>
+            <h2>{c.self.title}</h2>
+            <p>{c.self.body}</p>
             <ul className="landing-ticks">
-              <li><CheckCircle2 size={18} aria-hidden="true" /> A friendly, familiar voice each week</li>
-              <li><CheckCircle2 size={18} aria-hidden="true" /> Phone or video, whatever suits you</li>
-              <li><CheckCircle2 size={18} aria-hidden="true" /> Full control of times and frequency</li>
+              {c.self.ticks.map((t) => (
+                <li key={t}><CheckCircle2 size={18} aria-hidden="true" /> {t}</li>
+              ))}
             </ul>
-            <Link to={startTo} className="btn btn-primary">Arrange for myself</Link>
-          </div>
-          <div className="landing-split-visual" aria-hidden="true">
-            <UserRound size={40} />
-            <MessageCircle size={40} />
+            <Link to={startTo} className="btn btn-primary btn-large">{c.self.cta}</Link>
           </div>
         </div>
       </section>
 
-      {/* 7 — Regular companionship */}
+      {/* Regular companionship — full-width image band */}
       <section className="landing-section landing-section-brand">
         <div className="landing-container landing-center">
           <Sparkles size={28} aria-hidden="true" className="landing-center-icon" />
-          <h2>The value is in the routine</h2>
-          <p className="landing-center-lede">
-            A single call is lovely. A regular one becomes something to look forward to. {APP_NAME}
-            is built around ongoing companionship — the same companion, a familiar rhythm, and a
-            growing sense of connection over time.
-          </p>
-          <Link to={startTo} className="btn btn-primary">Set up a regular conversation</Link>
+          <h2>{c.regular.title}</h2>
+          <p className="landing-center-lede">{c.regular.body}</p>
+          <LandingImage slot={landingImages.regular} className="landing-band-photo" />
+          <Link to={startTo} className="btn btn-primary btn-large">{c.regular.cta}</Link>
         </div>
       </section>
 
-      {/* 8 — Trial */}
+      {/* Trial — image left */}
       <section className="landing-section">
         <div className="landing-container landing-split">
+          <LandingImage slot={landingImages.trial} />
           <div className="landing-split-text">
-            <span className="section-label">Start gently</span>
-            <h2>Try a first conversation</h2>
-            <p>
-              Not sure where to begin? Start with a short trial conversation to see whether a
-              companion feels like the right fit — before committing to a regular routine. If it
-              is not right, you can simply choose someone else.
-            </p>
-            <Link to={startTo} className="btn btn-secondary">Start with a trial</Link>
-          </div>
-          <div className="landing-split-visual" aria-hidden="true">
-            <Phone size={40} />
-            <Video size={40} />
+            <span className="section-label">{c.trial.label}</span>
+            <h2>{c.trial.title}</h2>
+            <p>{c.trial.body}</p>
+            <Link to={startTo} className="btn btn-secondary btn-large">{c.trial.cta}</Link>
           </div>
         </div>
       </section>
 
-      {/* 9 — Safety */}
+      {/* Safety */}
       <section className="landing-section landing-section-muted">
         <div className="landing-container">
           <div className="landing-section-head">
             <Shield size={28} aria-hidden="true" className="landing-center-icon" />
-            <h2>Built to feel safe</h2>
-            <p>Companionship should feel comfortable and secure for everyone involved.</p>
+            <h2>{c.safety.title}</h2>
+            <p>{c.safety.body}</p>
           </div>
           <div className="grid-cards landing-safety-grid">
-            <div className="card">
-              <h3>Companions are reviewed</h3>
-              <p>Companion profiles are checked and approved before they can appear to families and members.</p>
-            </div>
-            <div className="card">
-              <h3>You stay in control</h3>
-              <p>Report a concern or block someone at any time. You decide who you speak with and when.</p>
-            </div>
-            <div className="card">
-              <h3>Private by default</h3>
-              <p>Personal details are only shared where they are needed to arrange and hold a conversation.</p>
-            </div>
+            {c.safety.cards.map((card) => (
+              <div key={card.title} className="card">
+                <h3>{card.title}</h3>
+                <p>{card.body}</p>
+              </div>
+            ))}
           </div>
         </div>
       </section>
 
-      {/* 10 — Become a Companion */}
+      {/* Become a Companion — image right */}
       <section className="landing-section">
         <div className="landing-container landing-split landing-split-reverse">
+          <LandingImage slot={landingImages.companion} />
           <div className="landing-split-text">
-            <span className="section-label">Become a Companion</span>
-            <h2>Share your time, on your terms</h2>
-            <p>
-              If you enjoy conversation and want to make a difference, you can offer your time as a
-              companion. Set your own availability and the kinds of conversations you offer, and
-              connect with people who value a warm, regular chat.
-            </p>
+            <span className="section-label">{c.companion.label}</span>
+            <h2>{c.companion.title}</h2>
+            <p>{c.companion.body}</p>
             <ul className="landing-ticks">
-              <li><CheckCircle2 size={18} aria-hidden="true" /> Choose your own hours</li>
-              <li><CheckCircle2 size={18} aria-hidden="true" /> Offer trials, one-off chats, or regular routines</li>
-              <li><CheckCircle2 size={18} aria-hidden="true" /> Get paid for the conversations you hold</li>
+              {c.companion.ticks.map((t) => (
+                <li key={t}><CheckCircle2 size={18} aria-hidden="true" /> {t}</li>
+              ))}
             </ul>
-            <Link to={startTo} className="btn btn-primary">Apply to be a Companion</Link>
-          </div>
-          <div className="landing-split-visual" aria-hidden="true">
-            <Heart size={40} />
-            <Sparkles size={40} />
+            <Link to={startTo} className="btn btn-primary btn-large">{c.companion.cta}</Link>
           </div>
         </div>
       </section>
 
-      {/* 11 — FAQ */}
+      {/* FAQ */}
       <section className="landing-section landing-section-muted">
         <div className="landing-container landing-faq">
           <div className="landing-section-head">
@@ -246,29 +248,25 @@ export default function LandingPage() {
             <p>Both. You can hold conversations by phone or by video, whichever is more comfortable.</p>
           </details>
           <details className="landing-faq-item">
-            <summary>Can I change or stop the arrangement?</summary>
-            <p>Yes. You can adjust the schedule, pause it, or cancel at any time.</p>
-          </details>
-          <details className="landing-faq-item">
             <summary>How does payment work?</summary>
             <p>Setting up an account is free. You pay for the conversations you arrange, and you can see the price before you confirm anything.</p>
           </details>
         </div>
       </section>
 
-      {/* 12 — Final CTA */}
+      {/* Final CTA */}
       <section className="landing-section landing-final">
         <div className="landing-container landing-center">
           <h2>Ready to arrange a conversation?</h2>
           <p className="landing-center-lede">It takes a few minutes to set up, and you can change your mind at any point.</p>
           <div className="landing-cta-row landing-cta-center">
-            <Link to={startTo} className="btn btn-primary">Get started</Link>
-            <Link to="/login" className="btn btn-secondary">Sign in</Link>
+            <Link to={startTo} className="btn btn-primary btn-large">Get started</Link>
+            <Link to="/login" className="btn btn-secondary btn-large">Sign in</Link>
           </div>
         </div>
       </section>
 
-      {/* 13 — Footer */}
+      {/* Footer */}
       <footer className="landing-footer">
         <div className="landing-container landing-footer-row">
           <div className="landing-brand">

@@ -1340,3 +1340,40 @@ table.plain th { color: var(--color-text-secondary); font-weight: 600; }
   .landing-split { grid-template-columns: 1.1fr 0.9fr; gap: var(--space-8); }
   .landing-split-reverse .landing-split-text { order: 2; }
 }
+
+/* ── Landing closeout (Sections 9–10): hero grid, replaceable image slots,
+   larger CTAs, alternating layout, reduced-motion. ─────────────────────── */
+.btn-large { padding: 14px 22px; font-size: 1.05rem; border-radius: var(--radius-m); }
+.landing-cta-row { flex-wrap: wrap; gap: var(--space-3); }
+
+.landing-hero-grid { display: grid; grid-template-columns: 1fr; gap: var(--space-6); align-items: center; }
+.landing-hero-text h1 { font-size: clamp(2.1em, 1.3em + 3.2vw, 3.2em); line-height: 1.08; margin: 0 0 var(--space-3); }
+.landing-hero-text .landing-lede { max-width: 60ch; font-size: 1.12rem; }
+@media (min-width: 880px) {
+  .landing-hero-grid { grid-template-columns: 1.05fr 0.95fr; gap: var(--space-8); }
+  .landing-split-reverse .landing-split-text { order: 1; }
+  .landing-split-reverse .landing-photo { order: 2; }
+}
+
+/* Replaceable image slot — real art via slot.src, else a calm placeholder. */
+.landing-photo {
+  display: block; width: 100%; min-width: 0; border-radius: var(--radius-l);
+  overflow: hidden; object-fit: cover; object-position: var(--landing-object-position, center);
+  background: var(--color-brand-subtle);
+}
+.landing-photo-placeholder {
+  display: flex; align-items: center; justify-content: center;
+  color: var(--color-brand-strong); position: relative;
+  border: 1px solid var(--color-border);
+}
+.landing-tone-apricot { background: linear-gradient(135deg, var(--color-brand-subtle), #f6d8c2); }
+.landing-tone-ivory   { background: linear-gradient(135deg, #fbf7f1, #f1e7da); }
+.landing-tone-sage    { background: linear-gradient(135deg, #eaf1ea, #d6e6d8); }
+.landing-tone-sky     { background: linear-gradient(135deg, #e9f0f6, #d5e4f0); }
+/* Internal-only note: never shown to normal users. */
+.landing-photo-devnote { display: none; }
+.landing-band-photo { margin: var(--space-5) auto; max-width: 720px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .landing * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}

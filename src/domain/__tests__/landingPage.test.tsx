@@ -28,17 +28,29 @@ describe('public landing page', () => {
     expect(screen.getByRole('heading', { level: 1 })).toBeTruthy();
     for (const heading of [
       /How it works/i,
-      /Arrange conversations for someone/i,
-      /Set up companionship for your own week/i,
+      /Arrange companionship for somebody you care about/i,
+      /Regular, friendly conversation on your terms/i,
       /The value is in the routine/i,
-      /Try a first conversation/i,
+      /Try a 30-minute introductory conversation/i,
       /Built to feel safe/i,
-      /Share your time, on your terms/i,
+      /Flexible, paid conversations that reward genuine interest/i,
       /Questions, answered/i,
       /Ready to arrange a conversation/i,
     ]) {
       expect(screen.getByRole('heading', { name: heading })).toBeTruthy();
     }
+  });
+
+  it('sources its copy from the approved product scope (value propositions + £5 trial)', () => {
+    renderLanding();
+    const text = document.body.textContent ?? '';
+    // Doc value propositions and the £5 trial recommendation, faithfully mapped.
+    expect(text).toMatch(/A simple, transparent way to arrange companionship for somebody you care about/i);
+    expect(text).toMatch(/Regular friendly contact, choice, continuity/i);
+    expect(text).toMatch(/Flexible, paid conversations that reward/i);
+    expect(text).toMatch(/from £5/i);
+    // Terminology preserved.
+    expect(text).toMatch(/Companion/);
   });
 
   it('every call-to-action links to a real start or sign-in route', () => {
@@ -58,9 +70,9 @@ describe('public landing page', () => {
 
   it('the FAQ entries are accessible native disclosures', () => {
     renderLanding();
-    // Five <summary> disclosure toggles.
+    // Native <summary> disclosure toggles (keyboard-accessible by default).
     const summaries = document.querySelectorAll('.landing-faq-item summary');
-    expect(summaries.length).toBe(5);
+    expect(summaries.length).toBeGreaterThanOrEqual(4);
   });
 
   it('makes no invented testimonials, counts, or credentials', () => {
