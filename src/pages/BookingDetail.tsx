@@ -21,13 +21,10 @@ import {
   RESCHEDULE_OPEN_COPY,
   getBookingById,
   getBookingHistory,
-  getBookingMemberSeat,
   getPendingProposal,
   proposeBookingTime,
   rejectTimeProposal,
-  setBookingMemberSeat,
   type AvailableSlot,
-  type MemberSeat,
 } from '../repositories/bookingRepository';
 import { RepoError } from '../repositories/profileRepository';
 import { getConnectStatus } from '../repositories/billingRepository';
@@ -182,35 +179,20 @@ export default function BookingDetail() {
     return () => { live = false; };
   }, [booking, isCompanionSide, isPaidRequest]);
 
-  // Section 5 — a Coordinator who ARRANGED a booking for a managed Member (and
-  // is not the Member themselves) may choose who takes the single Member-side
-  // call seat: the managed Member (default, via the guest link) or the
-  // Coordinator in person. The choice is persisted server-side and validated by
-  // the call token; the guest link is disabled while the Coordinator holds it.
+  // Section 5 (first-come seat) — a Coordinator who ARRANGED a booking for a
+  // managed Member, and is not the Member themselves, may take the single
+  // Member-side call seat OR let the Member join via their link. Whoever joins
+  // FIRST holds the seat; the other can join once they leave. No advance choice
+  // is needed — we just make the rule clear to the Coordinator here.
   const isMemberOwner = useMemo(
     () => !!booking && auth.profiles.some(
       (p) => p.profile.id === booking.member_profile_id && p.access.access_role === 'owner',
     ),
     [booking, auth.profiles],
   );
-  const canChooseSeat = !!booking && isRequesterSide && !isMemberOwner
+  const showSeatNote = !!booking && isRequesterSide && !isMemberOwner
     && booking.booked_by_account_id === auth.userId
     && ['requested', 'confirmed'].includes(booking.status);
-  const [memberSeat, setMemberSeat] = useState<MemberSeat | null>(null);
-  const [seatSaving, setSeatSaving] = useState(false);
-  useEffect(() => {
-    if (!isSupabaseMode() || !booking || !canChooseSeat) { setMemberSeat(null); return; }
-    let live = true;
-    getBookingMemberSeat(booking.id).then((s) => { if (live) setMemberSeat(s); }).catch(() => undefined);
-    return () => { live = false; };
-  }, [booking, canChooseSeat]);
-  const chooseSeat = async (seat: MemberSeat) => {
-    if (!booking) return;
-    setSeatSaving(true);
-    try { await setBookingMemberSeat(booking.id, seat); setMemberSeat(seat); }
-    catch { /* mapped error toast is enough; leave prior selection */ }
-    finally { setSeatSaving(false); }
-  };
 
   if (!isSupabaseMode()) {
     return (
@@ -492,35 +474,15 @@ export default function BookingDetail() {
       {active && (isCompanionSide || isRequesterSide) && (
         <section className="section-tight">
           <h2>Actions</h2>
-          {/* Section 5 — the arranging Coordinator picks who takes the single
-              Member-side call seat. Default is the managed Member (guest link);
-              the Coordinator can choose to join in person instead. */}
-          {canChooseSeat && memberSeat && (
-            <div className="card card-tight col mb-4" style={{ gap: 8, maxWidth: 520 }} role="group" aria-label="Who will join the call">
-              <span className="bold">Who will join the call?</span>
+          {/* Section 5 (first-come) — make the one-seat rule clear to the
+              arranging Coordinator. Either they or the Member can join; whoever
+              joins first holds the seat until they leave. */}
+          {showSeatNote && (
+            <div className="card card-tight col mb-4" style={{ gap: 6, maxWidth: 520 }} role="note">
+              <span className="bold">Only one of you can be in the call</span>
               <span className="muted">
-                {booking.companion_first_name} joins with one other person. Choose who that is.
-              </span>
-              <div className="row wrap" style={{ gap: 8 }}>
-                <button
-                  className={`btn btn-small ${memberSeat === 'member' ? 'btn-primary' : 'btn-secondary'}`}
-                  aria-pressed={memberSeat === 'member'} disabled={seatSaving}
-                  onClick={() => void chooseSeat('member')}
-                >
-                  {booking.member_first_name} will join
-                </button>
-                <button
-                  className={`btn btn-small ${memberSeat === 'coordinator' ? 'btn-primary' : 'btn-secondary'}`}
-                  aria-pressed={memberSeat === 'coordinator'} disabled={seatSaving}
-                  onClick={() => void chooseSeat('coordinator')}
-                >
-                  I will join as the Coordinator
-                </button>
-              </div>
-              <span className="faint">
-                {memberSeat === 'coordinator'
-                  ? `You will join this call. ${booking.member_first_name}’s guest link is turned off for this conversation.`
-                  : `${booking.member_first_name} will join using their secure link.`}
+                {booking.companion_first_name} talks with one other person — either you or {booking.member_first_name}.
+                Whoever joins first stays in the call; the other can join once they leave.
               </span>
             </div>
           )}

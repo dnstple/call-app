@@ -105,10 +105,10 @@ describe('CallPage — Sprint v1 video-call flow', () => {
     expect(screen.queryByRole('button', { name: /join call/i })).toBeNull();
   });
 
-  it('tells a coordinator only the member and companion can join', async () => {
+  it('tells a coordinator the Member joins this call', async () => {
     repo.getCallEligibility.mockResolvedValue({ ...eligible, eligible: false, reason: 'coordinator_not_permitted' });
     renderPage();
-    expect(await screen.findByText(/only the two people talking can join/i)).toBeTruthy();
+    expect(await screen.findByText(/The Member joins this call/i)).toBeTruthy();
   });
 
   it('surfaces a blocked microphone with recovery guidance and disables Join', async () => {

@@ -28,7 +28,7 @@ import {
 
 type Phase =
   | 'checking' | 'invalid' | 'expired' | 'waiting' | 'ready'
-  | 'rate_limited' | 'connecting' | 'in_call' | 'ended' | 'closed';
+  | 'rate_limited' | 'seat_taken' | 'connecting' | 'in_call' | 'ended' | 'closed';
 
 export default function GuestJoin() {
   const { token } = useParams();
@@ -104,6 +104,7 @@ export default function GuestJoin() {
       const prepared = await prepareGuestSession(token);
       const state = prepared.state as string;
       if (state === 'rate_limited') { setPhase('rate_limited'); return; }
+      if (state === 'seat_taken') { setPhase('seat_taken'); return; }
       if (state === 'too_early') { setPhase('waiting'); return; }
       if (state === 'ended') { setPhase('expired'); return; }
       if (state !== 'joinable' || !prepared.token || !prepared.serverUrl) { setPhase('invalid'); return; }
@@ -237,6 +238,20 @@ export default function GuestJoin() {
                 </div>
               </>
             )}
+          </div>
+        )}
+
+        {phase === 'seat_taken' && (
+          <div className="col" style={{ gap: 12, textAlign: 'center' }}>
+            <h1 className="guest-title">Someone is already in this call</h1>
+            <p className="muted guest-body" style={{ margin: 0 }}>
+              Only one person can join this conversation at a time. When the person currently
+              in the call leaves, you’ll be able to join. Please try again in a moment.
+            </p>
+            <button className="btn btn-primary guest-join-btn" style={{ alignSelf: 'center' }}
+              onClick={() => void join()}>
+              Try again
+            </button>
           </div>
         )}
 

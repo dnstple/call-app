@@ -31,8 +31,54 @@
  *   supabase functions deploy livekit-token
  */
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { AccessToken, TrackSource } from 'npm:livekit-server-sdk@2';
+import { AccessToken, RoomServiceClient, TrackSource } from 'npm:livekit-server-sdk@2';
 import { buildCallGrant, participantIdentity, TOKEN_TTL_SECONDS } from '../_shared/callToken.ts';
+
+/** LiveKit's admin URL is https(s); our LIVEKIT_URL is the wss client URL. */
+function roomServiceUrl(wsUrl: string): string {
+  return wsUrl.replace(/^wss:/i, 'https:').replace(/^ws:/i, 'http:');
+}
+
+/**
+ * First-come Member-side seat: a two-person room holds the Companion + ONE
+ * member-side participant (managed Member guest OR the arranging Coordinator).
+ * Returns true when SOMEONE OTHER than the Companion and other than the
+ * requester is already connected — i.e. the member seat is currently taken.
+ */
+async function memberSeatTaken(
+  wsUrl: string, apiKey: string, apiSecret: string,
+  room: string, companionIdentity: string, requesterIdentity: string,
+): Promise<boolean> {
+  try {
+    const svc = new RoomServiceClient(roomServiceUrl(wsUrl), apiKey, apiSecret);
+    const parts = await svc.listParticipants(room);
+    return parts.some((p) => p.identity !== companionIdentity && p.identity !== requesterIdentity);
+  } catch {
+    return false; // room not created yet / transient → the seat is free
+  }
+}
+
+/** Hard cap the room at two so a simultaneous race can't seat three. Best-effort. */
+async function ensureRoomCap(wsUrl: string, apiKey: string, apiSecret: string, room: string): Promise<void> {
+  try {
+    await new RoomServiceClient(roomServiceUrl(wsUrl), apiKey, apiSecret)
+      .createRoom({ name: room, maxParticipants: 2 });
+  } catch { /* room already exists (or transient) — the occupancy check is primary */ }
+}
+
+/** The Companion's server-derived participant identity for a booking, or null. */
+async function companionIdentityFor(
+  admin: ReturnType<typeof createClient>, companionProfileId: string,
+): Promise<string | null> {
+  const { data: pa } = await admin
+    .from('profile_access')
+    .select('account_id')
+    .eq('profile_id', companionProfileId)
+    .eq('access_role', 'owner')
+    .maybeSingle();
+  const acc = (pa as { account_id?: string } | null)?.account_id;
+  return acc ? participantIdentity(acc) : null;
+}
 
 // Legacy guest-branch window (Redesign-C invitation flow; unchanged).
 const GUEST_OPEN_MINUTES = 15;
@@ -78,14 +124,10 @@ async function handleGuestJoin(body: Record<string, unknown>): Promise<Response>
 
   const { data: booking } = await admin
     .from('bookings')
-    .select('id, status, starts_at, ends_at, member_profile_id, member_seat')
+    .select('id, status, starts_at, ends_at, member_profile_id, companion_profile_id')
     .eq('id', r.booking_id!)
     .maybeSingle();
   if (!booking || booking.status !== 'confirmed') return json({ state: 'invalid' }, 200);
-  // 0101 — the two-person seat can't be double-booked. If the Coordinator has
-  // taken the Member seat for this booking, the managed-Member guest link is
-  // disabled (the Coordinator joins as the authenticated participant instead).
-  if (booking.member_seat === 'coordinator') return json({ state: 'invalid' }, 200);
   // Safe display name for the managed Member (first name + initial), read from
   // the profile. Strictly COSMETIC and best-effort: a failure here must NEVER
   // block the join (member_first_name lives on the my_bookings view, not the
@@ -123,6 +165,15 @@ async function handleGuestJoin(body: Record<string, unknown>): Promise<Response>
   if (sessionErr || !sessionRes) return json({ state: 'invalid' }, 200);
   const callRoom = (sessionRes as { room_name?: string }).room_name;
   if (!callRoom) return json({ state: 'invalid' }, 200);
+
+  // First-come seat: if the Coordinator (or anyone) already holds the single
+  // member-side seat, the managed Member must wait until they leave.
+  const guestCompanionIdentity = await companionIdentityFor(admin, booking.companion_profile_id as string);
+  await ensureRoomCap(serverUrl, apiKey, apiSecret, callRoom);
+  if (guestCompanionIdentity
+      && await memberSeatTaken(serverUrl, apiKey, apiSecret, callRoom, guestCompanionIdentity, guestIdentity)) {
+    return json({ state: 'seat_taken' }, 200);
+  }
 
   const token = new AccessToken(apiKey, apiSecret, {
     identity: guestIdentity,
@@ -221,6 +272,20 @@ Deno.serve(async (req) => {
   const { data: sessionRes, error: sessionErr } = await admin.rpc('ensure_call_session', { p_booking: bookingId });
   if (sessionErr || !sessionRes) return json({ error: 'not_eligible', ...timing }, 200);
   const session = sessionRes as { call_session_id: string; room_name: string };
+
+  // First-come seat: the member side (managed Member OR arranging Coordinator)
+  // holds ONE seat. If someone else already occupies it, refuse until they
+  // leave. The Companion has a separate seat and is never blocked here.
+  if (role === 'member') {
+    const { data: bk } = await admin.from('bookings').select('companion_profile_id').eq('id', bookingId).maybeSingle();
+    const compId = (bk as { companion_profile_id?: string } | null)?.companion_profile_id
+      ? await companionIdentityFor(admin, (bk as { companion_profile_id: string }).companion_profile_id)
+      : null;
+    await ensureRoomCap(serverUrl, apiKey, apiSecret, session.room_name);
+    if (compId && await memberSeatTaken(serverUrl, apiKey, apiSecret, session.room_name, compId, participantIdentity(accountId))) {
+      return json({ error: 'seat_taken', state: 'seat_taken', ...timing }, 200);
+    }
+  }
 
   // 6. Mint the short-lived, mic+camera token for this one room. The identity
   //    and room are SERVER-derived; the browser never supplied them. The token
