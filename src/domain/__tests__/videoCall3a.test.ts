@@ -75,6 +75,9 @@ const RoomEvent = lk.RoomEvent;
 
 vi.mock('livekit-client', () => ({
   Room: lk.FakeRoom, RoomEvent: lk.RoomEvent, ConnectionQuality: lk.ConnectionQuality, Track: lk.Track,
+  VideoPresets: {
+    h720: { resolution: { width: 1280, height: 720 }, encoding: { maxBitrate: 1_700_000, maxFramerate: 30 } },
+  },
 }));
 
 import { connectVideoCall, listCameras, listMicrophones } from '../../calls/videoCall';

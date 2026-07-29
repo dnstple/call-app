@@ -980,9 +980,9 @@ table.plain th { color: var(--color-text-secondary); font-weight: 600; }
 .brand-icon { width: 26px; height: 26px; flex-shrink: 0; }
 /* Logo-only shell brand: the mark alone, no wordmark. */
 .brand-mark { width: 34px; height: 34px; flex-shrink: 0; display: block; }
-/* Sidebar logo: centered and larger than the inline/topbar mark. */
-.sidenav .brand { padding: 16px 12px 24px; display: flex; justify-content: center; }
-.sidenav .brand-mark { width: 52px; height: 52px; }
+/* Sidebar logo: top-left, a touch larger than the inline/topbar mark. */
+.sidenav .brand { padding: 10px 12px 24px 10px; display: flex; justify-content: flex-start; }
+.sidenav .brand-mark { width: 46px; height: 46px; }
 
 /* ---------- Shared multi-step date/time picker (dtp2) ---------- */
 .dtp2 { max-width: 560px; }

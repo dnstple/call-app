@@ -14,6 +14,7 @@ import {
   Room,
   RoomEvent,
   Track,
+  VideoPresets,
   type LocalVideoTrack,
   type RemoteParticipant,
   type RemoteTrack,
@@ -92,7 +93,22 @@ export async function connectVideoCall(
   // the element is attached a frame before layout settles. For a two-person
   // call the bandwidth saving is negligible, so we take the always-on behaviour.
   // dynacast stays off too (no SFU simulcast fan-out needed for 1:1).
-  const room = new Room({ adaptiveStream: false, dynacast: false });
+  //
+  // Quality: capture at 720p and publish a single high-bitrate layer (simulcast
+  // off, since there's only one subscriber). This lifts the picture well above
+  // LiveKit's conservative defaults while staying comfortable for a 1:1 call.
+  const room = new Room({
+    adaptiveStream: false,
+    dynacast: false,
+    videoCaptureDefaults: {
+      resolution: VideoPresets.h720.resolution,
+    },
+    publishDefaults: {
+      simulcast: false,
+      videoEncoding: VideoPresets.h720.encoding,
+      videoCodec: 'vp8',
+    },
+  });
   let state: VideoConnectionState = 'connecting';
   let cameraOn = false;
   const audioEls = new Set<HTMLAudioElement>();
