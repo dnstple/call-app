@@ -78,10 +78,15 @@ async function handleGuestJoin(body: Record<string, unknown>): Promise<Response>
 
   const { data: booking } = await admin
     .from('bookings')
-    .select('id, status, starts_at, ends_at')
+    .select('id, status, starts_at, ends_at, member_first_name, member_last_initial')
     .eq('id', r.booking_id!)
     .maybeSingle();
   if (!booking || booking.status !== 'confirmed') return json({ state: 'invalid' }, 200);
+  // Safe display name for the managed Member (first name + initial). Cosmetic:
+  // lets the Companion see who joined instead of a generic label.
+  const guestName = booking.member_first_name
+    ? `${booking.member_first_name}${booking.member_last_initial ? ` ${booking.member_last_initial}.` : ''}`
+    : 'Guest';
   const now = Date.now();
   const opensAt = Date.parse(booking.starts_at) - GUEST_OPEN_MINUTES * 60_000;
   const closesAt = Date.parse(booking.ends_at) + GUEST_CLOSE_AFTER_END_MINUTES * 60_000;
@@ -107,16 +112,21 @@ async function handleGuestJoin(body: Record<string, unknown>): Promise<Response>
 
   const token = new AccessToken(apiKey, apiSecret, {
     identity: guestIdentity,
-    name: 'Guest',
+    name: guestName,
     ttl: GUEST_TTL_SECONDS,
   });
+  // The validated managed-Member guest joins the SAME two-person video call as
+  // any signed-in participant: microphone AND camera, and nothing else. The
+  // invitation + booking relationship were already validated above; the grant
+  // stays scoped to this one room with no screen-share, data, recording, egress
+  // or room administration.
   token.addGrant({
     room: callRoom,
     roomJoin: true,
     canPublish: true,
     canSubscribe: true,
     canPublishData: false,
-    canPublishSources: [TrackSource.MICROPHONE],
+    canPublishSources: [TrackSource.MICROPHONE, TrackSource.CAMERA],
   });
   return json({
     state: 'joinable',
@@ -124,6 +134,7 @@ async function handleGuestJoin(body: Record<string, unknown>): Promise<Response>
     token: await token.toJwt(),
     room: callRoom,
     viewerSide: 'guest_member',
+    memberName: guestName,
   }, 200);
 }
 

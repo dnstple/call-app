@@ -1,17 +1,19 @@
 /**
- * 0028 + Stage 3A — the managed Member's ONLY surface: /join/:token.
+ * 0028 + Stage 3A + closeout Sec 6 — the managed Member's ONLY surface:
+ * /join/:token.
  *
- * Audio-only. The secure link IS the credential (no account, no code). Opening
- * the page never activates media or joins a room — joining is always an
- * intentional press. Every rule (expiry, revocation, booking status, join
- * window, rate limits) stays server-side. This flow uses the SAME Stage 3A audio
- * adapter as authenticated calls: microphone only, no camera, no video, no
- * screen-share, no recording, and it joins the same opaque call_ room as the
- * Companion (the Edge Function provisions the guest into the Member slot).
+ * The secure link IS the credential (no account, no code). Opening the page
+ * never activates media or joins a room — joining is always an intentional
+ * press. Every rule (expiry, revocation, booking status, join window, rate
+ * limits) stays server-side. The validated guest now joins the SAME two-person
+ * VIDEO experience as authenticated participants (mic + camera), using the same
+ * videoCall adapter and the same opaque call_ room as the Companion. Camera is
+ * granted server-side ONLY after the invitation + booking relationship are
+ * validated. No screen-share, no data channel, no recording.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Loader2, Mic, MicOff, PhoneOff, Volume2 } from 'lucide-react';
+import { Camera, CameraOff, Loader2, Mic, MicOff, PhoneOff, Volume2 } from 'lucide-react';
 import { isSupabaseMode } from '../config/dataMode';
 import { isSupabaseConfigured } from '../supabase/client';
 import {
@@ -20,9 +22,9 @@ import {
 } from '../repositories/guestInvitationRepository';
 import { prepareGuestSession } from '../calls/livekit';
 import {
-  connectAudioCall, listMicrophones,
-  type ActiveAudioCall, type AudioConnectionState, type MicOption,
-} from '../calls/audioCall';
+  connectVideoCall, listMicrophones,
+  type ActiveVideoCall, type VideoConnectionState, type DeviceOption,
+} from '../calls/videoCall';
 
 type Phase =
   | 'checking' | 'invalid' | 'expired' | 'waiting' | 'ready'
@@ -32,17 +34,31 @@ export default function GuestJoin() {
   const { token } = useParams();
   const [phase, setPhase] = useState<Phase>('checking');
   const [details, setDetails] = useState<GuestValidation | null>(null);
-  const [mics, setMics] = useState<MicOption[]>([]);
+  const [mics, setMics] = useState<DeviceOption[]>([]);
   const [selectedMic, setSelectedMic] = useState('');
   const [micChecked, setMicChecked] = useState<boolean | null>(null);
   const [muteOnEntry, setMuteOnEntry] = useState(false);
   const [muted, setMuted] = useState(false);
+  const [cameraOnEntry, setCameraOnEntry] = useState(true);
+  const [cameraOn, setCameraOn] = useState(true);
+  const [remoteHasVideo, setRemoteHasVideo] = useState(false);
   const [remoteName, setRemoteName] = useState<string | null>(null);
   const [remotePresent, setRemotePresent] = useState(false);
   const [remoteMuted, setRemoteMuted] = useState(false);
-  const [connState, setConnState] = useState<AudioConnectionState>('connecting');
+  const [connState, setConnState] = useState<VideoConnectionState>('connecting');
   const [resumeAudio, setResumeAudio] = useState<(() => Promise<void>) | null>(null);
-  const callRef = useRef<ActiveAudioCall | null>(null);
+  const callRef = useRef<ActiveVideoCall | null>(null);
+  const remoteStageRef = useRef<HTMLDivElement | null>(null);
+  const localInsetRef = useRef<HTMLDivElement | null>(null);
+
+  // Attach/detach a LiveKit-provided <video> element to its host container,
+  // replacing any previous element (React never owns these nodes).
+  const attachTo = (hostRef: React.RefObject<HTMLDivElement | null>, el: HTMLVideoElement | null) => {
+    const host = hostRef.current;
+    if (!host) return;
+    while (host.firstChild) host.removeChild(host.firstChild);
+    if (el) { el.style.width = '100%'; el.style.height = '100%'; el.style.objectFit = 'cover'; host.appendChild(el); }
+  };
 
   const validate = useCallback(() => {
     if (!token || !isSupabaseMode() || !isSupabaseConfigured()) { setPhase('invalid'); return; }
@@ -92,28 +108,37 @@ export default function GuestJoin() {
       if (state === 'ended') { setPhase('expired'); return; }
       if (state !== 'joinable' || !prepared.token || !prepared.serverUrl) { setPhase('invalid'); return; }
 
-      const call = await connectAudioCall(
+      const call = await connectVideoCall(
         { ok: true, token: prepared.token, serverUrl: prepared.serverUrl },
-        { deviceId: selectedMic || undefined, mutedOnEntry: muteOnEntry },
+        { micDeviceId: selectedMic || undefined, mutedOnEntry: muteOnEntry, cameraOnEntry },
         {
           onState: (s) => { setConnState(s); if (s === 'disconnected') setPhase((p) => (p === 'in_call' ? 'ended' : p)); },
-          onRemotePresence: (connected, name) => { setRemotePresent(connected); setRemoteName(name); if (!connected) setRemoteMuted(false); },
+          onRemotePresence: (connected, name) => { setRemotePresent(connected); setRemoteName(name); if (!connected) { setRemoteMuted(false); setRemoteHasVideo(false); } },
           onRemoteMuted: setRemoteMuted,
           onQuality: () => {},
           onError: () => {},
           onNeedsAudioStart: (resume) => setResumeAudio(() => resume),
+          onRemoteVideo: (el) => { setRemoteHasVideo(!!el); attachTo(remoteStageRef, el); },
+          onLocalVideo: (el) => attachTo(localInsetRef, el),
+          onLocalDeviceLost: () => {},
         },
       );
       callRef.current = call;
       setMuted(muteOnEntry);
+      setCameraOn(cameraOnEntry);
       setPhase('in_call');
     } catch { setPhase('invalid'); }
-  }, [token, selectedMic, muteOnEntry]);
+  }, [token, selectedMic, muteOnEntry, cameraOnEntry]);
 
   const toggleMute = useCallback(async () => {
     const next = !muted; setMuted(next);
     try { await callRef.current?.setMuted(next); } catch { /* noop */ }
   }, [muted]);
+
+  const toggleCamera = useCallback(async () => {
+    const next = !cameraOn; setCameraOn(next);
+    try { await callRef.current?.setCameraEnabled(next); } catch { setCameraOn(false); }
+  }, [cameraOn]);
 
   const leave = useCallback(async () => {
     const active = callRef.current; callRef.current = null;
@@ -155,7 +180,7 @@ export default function GuestJoin() {
               <h1 className="guest-title">Your conversation with {details.companionName}</h1>
               <p className="guest-body" style={{ margin: 0 }}>{timeLabel}</p>
               <p className="muted guest-body" style={{ margin: 0 }}>
-                {details.durationMinutes} minutes · audio call · not recorded
+                {details.durationMinutes} minutes · video call · not recorded
               </p>
             </div>
 
@@ -175,7 +200,7 @@ export default function GuestJoin() {
                   </p>
                 )}
                 <p className="muted small" style={{ textAlign: 'center', margin: 0 }}>
-                  This is an audio call. Your camera is never used.
+                  This is a video call — you can turn your camera off at any time. Calls are never recorded.
                 </p>
 
                 <div className="col" style={{ gap: 8 }}>
@@ -203,6 +228,10 @@ export default function GuestJoin() {
                     <input type="checkbox" checked={muteOnEntry} onChange={(e) => setMuteOnEntry(e.target.checked)} />
                     Join with my microphone muted
                   </label>
+                  <label className="row small muted" style={{ gap: 6, justifyContent: 'center' }}>
+                    <input type="checkbox" checked={!cameraOnEntry} onChange={(e) => setCameraOnEntry(!e.target.checked)} />
+                    Join with my camera off
+                  </label>
                 </div>
               </>
             )}
@@ -218,6 +247,20 @@ export default function GuestJoin() {
 
         {phase === 'in_call' && (
           <div className="col" style={{ gap: 12 }}>
+            {/* Remote video is the main canvas; a camera-off placeholder shows
+                only when the far side genuinely has no video. The local inset
+                mirrors the guest's own camera. */}
+            <div className="guest-stage">
+              <div ref={remoteStageRef} className="guest-remote" aria-label={`${remoteName ?? 'Your Companion'}’s video`} />
+              {!remoteHasVideo && (
+                <div className="guest-remote-placeholder">
+                  {remotePresent
+                    ? `${remoteName ?? 'Your Companion'}’s camera is off`
+                    : connState === 'reconnecting' ? 'Reconnecting…' : 'Waiting for your Companion to join…'}
+                </div>
+              )}
+              <div ref={localInsetRef} className="guest-local-inset" aria-label="Your video" hidden={!cameraOn} />
+            </div>
             <p className="guest-body" style={{ textAlign: 'center', margin: 0 }} aria-live="polite">
               {remotePresent
                 ? remoteMuted
@@ -234,16 +277,22 @@ export default function GuestJoin() {
               </button>
             )}
             <div className="row wrap" style={{ gap: 8, justifyContent: 'center' }}>
-              <button className="btn btn-secondary btn-small" aria-pressed={muted} onClick={() => void toggleMute()}>
+              <button className="btn btn-secondary btn-small" aria-pressed={muted}
+                aria-label={muted ? 'Unmute microphone' : 'Mute microphone'} onClick={() => void toggleMute()}>
                 {muted ? <MicOff size={16} aria-hidden="true" /> : <Mic size={16} aria-hidden="true" />}
                 {muted ? 'Unmute' : 'Mute'}
               </button>
-              <button className="btn btn-danger btn-small" onClick={() => void leave()}>
+              <button className="btn btn-secondary btn-small" aria-pressed={cameraOn}
+                aria-label={cameraOn ? 'Turn camera off' : 'Turn camera on'} onClick={() => void toggleCamera()}>
+                {cameraOn ? <Camera size={16} aria-hidden="true" /> : <CameraOff size={16} aria-hidden="true" />}
+                {cameraOn ? 'Camera on' : 'Camera off'}
+              </button>
+              <button className="btn btn-danger btn-small" aria-label="Leave call" onClick={() => void leave()}>
                 <PhoneOff size={16} aria-hidden="true" /> Leave
               </button>
             </div>
             <p className="muted small" style={{ textAlign: 'center', margin: 0 }}>
-              Audio is live and is <strong>not recorded</strong>. This service is not for emergencies.
+              Video and audio are live and <strong>not recorded</strong>. This service is not for emergencies.
             </p>
           </div>
         )}
