@@ -224,14 +224,16 @@ export default function GuestJoin() {
                       We couldn’t reach your microphone. Check your browser permissions — you can still try joining.
                     </p>
                   )}
-                  <label className="row small muted" style={{ gap: 6, justifyContent: 'center' }}>
-                    <input type="checkbox" checked={muteOnEntry} onChange={(e) => setMuteOnEntry(e.target.checked)} />
-                    Join with my microphone muted
-                  </label>
-                  <label className="row small muted" style={{ gap: 6, justifyContent: 'center' }}>
-                    <input type="checkbox" checked={!cameraOnEntry} onChange={(e) => setCameraOnEntry(!e.target.checked)} />
-                    Join with my camera off
-                  </label>
+                  <div className="col" style={{ gap: 8, alignItems: 'center' }}>
+                    <label className="small muted" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, textAlign: 'left' }}>
+                      <input type="checkbox" checked={muteOnEntry} onChange={(e) => setMuteOnEntry(e.target.checked)} />
+                      <span>Join with my microphone muted</span>
+                    </label>
+                    <label className="small muted" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, textAlign: 'left' }}>
+                      <input type="checkbox" checked={!cameraOnEntry} onChange={(e) => setCameraOnEntry(!e.target.checked)} />
+                      <span>Join with my camera off</span>
+                    </label>
+                  </div>
                 </div>
               </>
             )}

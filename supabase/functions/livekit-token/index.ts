@@ -78,15 +78,25 @@ async function handleGuestJoin(body: Record<string, unknown>): Promise<Response>
 
   const { data: booking } = await admin
     .from('bookings')
-    .select('id, status, starts_at, ends_at, member_first_name, member_last_initial')
+    .select('id, status, starts_at, ends_at, member_profile_id')
     .eq('id', r.booking_id!)
     .maybeSingle();
   if (!booking || booking.status !== 'confirmed') return json({ state: 'invalid' }, 200);
-  // Safe display name for the managed Member (first name + initial). Cosmetic:
-  // lets the Companion see who joined instead of a generic label.
-  const guestName = booking.member_first_name
-    ? `${booking.member_first_name}${booking.member_last_initial ? ` ${booking.member_last_initial}.` : ''}`
-    : 'Guest';
+  // Safe display name for the managed Member (first name + initial), read from
+  // the profile. Strictly COSMETIC and best-effort: a failure here must NEVER
+  // block the join (member_first_name lives on the my_bookings view, not the
+  // bookings table, so we resolve it from profiles instead).
+  let guestName = 'Guest';
+  try {
+    const { data: mp } = await admin
+      .from('profiles')
+      .select('first_name, last_name')
+      .eq('id', booking.member_profile_id)
+      .maybeSingle();
+    if (mp?.first_name) {
+      guestName = `${mp.first_name}${mp.last_name ? ` ${String(mp.last_name).charAt(0)}.` : ''}`;
+    }
+  } catch { /* name is cosmetic; never block the call */ }
   const now = Date.now();
   const opensAt = Date.parse(booking.starts_at) - GUEST_OPEN_MINUTES * 60_000;
   const closesAt = Date.parse(booking.ends_at) + GUEST_CLOSE_AFTER_END_MINUTES * 60_000;
