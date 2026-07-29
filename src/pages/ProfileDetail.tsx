@@ -183,6 +183,12 @@ export default function ProfileDetail() {
   const canBookReal =
     realOffers.length > 0 &&
     authSnap.profiles.some((p) => p.profile.role === 'member' && p.access.can_book);
+  // The Companion viewing their OWN public profile: they manage this profile.
+  // They get an edit action for availability & rates, never booking actions.
+  const isOwnerViewing =
+    supabase &&
+    user.role === 'companion' &&
+    authSnap.profiles.some((p) => p.profile.id === user.id && p.access.access_role === 'owner');
   const bookingMemberId = me.role === 'coordinator' ? (state.session.activeMemberId ?? '') : me.id;
   const trialOk = bookingMemberId ? trialEligible(state.bookings, bookingMemberId, user.id) : true;
   const fav = supabase ? supaFavs.ids.includes(user.id) : isFavourite(state, user.id);
@@ -273,44 +279,39 @@ export default function ProfileDetail() {
         />
       )}
 
-      <section className="section-tight">
-        <h2>About {user.firstName}</h2>
-        {/* Free text people write: wraps, never escapes the column. */}
-        <p className="muted longform" style={{ maxWidth: 640 }}>{user.bio}</p>
-        <p className="muted longform">
-          Speaks {user.languages.join(' and ')}
-          {user.style ? ` · prefers ${user.style} conversations` : ''}
-          {supabase ? ` · ${IN_APP_CALL_LABEL}` : ` · ${user.mediums.map((m) => MEDIUM_LABELS[m]).join(', ')}`}
-        </p>
-        <div className="row-wrap mt-2">
-          {user.interests.map((i) => (
-            <span key={i} className="chip">
-              {i}{me.interests.includes(i) ? ' · shared' : ''}
-            </span>
-          ))}
-        </div>
-        {user.role === 'member' && (
-          <div className="mt-4 muted">
-            {user.preferredTimes && <p style={{ margin: 0 }}>Preferred times: {user.preferredTimes}</p>}
-            {user.accessibilityNeeds && <p style={{ margin: 0 }}>Good to know: {user.accessibilityNeeds}</p>}
+      {/* Section 4 — Availability & rates sits directly beneath the identity /
+          action row, above About. The owner gets an edit action and no booking
+          controls; viewers get the booking selector (hero, above) plus the
+          usual-availability guide here. */}
+      {isOwnerViewing && (
+        <section className="section-tight" aria-label="Availability and rates">
+          <div className="row between wrap" style={{ gap: 12 }}>
+            <h2 style={{ margin: 0 }}>Availability &amp; rates</h2>
+            <button className="btn btn-secondary btn-small" onClick={() => navigate('/availability')}>
+              Edit availability and rates
+            </button>
           </div>
-        )}
-      </section>
-
-      {/* Reviews sit above the diary: people first, logistics second. */}
-      {supabase && user.role === 'companion' && (
-        <CompanionReviews profileId={user.id} firstName={user.firstName} />
-      )}
-
-      {/* Block 2 — a member/coordinator can block this companion. */}
-      {supabase && user.role === 'companion' && (me.role === 'member' || me.role === 'coordinator') && bookingMemberId && (
-        <section className="section-tight">
-          <BlockControl memberProfileId={bookingMemberId} companionProfileId={user.id} />
+          {realOffers.filter((o) => o.active).length === 0 ? (
+            <p className="muted mt-2">You haven’t set your conversation types or rates yet.</p>
+          ) : (
+            <div className="stack-list mt-2">
+              {realOffers
+                .filter((o) => o.active)
+                .map((o) => (
+                  <div key={o.id} className="card card-tight row between wrap">
+                    <div className="faint">
+                      {o.offer_type === 'trial' ? 'Trial conversation' : `${o.duration_minutes}-minute conversation`}
+                    </div>
+                    <span className="bold">{formatMinor(o.price_minor)}</span>
+                  </div>
+                ))}
+            </div>
+          )}
         </section>
       )}
 
       {supabase && user.role === 'companion' && realRules.length > 0 && (
-        <section className="section-tight">
+        <section className="section-tight" aria-label="Usually available">
           <h2>Usually available</h2>
           <div className="col" style={{ gap: 6 }}>
             {[1, 2, 3, 4, 5, 6, 7]
@@ -344,8 +345,44 @@ export default function ProfileDetail() {
               })}
           </div>
           <p className="faint mt-2">
-            A general guide — you’ll pick exact weekly times when you start regular conversations.
+            A general guide — you’ll pick exact weekly times when you set up regular conversations.
           </p>
+        </section>
+      )}
+
+      <section className="section-tight">
+        <h2>About {user.firstName}</h2>
+        {/* Free text people write: wraps, never escapes the column. */}
+        <p className="muted longform" style={{ maxWidth: 640 }}>{user.bio}</p>
+        <p className="muted longform">
+          Speaks {user.languages.join(' and ')}
+          {user.style ? ` · prefers ${user.style} conversations` : ''}
+          {supabase ? ` · ${IN_APP_CALL_LABEL}` : ` · ${user.mediums.map((m) => MEDIUM_LABELS[m]).join(', ')}`}
+        </p>
+        <div className="row-wrap mt-2">
+          {user.interests.map((i) => (
+            <span key={i} className="chip">
+              {i}{me.interests.includes(i) ? ' · shared' : ''}
+            </span>
+          ))}
+        </div>
+        {user.role === 'member' && (
+          <div className="mt-4 muted">
+            {user.preferredTimes && <p style={{ margin: 0 }}>Preferred times: {user.preferredTimes}</p>}
+            {user.accessibilityNeeds && <p style={{ margin: 0 }}>Good to know: {user.accessibilityNeeds}</p>}
+          </div>
+        )}
+      </section>
+
+      {/* Reviews sit above the diary: people first, logistics second. */}
+      {supabase && user.role === 'companion' && (
+        <CompanionReviews profileId={user.id} firstName={user.firstName} />
+      )}
+
+      {/* Block 2 — a member/coordinator can block this companion. */}
+      {supabase && user.role === 'companion' && (me.role === 'member' || me.role === 'coordinator') && bookingMemberId && (
+        <section className="section-tight">
+          <BlockControl memberProfileId={bookingMemberId} companionProfileId={user.id} />
         </section>
       )}
 

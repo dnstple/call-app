@@ -186,7 +186,7 @@ describe('shared Regular / One-off booking selector', () => {
     expect(regular.textContent).toMatch(/Recommended/);
     expect(oneoff.textContent).not.toMatch(/Recommended/);
     // The default primary action starts the recurring flow.
-    expect(screen.getByRole('button', { name: /Start regular conversations/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Set up regular conversations/i })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Book a one-off conversation/i })).toBeNull();
   });
 
@@ -196,7 +196,7 @@ describe('shared Regular / One-off booking selector', () => {
     const oneoff = within(group).getByRole('button', { name: /One-off conversation/i });
     // Priced from the cheapest server single offer (£9.00) — no duplicated
     // hard-coded price state.
-    expect(oneoff.textContent).toMatch(/from £9\.00/);
+    expect(oneoff.textContent).toMatch(/From £9\.00 per conversation/i);
     expect(oneoff.textContent).toMatch(/no ongoing commitment/i);
     // It is a real, enabled control — not hidden or disabled.
     expect((oneoff as HTMLButtonElement).disabled).toBe(false);
@@ -227,7 +227,7 @@ describe('shared Regular / One-off booking selector', () => {
   it('4a. choosing Regular opens the existing recurring PlanWizard (not the one-off flow)', async () => {
     const onBookOneOff = vi.fn();
     renderHero({ onBookOneOff });
-    fireEvent.click(await screen.findByRole('button', { name: /Start regular conversations/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /Set up regular conversations/i }));
     // The recurring wizard is the correct backend path for a regular choice.
     expect(await screen.findByText(/How often would you like to talk/i)).toBeTruthy();
     expect(onBookOneOff).not.toHaveBeenCalled();
@@ -297,10 +297,12 @@ describe('shared Regular / One-off booking selector', () => {
     renderHero();
     const group = await screen.findByRole('group', { name: /Conversation type/i });
     const regular = within(group).getByRole('button', { name: /Regular conversations/i });
-    // The recommendation is framed for the managed member, by name.
-    expect(regular.textContent).toMatch(/For Mum/);
-    // Opening the flow carries that member into the plan wizard.
-    fireEvent.click(screen.getByRole('button', { name: /Start regular conversations/i }));
+    // No fixture/member name is exposed in the card copy — the frequency is a
+    // neutral invitation to choose.
+    expect(regular.textContent).toMatch(/Choose how often you would like to talk/i);
+    expect(regular.textContent).not.toMatch(/Mum/);
+    // Opening the flow still carries that managed member into the plan wizard.
+    fireEvent.click(screen.getByRole('button', { name: /Set up regular conversations/i }));
     expect(await screen.findByText(/How often would you like to talk/i)).toBeTruthy();
   });
 });

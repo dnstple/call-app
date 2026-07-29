@@ -13,10 +13,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CalendarHeart, Loader2, Sparkles } from 'lucide-react';
 import type { ConversationOfferRow, ConversationPlanRow, TrialState } from '../supabase/database.types';
 import type { User } from '../types';
-import { getTrialState, listMyPlans, PLAN_FREQUENCY_MIN } from '../repositories/planRepository';
+import { getTrialState, listMyPlans } from '../repositories/planRepository';
 import { listMyBookings } from '../repositories/bookingRepository';
 import { MessageActionButton } from '../messaging/MessageAction';
-import { getMemberPlanPreferences, recommendedFrequency } from '../repositories/planRepository';
 import { formatMinor } from '../repositories/availabilityRepository';
 import { useAuthSnapshot } from '../state/authBridge';
 import { PlanWizard } from './PlanWizard';
@@ -50,7 +49,6 @@ export function CompanionPlanHero({
   const [trial, setTrial] = useState<TrialState | null>(null);
   const [plan, setPlan] = useState<ConversationPlanRow | null>(null);
   const [messagingEligible, setMessagingEligible] = useState(false);
-  const [recommended, setRecommended] = useState(3);
   const [loading, setLoading] = useState(true);
   const [planOpen, setPlanOpen] = useState(false);
   const [trialOpen, setTrialOpen] = useState(false);
@@ -66,12 +64,9 @@ export function CompanionPlanHero({
       setLoading(false);
       return;
     }
-    const [state, plans, prefs, bookings] = await Promise.all([
+    const [state, plans, bookings] = await Promise.all([
       getTrialState(member.id, companion.id).catch(() => null),
       listMyPlans().catch(() => []),
-      getMemberPlanPreferences(member.id).catch(() => ({
-        preferredDays: [], preferredDayparts: [], preferredDurationMinutes: null,
-      })),
       listMyBookings().catch(() => []),
     ]);
     setTrial(state);
@@ -100,7 +95,6 @@ export function CompanionPlanHero({
           ['active', 'paused', 'ended'].includes(p.status),
       ),
     );
-    setRecommended(recommendedFrequency(prefs));
     setLoading(false);
   }, [member, companion.id]);
 
@@ -121,11 +115,21 @@ export function CompanionPlanHero({
 
   const canPlan = singleOffers.length > 0 && acceptingNewMembers && !plan;
   const showTrialCard = trial !== 'used' && trialOffer !== null && acceptingNewMembers && !plan;
-  // Cheapest single offer, for the "from £X" hint on the one-off option.
+  // ONE authoritative price source: the cheapest single offer drives the "from
+  // £X per conversation" fact for both Regular and One-off (regular is built
+  // from the same per-conversation unit). Shown only when reliably available.
   const cheapestSingleMinor = singleOffers.reduce(
     (min, o) => Math.min(min, o.price_minor), Number.POSITIVE_INFINITY,
   );
-  const oneOffFromLabel = Number.isFinite(cheapestSingleMinor) ? formatMinor(cheapestSingleMinor) : null;
+  const fromLabel = Number.isFinite(cheapestSingleMinor) ? formatMinor(cheapestSingleMinor) : null;
+  // Real conversation duration, only when the offers agree or give a clear range.
+  const durations = Array.from(new Set(singleOffers.map((o) => o.duration_minutes))).sort((a, b) => a - b);
+  const durationLabel =
+    durations.length === 1
+      ? `${durations[0]}-minute conversations`
+      : durations.length > 1
+        ? `${durations[0]}–${durations[durations.length - 1]} minute conversations`
+        : null;
 
   return (
     <div className="col mt-4" style={{ gap: 12 }}>
@@ -207,10 +211,12 @@ export function CompanionPlanHero({
                 <span className="bold">Regular conversations</span>
                 <span className="badge badge-success">Recommended</span>
               </span>
-              <span className="faint">
-                Same companion, a weekly rhythm. For {member.first_name}: about {recommended}/week
-                {' '}· from {PLAN_FREQUENCY_MIN} per week.
-              </span>
+              <span className="faint">Arrange an ongoing schedule with the same Companion.</span>
+              <ul className="booking-facts faint">
+                {durationLabel && <li>{durationLabel}</li>}
+                <li>Choose how often you would like to talk</li>
+                {fromLabel && <li>From {fromLabel} per conversation</li>}
+              </ul>
             </button>
             <button
               type="button"
@@ -219,16 +225,17 @@ export function CompanionPlanHero({
               onClick={() => setBookingType('oneoff')}
             >
               <span className="bold">One-off conversation</span>
-              <span className="faint">
-                A single conversation, no ongoing commitment
-                {oneOffFromLabel ? ` · from ${oneOffFromLabel}` : ''}.
-              </span>
+              <span className="faint">A single conversation, with no ongoing commitment.</span>
+              <ul className="booking-facts faint">
+                {durationLabel && <li>{durationLabel}</li>}
+                {fromLabel && <li>From {fromLabel} per conversation</li>}
+              </ul>
             </button>
           </div>
 
           {bookingType === 'regular' ? (
             <button className="btn btn-primary" style={{ alignSelf: 'flex-start' }} onClick={() => setPlanOpen(true)}>
-              Start regular conversations
+              Set up regular conversations
             </button>
           ) : (
             <button className="btn btn-primary" style={{ alignSelf: 'flex-start' }} onClick={onBookOneOff}>

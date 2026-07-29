@@ -1256,6 +1256,8 @@ table.plain th { color: var(--color-text-secondary); font-weight: 600; }
 .booking-type-group { display: grid; grid-template-columns: 1fr; gap: var(--space-3); }
 @media (min-width: 560px) { .booking-type-group { grid-template-columns: 1fr 1fr; } }
 .booking-type-option { gap: 4px; text-align: left; align-items: stretch; }
+.booking-facts { margin: 4px 0 0; padding-left: 1.15em; display: flex; flex-direction: column; gap: 2px; }
+.booking-facts li { list-style: disc; }
 
 /* ============================================================
    Public landing page (Block 12). Apricot / ivory brand, built
