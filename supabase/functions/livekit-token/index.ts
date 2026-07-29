@@ -78,10 +78,14 @@ async function handleGuestJoin(body: Record<string, unknown>): Promise<Response>
 
   const { data: booking } = await admin
     .from('bookings')
-    .select('id, status, starts_at, ends_at, member_profile_id')
+    .select('id, status, starts_at, ends_at, member_profile_id, member_seat')
     .eq('id', r.booking_id!)
     .maybeSingle();
   if (!booking || booking.status !== 'confirmed') return json({ state: 'invalid' }, 200);
+  // 0101 — the two-person seat can't be double-booked. If the Coordinator has
+  // taken the Member seat for this booking, the managed-Member guest link is
+  // disabled (the Coordinator joins as the authenticated participant instead).
+  if (booking.member_seat === 'coordinator') return json({ state: 'invalid' }, 200);
   // Safe display name for the managed Member (first name + initial), read from
   // the profile. Strictly COSMETIC and best-effort: a failure here must NEVER
   // block the join (member_first_name lives on the my_bookings view, not the
