@@ -138,12 +138,13 @@ function ConversationList({ selectedId }: { selectedId: string | null }) {
       />
     );
   }
-  // Phase D: the Companion sees introductions in their own clearly
-  // labelled section, never mixed silently into active chats.
-  const isCompanionViewer = (c: ConversationWithPreview) =>
-    viewer.profileIds.has(c.companionProfileId) && !viewer.profileIds.has(c.memberProfileId);
+  // Section 2 — every message request lands in this clearly-labelled section,
+  // in BOTH directions, so the recipient can never miss it: a Companion
+  // receiving a Member/Coordinator request, OR a Member/Coordinator receiving a
+  // Companion introduction. Requests the viewer sent themselves also surface
+  // here (shown with a "sent" status), never silently mixed into active chats.
   const requests = conversations.filter(
-    (c) => isCompanionViewer(c) && (c.status === 'request_pending' || c.status === 'declined'),
+    (c) => c.status === 'request_pending' || c.status === 'declined',
   );
   const normal = conversations.filter((c) => !requests.includes(c));
 
