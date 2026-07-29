@@ -13,8 +13,9 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Loader2, Mic, MicOff, PhoneOff, Video, VideoOff, Volume2 } from 'lucide-react';
+import { Calendar, Loader2, Mic, MicOff, PhoneOff, ShieldCheck, Video, VideoOff, Volume2 } from 'lucide-react';
 import { isSupabaseMode } from '../config/dataMode';
+import { CameraPreview } from '../components/CameraPreview';
 import { isSupabaseConfigured } from '../supabase/client';
 import {
   guestInvitationRepository,
@@ -218,6 +219,86 @@ export default function GuestJoin() {
             <span className="call-ctrl-label">Leave</span>
           </button>
         </div>
+      </div>
+    );
+  }
+
+  // Polished pre-join lobby — the SAME professional layout the Companion sees
+  // (camera preview, mic/camera toggles, prominent Join), not a plain card.
+  if (phase === 'ready' && details) {
+    return (
+      <div className="call-lobby">
+        <div className="call-preview">
+          {cameraOnEntry
+            ? <CameraPreview />
+            : (
+              <div className="call-preview-off">
+                <div className="call-avatar call-avatar-lg" aria-hidden="true"><VideoOff size={40} /></div>
+                <p style={{ margin: 0 }}>Your camera is off</p>
+              </div>
+            )}
+          <span className="call-not-recorded"><ShieldCheck size={14} aria-hidden="true" /> Not recorded</span>
+        </div>
+
+        <div className="call-meta">
+          <h1>Your conversation with {details.companionName}</h1>
+          {timeLabel && <span className="call-meta-when"><Calendar size={15} aria-hidden="true" /> {timeLabel}</span>}
+          <span className="muted small">{details.durationMinutes} minutes · video call · not recorded</span>
+        </div>
+
+        <div className="call-toggles">
+          <button
+            type="button"
+            className={`call-ctrl call-toggle${muteOnEntry ? ' is-off' : ''}`}
+            aria-pressed={!muteOnEntry}
+            aria-label={muteOnEntry ? 'Join with my microphone muted' : 'Join with my microphone on'}
+            onClick={() => setMuteOnEntry((v) => !v)}
+          >
+            <span className="call-ctrl-ico">{muteOnEntry ? <MicOff size={20} /> : <Mic size={20} />}</span>
+            <span className="call-ctrl-label">{muteOnEntry ? 'Mic off' : 'Mic on'}</span>
+          </button>
+          <button
+            type="button"
+            className={`call-ctrl call-toggle${!cameraOnEntry ? ' is-off' : ''}`}
+            aria-pressed={cameraOnEntry}
+            aria-label={cameraOnEntry ? 'Join with my camera on' : 'Join with my camera off'}
+            onClick={() => setCameraOnEntry((v) => !v)}
+          >
+            <span className="call-ctrl-ico">{cameraOnEntry ? <Video size={20} /> : <VideoOff size={20} />}</span>
+            <span className="call-ctrl-label">{cameraOnEntry ? 'Camera on' : 'Camera off'}</span>
+          </button>
+        </div>
+
+        {mics.length > 1 && (
+          <div className="call-settings-panel" style={{ maxWidth: 360, margin: '0 auto' }}>
+            <div className="field">
+              <label htmlFor="guest-mic">Microphone</label>
+              <select id="guest-mic" value={selectedMic} onChange={(e) => setSelectedMic(e.target.value)}>
+                {mics.map((m) => <option key={m.deviceId} value={m.deviceId}>{m.label}</option>)}
+              </select>
+            </div>
+          </div>
+        )}
+        {micChecked === false && (
+          <div className="call-hint call-hint-warn" role="alert">
+            <MicOff size={18} aria-hidden="true" />
+            <span>We couldn’t reach your microphone. Check your browser permissions — you can still try joining.</span>
+          </div>
+        )}
+
+        <div className="call-actions">
+          <button className="btn btn-primary call-join-primary" onClick={() => void join()}>
+            Join conversation
+          </button>
+          <button className="btn btn-secondary" onClick={() => void checkMic()}>
+            Check my microphone
+          </button>
+        </div>
+
+        <p className="call-safety">
+          This is a video call — you can turn your camera off at any time. Calls are <strong>not recorded</strong>.
+          This service is not for emergencies.
+        </p>
       </div>
     );
   }
