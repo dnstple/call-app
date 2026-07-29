@@ -11,11 +11,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
+  checkPaymentOrder,
   createPaidRequest,
+  createSetupSession,
+  getBillingStatus,
   getPaymentOrderState,
   quotePaidRequest,
   type PaidRequestQuote,
 } from '../repositories/billingRepository';
+import { clearPaymentSession, savePaymentSession } from '../payments/paymentSession';
+import { clearBookingDraft, saveBookingDraft } from '../payments/bookingDraft';
 import { ArrowLeft, CalendarDays, Loader2, Package, X } from 'lucide-react';
 import type { ConversationOfferRow } from '../supabase/database.types';
 import type { User } from '../types';
@@ -132,10 +137,13 @@ export function SupabaseBookingWizard({
   companion,
   offers,
   onClose,
+  resume,
 }: {
   companion: User;
   offers: ConversationOfferRow[];
   onClose: () => void;
+  /** Block 9: restore a saved draft after the Stripe setup redirect. */
+  resume?: { offerId: string; memberId: string; startsAt: string } | null;
 }) {
   const state = useAppState();
   const auth = useAuthSnapshot();
@@ -165,6 +173,34 @@ export function SupabaseBookingWizard({
 
   const member = bookableMembers.find((m) => m.id === memberId);
   const isCoordinator = state.users.find((u) => u.id === state.session.currentUserId)?.role === 'coordinator';
+
+  // Block 9 — payment-method-first booking. `cardReady` is server-derived
+  // (billing_status for THIS authenticated customer); null while loading.
+  const [cardReady, setCardReady] = useState<boolean | null>(null);
+  useEffect(() => {
+    let live = true;
+    getBillingStatus()
+      .then((s) => live && setCardReady(s.paymentMethodReady))
+      .catch(() => live && setCardReady(false));
+    return () => { live = false; };
+  }, []);
+
+  // Restore a draft after returning from Stripe setup: re-select the exact
+  // offer + slot and land on review, where the price is RE-QUOTED server-side.
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (!resume || restoredRef.current) return;
+    const offer = offers.find((o) => o.id === resume.offerId);
+    if (!offer) return; // offer withdrawn since — fall back to a fresh booking
+    restoredRef.current = true;
+    setMemberId(resume.memberId);
+    setSelection({ kind: 'offer', offer });
+    setSlot({
+      startsAt: resume.startsAt,
+      endsAt: new Date(new Date(resume.startsAt).getTime() + offer.duration_minutes * 60000).toISOString(),
+    });
+    setStep('review');
+  }, [resume, offers]);
 
   // Eligible packages for THIS member with THIS companion (Stage 2E3B2B).
   const loadPackages = useCallback(async () => {
@@ -229,20 +265,32 @@ export function SupabaseBookingWizard({
       return;
     }
     if (result.state === 'requires_action' && result.url) {
+      // 3D-C: persist the durable recovery session BEFORE leaving the app so
+      // the banking-app/browser return (and any reload) can resume this exact
+      // order; navigate exactly once.
+      if (redirectedRef.current) return;
+      redirectedRef.current = true;
+      savePaymentSession({ orderId: result.orderId, kind: 'one_off', returnTo: '/conversations' });
       setPayState('redirecting');
       window.location.href = result.url; // Stripe-hosted authentication
       return;
     }
     if (result.state === 'failed') {
+      clearPaymentSession();
       setError('Your payment didn’t go through. No request was sent — please try again.');
       setSubmitting(false);
       return;
     }
-    // Poll the safe order state until the WEBHOOK confirms funding.
+    // Poll the safe order state until the WEBHOOK confirms funding (bounded;
+    // a timeout is DELAYED CONFIRMATION, never treated as failure).
+    savePaymentSession({ orderId: result.orderId, kind: 'one_off', returnTo: '/conversations' });
+    lastOrderRef.current = result.orderId;
     setPayState('confirming');
     for (let i = 0; i < 20; i += 1) {
       const status = await getPaymentOrderState(result.orderId);
       if (status === 'succeeded') {
+        clearPaymentSession();
+        clearBookingDraft(); // draft is terminal once the order is placed
         setPayState('succeeded');
         setSubmitting(false);
         setTimeout(() => {
@@ -252,6 +300,7 @@ export function SupabaseBookingWizard({
         return;
       }
       if (status === 'failed' || status === 'expired') {
+        clearPaymentSession();
         setPayState(null);
         setError('Your payment didn’t go through. No request was sent — please try again.');
         setSubmitting(false);
@@ -259,12 +308,77 @@ export function SupabaseBookingWizard({
       }
       await new Promise((r) => setTimeout(r, 1500));
     }
-    // Still pending: honest holding state (webhook may land shortly).
+    // Still pending: honest delayed-confirmation state with manual recovery
+    // (the durable session is KEPT — money may already have moved).
+    setPayState('delayed');
     setSubmitting(false);
   }, [selection, slot, member, companion.id, navigate, onClose]);
 
+  // 3D-C: single-navigation guard + last order for manual status checks.
+  const redirectedRef = useRef(false);
+  const lastOrderRef = useRef<string | null>(null);
+  const [checkingStatus, setCheckingStatus] = useState(false);
+  const checkStatusNow = useCallback(async () => {
+    const orderId = lastOrderRef.current;
+    if (!orderId || checkingStatus) return;
+    setCheckingStatus(true);
+    try {
+      const p = await checkPaymentOrder(orderId);
+      if (p.found && p.customerStatus === 'completed') {
+        clearPaymentSession();
+        setPayState('succeeded');
+        setTimeout(() => {
+          onClose();
+          navigate('/conversations');
+        }, 1600);
+      } else if (p.found && (p.customerStatus === 'failed' || p.customerStatus === 'cancelled')) {
+        clearPaymentSession();
+        setPayState(null);
+        setError('Your payment didn’t go through. No request was sent — please try again.');
+      }
+      // Any other state: stay in the honest delayed view; session kept.
+    } finally {
+      setCheckingStatus(false);
+    }
+  }, [checkingStatus, navigate, onClose]);
+
+  // Block 9 — no saved card yet: launch Stripe hosted setup FIRST. This creates
+  // no order, reserves nothing and takes no payment; it only saves the draft so
+  // the exact wizard resumes on return. Order creation stays at its authoritative
+  // point (createPaidRequest), reached only once a card exists.
+  const launchCardSetup = useCallback(async () => {
+    if (!selection || selection.kind !== 'offer' || !slot || !member || submitting || redirectedRef.current) return;
+    if (!auth.userId) return;
+    setSubmitting(true);
+    setError(null);
+    saveBookingDraft({
+      accountId: auth.userId,
+      companionId: companion.id,
+      memberId: member.id,
+      offerId: selection.offer.id,
+      offerType: selection.offer.offer_type,
+      startsAt: slot.startsAt,
+    });
+    const url = await createSetupSession(`/people/${companion.id}`);
+    if (!url) {
+      // Setup couldn't start: no order was created and the draft is kept intact
+      // (the wizard is still open) so the customer can simply try again.
+      setError('We couldn’t start card setup just now. Please try again.');
+      setSubmitting(false);
+      return;
+    }
+    redirectedRef.current = true;
+    window.location.href = url; // Stripe-hosted card setup
+  }, [selection, slot, member, submitting, auth.userId, companion.id]);
+
   const submit = useCallback(async () => {
     if (!selection || !slot || !member || submitting) return; // duplicate-click protection
+    // Paid offer that needs a card, with none saved → set the card up first (no
+    // order created). Credit-only bookings (cardAmountMinor === 0) need no card.
+    if (selection.kind === 'offer' && cardReady === false && !!quote && quote.cardAmountMinor > 0) {
+      await launchCardSetup();
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
@@ -273,6 +387,7 @@ export function SupabaseBookingWizard({
         return;
       }
       const booking = await createPackageBookingRequest(selection.pack.purchase.id, slot.startsAt, method);
+      clearBookingDraft();
       onClose();
       navigate(`/conversations/${booking.id}`);
     } catch (e) {
@@ -295,7 +410,11 @@ export function SupabaseBookingWizard({
       }
       setSubmitting(false);
     }
-  }, [selection, slot, member, method, submitting, navigate, onClose, offers, loadPackages]);
+  }, [selection, slot, member, method, submitting, cardReady, quote, launchCardSetup, navigate, onClose, offers, loadPackages]);
+
+  // Whether the primary action will divert to card setup rather than pay now.
+  const needsCardSetup =
+    selection?.kind === 'offer' && cardReady === false && !!quote && quote.cardAmountMinor > 0;
 
   if (bookableMembers.length === 0) {
     return (
@@ -484,6 +603,12 @@ export function SupabaseBookingWizard({
                   </div>
                 </>
               )}
+              {needsCardSetup && payState === null && (
+                <p className="small" style={{ margin: '6px 0 0' }}>
+                  You’ll add a card on Stripe’s secure page, then come straight back
+                  here to confirm this conversation — nothing is charged until you do.
+                </p>
+              )}
               {payState === 'payment_method_required' && (
                 <p className="small" role="alert" style={{ margin: '6px 0 0' }}>
                   A saved payment method is needed first.{' '}
@@ -492,7 +617,34 @@ export function SupabaseBookingWizard({
                 </p>
               )}
               {payState === 'confirming' && (
-                <p className="small" role="status" style={{ margin: '6px 0 0' }}>Payment is being confirmed.</p>
+                <p className="small" role="status" style={{ margin: '6px 0 0' }}>
+                  Your payment was received. We’re confirming your conversation.
+                </p>
+              )}
+              {payState === 'redirecting' && (
+                <p className="small" role="status" style={{ margin: '6px 0 0' }}>
+                  Your bank needs a quick security check. Taking you to their secure
+                  page now — you’ll come straight back here afterwards.
+                </p>
+              )}
+              {payState === 'delayed' && (
+                <div className="col" style={{ gap: 6, margin: '6px 0 0' }} role="status">
+                  <p className="small" style={{ margin: 0 }}>
+                    Your payment was received, but confirmation is taking longer than
+                    expected. You will not be charged again.
+                  </p>
+                  <div className="row" style={{ gap: 8 }}>
+                    <button className="btn" type="button" disabled={checkingStatus}
+                      onClick={() => void checkStatusNow()}>
+                      {checkingStatus ? 'Checking…' : 'Check payment status'}
+                    </button>
+                    {lastOrderRef.current && (
+                      <Link className="btn" to={`/payment/return?order=${lastOrderRef.current}`}>
+                        Open payment status page
+                      </Link>
+                    )}
+                  </div>
+                </div>
               )}
               {payState === 'succeeded' && (
                 <p className="small" role="status" style={{ margin: '6px 0 0', color: 'var(--color-success-text)' }}>
@@ -519,15 +671,20 @@ export function SupabaseBookingWizard({
             <button
               className="btn btn-primary"
               onClick={() => void submit()}
-              disabled={submitting || !method || (selection.kind === 'offer' && !quote)}
+              disabled={
+                submitting || !method ||
+                (selection.kind === 'offer' && (!quote || (quote.cardAmountMinor > 0 && cardReady === null)))
+              }
             >
               {submitting
-                ? 'Processing…'
+                ? (needsCardSetup ? 'Taking you to add a card…' : 'Processing…')
                 : selection.kind !== 'offer'
                   ? 'Send request'
                   : quote && quote.cardAmountMinor === 0
                     ? 'Use credit and request conversation'
-                    : 'Pay and request conversation'}
+                    : needsCardSetup
+                      ? 'Add a card to continue'
+                      : 'Pay and request conversation'}
             </button>
           </div>
         </div>

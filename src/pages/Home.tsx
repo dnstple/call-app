@@ -8,7 +8,9 @@ import { listMyPlans } from '../repositories/planRepository';
 import { SupabaseBookingRow } from './Conversations';
 import { isSupabaseConfigured } from '../supabase/client';
 import { CompanionPlanRequests, ConversationPlans } from '../components/PlanCards';
+import { CompanionInterestedPanel } from '../components/CompanionInterestedPanel';
 import { useAppState } from '../state/store';
+import { useAccountRole } from '../state/managedMember';
 import {
   activeMember,
   currentUser,
@@ -62,6 +64,8 @@ function CompanionAvailabilitySnapshot() {
 export default function Home() {
   const state = useAppState();
   const me = currentUser(state);
+  // Authoritative role in Supabase mode (the mock `me` is not the real account).
+  const accountRole = useAccountRole();
   const navigate = useNavigate();
   const bookings = visibleBookings(state);
 
@@ -223,7 +227,7 @@ export default function Home() {
         )}
 
         {/* Companion: plan requests keep their dedicated decision cards. */}
-        {isSupabaseConfigured() && me.role === 'companion' && <CompanionPlanRequests />}
+        {isSupabaseConfigured() && accountRole === 'companion' && <CompanionPlanRequests />}
 
         {/* Next conversation hero */}
         {hero ? (
@@ -261,8 +265,8 @@ export default function Home() {
               · {hero.duration_minutes} minutes · <Countdown to={hero.starts_at} />
             </p>
             <div className="row wrap" style={{ gap: 8 }}>
-              <Link to={`/calls/${hero.id}`} className="btn btn-primary btn-small">
-                <Phone size={16} aria-hidden="true" /> {me.role === 'companion' ? 'Join when open' : 'Open call room'}
+              <Link to={`/conversations/${hero.id}/call`} className="btn btn-primary btn-small">
+                <Phone size={16} aria-hidden="true" /> Join the audio call
               </Link>
               <Link to={`/conversations/${hero.id}`} className="btn btn-secondary btn-small">
                 Manage conversation
@@ -332,6 +336,7 @@ export default function Home() {
         {/* Role-specific supporting info */}
         {isSupabaseConfigured() && me.role !== 'companion' && planActivity > 0 && <ConversationPlans />}
         {me.role === 'companion' && <CompanionAvailabilitySnapshot />}
+        {isSupabaseConfigured() && accountRole === 'companion' && <CompanionInterestedPanel />}
       </div>
     );
   }

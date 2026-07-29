@@ -13,7 +13,7 @@ describe('app smoke test', () => {
   it('renders the shell and home dashboard with seeded data', () => {
     window.location.hash = '#/';
     render(<App />);
-    expect(screen.getAllByText(/Prototype build — fictional people/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Preview build — sample data/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Alex/).length).toBeGreaterThan(0);
     cleanup();
   });
@@ -42,14 +42,14 @@ describe('app smoke test', () => {
     cleanup();
   });
 
-  it('renders the sign-up role step with coordinator + companion cards (no member login path)', () => {
+  it('renders the sign-up role step with the three choices in order', () => {
     window.location.hash = '#/signup';
     render(<App />);
     expect(screen.getAllByText(/How will you use the app\?/i).length).toBeGreaterThan(0);
-    // Redesign: managed Members have no login — the member card is gone.
-    expect(screen.queryByText(/I would like someone to talk with/i)).toBeNull();
-    expect(screen.getAllByText(/I would like to be a Companion/i).length).toBeGreaterThan(0);
+    // 1. arranging for someone else, 2. be a Companion, 3. arrange for myself.
     expect(screen.getAllByText(/arranging conversations for someone else/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/I would like to be a Companion/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/arrange conversations for myself/i).length).toBeGreaterThan(0);
     cleanup();
   });
 

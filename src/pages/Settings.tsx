@@ -28,6 +28,7 @@ import { saveSettings } from '../state/actions';
 import { formatPence } from '../domain/commission';
 import { usageLabel } from '../domain/packages';
 import { ConfirmDialog, Modal, PageHeader, ProfilePhoto, SettingsRow, Switch } from '../components/ui';
+import { ConsentPanel, NotificationPreferencesPanel, SafetyNotice } from '../components/TrustSafety';
 import { MessagingPermissionSettings } from '../messaging/MessagingPermissionSettings';
 import { clearDraft, completedSignups, hasDraft, resetSignupDemo } from '../signup/storage';
 import { DataModePanel } from '../components/DataModePanel';
@@ -35,6 +36,7 @@ import { AuthStatusPanel } from '../components/AuthStatusPanel';
 import { getDataMode, isSupabaseMode } from '../config/dataMode';
 import { BillingPanel } from '../components/BillingPanel';
 import { ConnectPanel } from '../components/ConnectPanel';
+import { EarningsPanel } from '../components/EarningsPanel';
 import { useAuth } from '../auth/AuthProvider';
 import { KeyRound, LogOut, ShieldCheck } from 'lucide-react';
 import { roleLabel } from '../components/Shell';
@@ -91,6 +93,13 @@ export default function Settings() {
         {isSupabaseMode() && me.role !== 'companion' && <BillingPanel />}
         {/* 2G3: Companion Connect onboarding + payment readiness. */}
         {isSupabaseMode() && me.role === 'companion' && <ConnectPanel />}
+        {/* 3E-G: Companion earnings (read-only 0085 projections). */}
+        {isSupabaseMode() && me.role === 'companion' && <EarningsPanel />}
+
+        {/* Block 2: versioned consent + safety copy. Block 3: email preferences. */}
+        {isSupabaseMode() && <ConsentPanel />}
+        {isSupabaseMode() && <NotificationPreferencesPanel />}
+        <SafetyNotice />
 
         <section>
           <h3 className="muted mb-2" style={{ fontWeight: 600 }}>Account</h3>

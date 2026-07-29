@@ -421,7 +421,8 @@ describe('initial bundle composition', () => {
     // Static source contract: keeps the LiveKit SDK and the messaging /
     // plans / notifications pages out of the initial chunk.
     const src = readAppSource();
-    for (const page of ['CallRoom', 'PlanMemberProfile', 'MessagesPage', 'PlanDetail', 'Notifications', 'MembersPage']) {
+    // CallPage replaced the legacy CallRoom when guests were unified into the member slot (0066).
+    for (const page of ['CallPage', 'PlanMemberProfile', 'MessagesPage', 'PlanDetail', 'Notifications', 'MembersPage']) {
       expect(src).toMatch(new RegExp(`const ${page} = lazy\\(\\(\\) => import\\('./pages/${page}'\\)\\)`));
       expect(src).not.toMatch(new RegExp(`^import ${page} from`, 'm'));
     }

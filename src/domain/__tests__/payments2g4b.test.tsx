@@ -21,19 +21,23 @@ describe('livekit-webhook contract', () => {
     expect(WH).toContain("return new Response('malformed', { status: 400 })");
   });
 
-  it('5. only the three attendance events are handled; others are 2xx-ignored', () => {
+  it('5. legacy attendance events handled; irrelevant ones 2xx-ignored; no recording/egress', () => {
+    // Stage 3A: the legacy booking- branch still handles exactly these three.
     expect(WH).toContain("['participant_joined', 'participant_left', 'room_finished']");
     expect(WH).toContain('ignored_irrelevant');
-    expect(WH).not.toMatch(/recording|transcript|egress|track_published/);
+    // Microphone track events are legitimate (call_ branch), but NEVER recording/egress.
+    expect(WH).not.toMatch(/recording|transcript|egress/);
   });
 
-  it('7+8+11+12. room and identity are VERIFIED against the funded booking', () => {
+  it('7+8+11+12. room and identity are VERIFIED against the funded booking (legacy branch)', () => {
     expect(WH).toContain('/^booking-([0-9a-f-]{36})$/');
     expect(WH).toContain(".eq('provider', 'stripe_test').eq('status', 'succeeded')");
-    expect(WH).toContain('not_funded_ignored');
     expect(WH).toContain('identity === `companion-${order.companion_profile_id}`');
     expect(WH).toContain('identity === `member-${order.member_profile_id}`');
-    expect(WH).toContain('unknown_identity_ignored');
+    // Unfunded booking or unknown identity → safe 2xx ignore (Stage 3A folded the
+    // separate log strings into a uniform ignored result).
+    expect(WH).toContain('if (!order) return ok({ ignored: true })');
+    expect(WH).toContain('if (!side) return ok({ ignored: true })');
   });
 
   it('13–22. segments: replay-safe join, provider-time close, reconnects, room end', () => {
@@ -42,8 +46,8 @@ describe('livekit-webhook contract', () => {
     expect(WH).toContain(".is('left_at', null)");
     expect(WH).toContain('Math.max(0, Math.floor('); // negative durations impossible
     expect(WH).toContain("event.event === 'room_finished'");
-    // Duplicate leave finds no open segment → no double count.
-    expect(WH).toContain('no_open_segment');
+    // A duplicate leave closes the OLDEST open segment only → no double count.
+    expect(WH).toContain(".order('joined_at', { ascending: true }).limit(1)");
     // Database failure → retryable non-2xx.
     expect(WH).toContain("return new Response('persist_failed', { status: 500 })");
   });
@@ -94,10 +98,11 @@ describe('0035 evidence-backed no-show', () => {
 describe('Companion attendance UI', () => {
   it('36–38+48. server-authoritative visibility (ended + funded + companion side only)', () => {
     expect(CARD).toContain('if (!isSupabaseMode() || state === null || !state.ended || !state.funded) return null;');
-    // The detail page shows the attendance card for any ended Companion-side
-    // conversation (no client status gate); the card self-hides unless the
-    // server reports ended & funded.
-    expect(DETAIL).toContain('{isCompanionSide && ended && (');
+    // 0067: the attendance card shows only for an ACCEPTED (confirmed) ended
+    // Companion-side conversation; it additionally self-hides unless the server
+    // reports ended & funded.
+    expect(DETAIL).toContain('{isCompanionSide && ended && eligibleForCompletion && (');
+    expect(DETAIL).toContain("const eligibleForCompletion = booking.status === 'confirmed'");
     expect(CARD).toContain("rpc('get_companion_completion_state'");
   });
 

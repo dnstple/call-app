@@ -123,7 +123,7 @@ function planRow(partial: Partial<ConversationPlanRow> = {}): ConversationPlanRo
     created_by_account_id: 'acct-coordinator', frequency_per_week: 2, duration_minutes: 30,
     communication_method: 'in_app', per_conversation_price_minor: 900, weekly_price_minor: 1800,
     currency: 'GBP', status: 'requested', allowance_purchase_id: 'pp1', pending_change: null,
-    generated_until: null, paused_at: null, ended_at: null, end_reason: null,
+    generated_until: null, paused_at: null, ended_at: null, end_reason: null, billing_enabled: false, funding_mode: 'recurring',
     pause_reason: null, resume_on: null,
     request_message: 'Mary loves gardening and local history.', response_message: null,
     created_at: '2026-07-01T09:00:00Z', updated_at: '',

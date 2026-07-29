@@ -23,6 +23,7 @@ import {
   IN_APP_METHOD,
   type AvailableSlot,
 } from '../repositories/bookingRepository';
+import { clearPaymentSession, savePaymentSession } from '../payments/paymentSession';
 import {
   createPaidRequest,
   getPaymentOrderState,
@@ -71,6 +72,9 @@ export function TestCallWizard({
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [payState, setPayState] = useState<string | null>(null);
   const idempotencyRef = useRef('');
+  // 3D-C: single-navigation guard + last order for the status page link.
+  const redirectedRef = useRef(false);
+  const lastOrderRef = useRef<string | null>(null);
 
   const member = eligibleMembers.find((m) => m.id === memberId);
 
@@ -130,19 +134,28 @@ export function TestCallWizard({
           return;
         }
         if (result.state === 'requires_action' && result.url) {
+          // 3D-C: persist the recovery session BEFORE the bank handoff and
+          // navigate exactly once; the /payment/return route resumes.
+          if (redirectedRef.current) return;
+          redirectedRef.current = true;
+          savePaymentSession({ orderId: result.orderId, kind: 'trial', returnTo: '/conversations' });
           setPayState('redirecting');
           window.location.href = result.url;
           return;
         }
         if (result.state === 'failed') {
+          clearPaymentSession();
           setError('Your payment didn’t go through. No request was sent — please try again.');
           setSubmitting(false);
           return;
         }
+        savePaymentSession({ orderId: result.orderId, kind: 'trial', returnTo: '/conversations' });
+        lastOrderRef.current = result.orderId;
         setPayState('confirming');
         for (let i = 0; i < 20; i += 1) {
           const status = await getPaymentOrderState(result.orderId);
           if (status === 'succeeded') {
+            clearPaymentSession();
             setPayState('succeeded');
             setStep('done');
             onBooked?.();
@@ -150,6 +163,7 @@ export function TestCallWizard({
             return;
           }
           if (status === 'failed' || status === 'expired') {
+            clearPaymentSession();
             setPayState(null);
             setError('Your payment didn’t go through. No request was sent — please try again.');
             setSubmitting(false);
@@ -157,6 +171,8 @@ export function TestCallWizard({
           }
           await new Promise((r) => setTimeout(r, 1500));
         }
+        // Timeout = delayed confirmation (never failure); session kept.
+        setPayState('delayed');
         setSubmitting(false);
         return;
       }
@@ -373,7 +389,28 @@ export function TestCallWizard({
               </p>
             )}
             {payState === 'confirming' && (
-              <p className="small" role="status" style={{ margin: '6px 0 0' }}>Payment is being confirmed.</p>
+              <p className="small" role="status" style={{ margin: '6px 0 0' }}>
+                Your payment was received. We’re confirming your conversation.
+              </p>
+            )}
+            {payState === 'redirecting' && (
+              <p className="small" role="status" style={{ margin: '6px 0 0' }}>
+                Your bank needs a quick security check. Taking you to their secure
+                page now — you’ll come straight back here afterwards.
+              </p>
+            )}
+            {payState === 'delayed' && (
+              <div className="col" style={{ gap: 6, margin: '6px 0 0' }} role="status">
+                <p className="small" style={{ margin: 0 }}>
+                  Your payment was received, but confirmation is taking longer than
+                  expected. You will not be charged again.
+                </p>
+                {lastOrderRef.current && (
+                  <Link className="btn" to={`/payment/return?order=${lastOrderRef.current}`}>
+                    Check payment status
+                  </Link>
+                )}
+              </div>
             )}
           </div>
         </section>

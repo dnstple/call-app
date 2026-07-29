@@ -1,0 +1,357 @@
+/**
+ * Stage 3C1 — financial operations control plane (0073) contract proofs.
+ *
+ * Static/source contracts (no DB). They prove the control plane is ADDITIVE and
+ * FINANCIALLY INERT: controls default disabled, every sensitive table forces
+ * RLS with no policies, runs are always scoped and batch-capped, previews are
+ * side-effect-free, execution is control-gated and — crucially — 0073 invokes
+ * NO transfer / refund / dispute / reconciliation worker, calls no Stripe/HTTP,
+ * enables no cron, and never touches the protected booking or the 177 findings.
+ */
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
+
+const ROOT = join(__dirname, '..', '..', '..');
+const MIGRATIONS_DIR = join(ROOT, 'supabase', 'migrations');
+const M = readFileSync(join(MIGRATIONS_DIR, '0073_financial_operations_control_plane.sql'), 'utf-8');
+const M74 = readFileSync(join(MIGRATIONS_DIR, '0074_persist_financial_operation_block_events.sql'), 'utf-8');
+const APP = readFileSync(join(ROOT, 'src', 'App.tsx'), 'utf-8');
+
+const stripSql = (s: string): string => s.replace(/--.*$/gm, '');
+const M_CODE = stripSql(M);
+function fn(name: string): string {
+  const s = M.indexOf(`create or replace function ${name}`);
+  if (s < 0) throw new Error(`0073 fn not found: ${name}`);
+  return M.slice(s, M.indexOf('\n$$;', s));
+}
+
+describe('0073 tables — controls default disabled, RLS forced, runs scoped, events append-only', () => {
+  it('every control seeds at the disabled default and the table default is disabled', () => {
+    expect(M).toContain("state text not null default 'disabled'");
+    // The 10 controls are seeded WITHOUT an explicit state (⇒ default disabled).
+    for (const c of ['earning_release', 'transfer_claim', 'transfer_finalise', 'refund_claim',
+                     'refund_finalise', 'plan_renewal', 'dispute_reconciliation',
+                     'financial_reconciliation', 'evidence_review_release', 'production_live_operations']) {
+      expect(M).toContain(`'${c}'`);
+    }
+    expect(M).toContain("check (state in ('disabled', 'dry_run_only', 'scoped_execution', 'enabled'))");
+  });
+  it('forces RLS with no policies on every new table (definer-only)', () => {
+    for (const t of ['financial_operations_config', 'financial_operation_controls',
+                     'financial_operation_control_events', 'financial_operation_runs',
+                     'financial_operation_run_events']) {
+      expect(M).toContain(`alter table public.${t} enable row level security`);
+      expect(M).toContain(`alter table public.${t} force row level security`);
+    }
+    expect(M).not.toMatch(/create policy/i);
+  });
+  it('runs are ALWAYS scoped and batch-capped; no global/unbounded run exists', () => {
+    expect(M).toContain('batch_limit integer not null check (batch_limit between 1 and 25)');
+    expect(M).toContain('constraint fin_run_scoped check (');
+    expect(M).toContain("scope_type = 'record_ids' and array_length(scoped_ids, 1) between 1 and 25");
+    expect(M).toContain('idempotency_key text unique');
+  });
+  it('control + run event logs are append-only (never updated/deleted in 0073)', () => {
+    expect(M_CODE).not.toMatch(/update\s+public\.financial_operation_run_events|delete\s+from\s+public\.financial_operation_run_events/i);
+    expect(M_CODE).not.toMatch(/update\s+public\.financial_operation_control_events|delete\s+from\s+public\.financial_operation_control_events/i);
+  });
+});
+
+describe('0073 environment + thresholds — server-owned, named, production-live safe', () => {
+  it('models the four environments and defaults away from production_live', () => {
+    expect(M).toContain("check (environment in ('development', 'hosted_test', 'production_dry_run', 'production_live'))");
+    expect(M).toContain("environment text not null default 'hosted_test'");
+  });
+  it('names its thresholds rather than hiding bare numbers', () => {
+    expect(M).toContain('stale_processing_minutes integer not null default 30');
+    expect(M).toContain('stale_refund_minutes integer not null default 30');
+    expect(M).toContain('run_expiry_minutes integer not null default 15');
+    expect(M).toContain('max_batch_limit integer not null default 25');
+    expect(M).toContain('dispute_deadline_warning_hours integer not null default 72');
+  });
+});
+
+describe('0073 control transition — reasoned, audited, optimistic, phrase-gated', () => {
+  const t = fn('public.support_set_financial_control');
+  it('is support-gated, requires a reason and an expected-state match', () => {
+    expect(t).toContain('if not app_private.is_support_admin() then raise exception');
+    expect(t).toContain('reason_required');
+    expect(t).toContain('state_mismatch');
+    expect(t).toContain('for update');                              // single-winner lock
+  });
+  it('requires the confirmation phrase to reach any production-live enable', () => {
+    expect(t).toContain("c_live_phrase constant text := 'ENABLE-PRODUCTION-LIVE'");
+    expect(t).toContain('confirmation_required');
+    expect(t).toContain("p_control = 'production_live_operations'");
+  });
+  it('writes exactly one audit event and runs NO worker', () => {
+    expect(t).toContain('insert into public.financial_operation_control_events');
+    const lc = stripSql(t).toLowerCase();
+    for (const bad of ['claim_plan_transfers', 'make_earning_payable', 'finalize_transfer', 'claim_payment_refunds',
+                       'finalize_refund', 'run_financial_reconciliation', 'process_plan_renewals', 'stripe']) {
+      expect(lc).not.toContain(bad);
+    }
+  });
+});
+
+describe('0073 request/preview — scope enforced, previews side-effect-free', () => {
+  it('request rejects empty/oversized scope and is idempotent on the key', () => {
+    const r = fn('public.support_request_operation_run');
+    expect(r).toContain('empty_scope');
+    expect(r).toContain('batch_limit_exceeded');
+    expect(r).toContain('where idempotency_key = p_idempotency_key');   // idempotent
+    expect(r).toContain('confirmation_token');                          // opaque token minted
+  });
+  it('candidate resolution + preview never lock, claim or mutate financial rows', () => {
+    const cand = fn('app_private.operation_candidate_ids');
+    const rows = fn('app_private.operation_preview_rows');
+    const prev = fn('public.support_preview_operation_run');
+    // No FOR UPDATE / claim / financial writes in the read-only preview path.
+    for (const body of [cand, rows]) {
+      expect(body.toLowerCase()).not.toContain('for update');
+    }
+    for (const body of [cand, rows, prev]) {
+      const c = stripSql(body);
+      expect(c).not.toMatch(/update\s+public\.companion_earnings|update\s+public\.companion_transfer_attempts|update\s+public\.payment_refunds|update\s+public\.payment_disputes/i);
+      expect(c).not.toMatch(/insert\s+into\s+public\.companion_transfer_attempts/i);
+      expect(c.toLowerCase()).not.toContain('make_earning_payable');
+      expect(c.toLowerCase()).not.toContain('claim_plan_transfers');
+    }
+    // Preview only writes RUN metadata + a preview_generated event.
+    expect(prev).toContain('update public.financial_operation_runs');
+    expect(prev).toContain("'preview_generated'");
+  });
+});
+
+describe('0073 confirm/cancel/execute — token, idempotency, expiry, control-gated', () => {
+  it('confirm needs the token, a previewed unexpired run, and is idempotent', () => {
+    const c = fn('public.support_confirm_operation_run');
+    expect(c).toContain('invalid_token');
+    expect(c).toContain('run_expired');
+    expect(c).toContain('preview_required');
+    expect(c).toContain('already_confirmed');                       // repeat is a no-op
+    expect(c).toContain('for update');
+  });
+  it('execute is control-gated, batch-capped, idempotent, and Stage-3C1 wires only earning_release', () => {
+    const e = fn('public.support_execute_operation_run');
+    expect(e).toContain('already_executed');                        // repeated confirmation no-op
+    expect(e).toContain('effective_control_state');
+    expect(e).toContain("'control_blocked'");                       // disabled ⇒ event + raise
+    expect(e).toContain('control_disabled');
+    expect(e).toContain('execution_not_permitted');                 // dry_run_only rejected
+    expect(e).toContain('batch_limit_exceeded');                    // re-checked at execution
+    expect(e).toContain("v_control <> 'earning_release'");
+    expect(e).toContain('stage_not_enabled');                       // every other worker deferred
+    // The ONLY worker it may call is the non-Stripe earning-release path.
+    expect(e).toContain('perform app_private.make_earning_payable(v_id)');
+    const lc = stripSql(e).toLowerCase();
+    for (const bad of ['claim_plan_transfers', 'finalize_transfer', 'claim_payment_refunds', 'finalize_refund',
+                       'run_financial_reconciliation', 'process_plan_renewals', 'reconcile_', 'stripe']) {
+      expect(lc).not.toContain(bad);
+    }
+  });
+});
+
+describe('0073 readiness — support-only, no secrets', () => {
+  const rd = fn('public.support_financial_readiness');
+  it('is support-gated and surfaces safe aggregate counts only', () => {
+    expect(rd).toContain('if not app_private.is_support_admin() then raise exception');
+    expect(rd).toContain("'environment'");
+    expect(rd).toContain("'controls'");
+    expect(rd).toContain("'recent_runs'");
+  });
+  it('exposes no secrets, payloads, bank/card or message bodies', () => {
+    expect(rd).not.toMatch(/stripe_[a-z_]*id|payload|card|bank|access_token|private_feedback|message_body/i);
+  });
+});
+
+describe('0073 kill-switch ENFORCEMENT — every raw batch worker gates on the guard', () => {
+  it('the raw-worker guard requires an unforgeable context + production_live + control + master (never just enabled)', () => {
+    const g = fn('app_private.batch_worker_enabled');
+    // ALL FOUR must hold — a control being 'enabled' alone is NOT sufficient.
+    expect(g).toContain('app_private.scoped_execution_op() = p_op');                    // (1) txn-local context
+    expect(g).toContain("current_financial_environment() = 'production_live'");         // (2) prod-live only
+    expect(g).toContain("effective_control_state(p_op) = 'enabled'");                   // (3) op control
+    expect(g).toContain("effective_control_state('production_live_operations') = 'enabled'");  // (4) master
+    // The context is transaction-local (is_local) and set only by begin_scoped_execution.
+    const ctx = fn('app_private.scoped_execution_op');
+    expect(ctx).toContain("current_setting('app.financial_scope_op', true)");
+    const begin = fn('app_private.begin_scoped_execution');
+    expect(begin).toContain("perform set_config('app.financial_scope_op', p_op, true)");   // is_local ⇒ txn-scoped
+    expect(begin).toContain('not_production_live');                                     // refuses outside prod-live
+    expect(begin).toContain('run_not_confirmed');
+    expect(begin).toContain('run_expired');
+    expect(begin).toContain('for update');
+    expect(M).toContain('grant execute on function app_private.begin_scoped_execution(uuid, text) to service_role');
+    expect(M).toContain('create or replace function app_private.assert_financial_operation_allowed');
+    const env = fn('public.support_set_financial_environment');
+    expect(env).toContain('if not app_private.is_support_admin() then raise exception');
+    expect(env).toContain('reason_required');
+    expect(env).toContain('state_mismatch');
+    expect(env).toContain("c_live_phrase constant text := 'ENABLE-PRODUCTION-LIVE'");
+    expect(env).toContain('confirmation_required');
+    expect(env).toContain('for update');                            // optimistic concurrency
+    expect(env).toContain('insert into public.financial_operation_control_events');   // audited
+  });
+  it('the control transition REJECTS enabled outside production_live and phrase-gates the master separately', () => {
+    const t = fn('public.support_set_financial_control');
+    expect(t).toContain('enabled_requires_production_live');
+    expect(t).toContain("p_new_state = 'enabled' and v_env <> 'production_live'");
+    expect(t).toContain("c_master_phrase constant text := 'ARM-PRODUCTION-MASTER'");
+    expect(t).toContain('master_confirmation_required');
+    expect(t).toContain("c_live_phrase constant text := 'ENABLE-PRODUCTION-LIVE'");
+  });
+  it('redefines EVERY authoritative batch/global worker with a batch_worker_enabled guard as the first statement', () => {
+    const guarded: [string, string][] = [
+      ['public.claim_plan_transfers', 'transfer_claim'],
+      ['public.claim_payment_refunds', 'refund_claim'],
+      ['public.recover_stale_transfers', 'transfer_claim'],
+      ['public.recover_stale_refunds', 'refund_claim'],
+      ['public.release_eligible_earnings', 'earning_release'],
+      ['public.resolve_unconfirmed_attendance', 'earning_release'],
+      ['public.process_plan_renewals', 'plan_renewal'],
+      ['app_private.process_financial_reconciliation', 'financial_reconciliation'],
+      ['app_private.process_dispute_deadline_alerts', 'dispute_reconciliation'],
+    ];
+    for (const [name, op] of guarded) {
+      const body = fn(name);
+      expect(body, name).toContain(`if not app_private.batch_worker_enabled('${op}') then`);
+      // The guard must precede the first claim/mutation: it sits right after `begin`.
+      const guardIdx = body.indexOf('batch_worker_enabled');
+      const firstMutation = Math.min(
+        ...['insert into public.', 'update public.', 'for update'].map((k) => {
+          const i = body.indexOf(k); return i < 0 ? Number.MAX_SAFE_INTEGER : i;
+        }));
+      expect(guardIdx, `${name}: guard must precede first mutation`).toBeLessThan(firstMutation);
+    }
+  });
+  it('does NOT guard (and thus preserves) the webhook provider-state recording functions', () => {
+    // finalize_*/record_dispute_* record already-occurred Stripe outcomes for the
+    // webhook; 0073 must not redefine or block them (idempotency + provider truth).
+    for (const keep of ['finalize_transfer_succeeded', 'finalize_transfer_failed', 'finalize_transfer_reversed',
+                        'finalize_refund_succeeded', 'finalize_refund_failed', 'record_dispute_upsert',
+                        'record_dispute_closed', 'finalize_paid_order', 'claim_webhook_event']) {
+      expect(M_CODE, keep).not.toContain(keep);
+    }
+  });
+});
+
+describe('0073 financial firewall (whole migration) — no Stripe, cron, backfill or protected-row touch', () => {
+  it('the ONLY money-adjacent primitive it calls is make_earning_payable (release path)', () => {
+    // Guarded workers reference their own worker names (redefinitions) but call no
+    // NEW Stripe path; make_earning_payable appears only in the wrapper + the two
+    // earning-release workers reproduced verbatim.
+    // 1× wrapper + 1× release_eligible_earnings + 2× resolve_unconfirmed_attendance branches.
+    expect((M_CODE.match(/perform app_private\.make_earning_payable/g) ?? []).length).toBeLessThanOrEqual(4);
+    expect(M_CODE.toLowerCase()).not.toContain('reconcile_unresolved_dispute');
+  });
+  it('makes no Stripe/HTTP call, enables no cron, and stores no secret', () => {
+    const lc = M_CODE.toLowerCase();
+    for (const bad of ['pg_net', 'net.http', 'http_post', 'extensions.http', 'cron.schedule', 'cron.unschedule',
+                       'vault.', 'stripe_secret', 'secret_key', 'sk_live', 'sk_test']) {
+      expect(lc, bad).not.toContain(bad);
+    }
+  });
+  it('never backfills history or touches the protected booking / findings', () => {
+    expect(M_CODE).not.toContain('ba4f943c-3e8d-4d4c-900d-fa551ccc5387');
+    expect(M).toContain("select pg_notify('pgrst', 'reload schema')");
+  });
+});
+
+describe('0073 migration dependency order — every table precedes the functions that use its row type', () => {
+  const at = (needle: string): number => {
+    const i = M.indexOf(needle);
+    expect(i, `0073 must contain: ${needle}`).toBeGreaterThanOrEqual(0);
+    return i;
+  };
+  it('CREATE TABLE financial_operation_runs appears BEFORE CREATE FUNCTION begin_scoped_execution (the failed statement)', () => {
+    expect(at('create table if not exists public.financial_operation_runs'))
+      .toBeLessThan(at('create or replace function app_private.begin_scoped_execution'));
+  });
+  it('every function that declares a 0073 table row-type is defined after that CREATE TABLE', () => {
+    // (table CREATE, list of functions that declare `v public.<table>`)
+    const deps: [string, string[]][] = [
+      ['public.financial_operations_config', [
+        'app_private.financial_config', 'public.support_set_financial_environment', 'public.support_request_operation_run',
+        'public.support_financial_readiness']],
+      ['public.financial_operation_controls', ['public.support_set_financial_control']],
+      ['public.financial_operation_runs', [
+        'app_private.begin_scoped_execution', 'app_private.assert_financial_operation_allowed',
+        'public.support_request_operation_run', 'public.support_preview_operation_run',
+        'public.support_confirm_operation_run', 'public.support_cancel_operation_run',
+        'public.support_execute_operation_run', 'public.support_operation_run_detail']],
+    ];
+    for (const [table, funcs] of deps) {
+      const tableAt = at(`create table if not exists ${table}`);
+      for (const f of funcs) {
+        expect(at(`create or replace function ${f}`), `${f} must be defined after ${table}`).toBeGreaterThan(tableAt);
+      }
+    }
+  });
+  it('the relocated guards keep their exact scoped-execution isolation logic', () => {
+    const b = fn('app_private.begin_scoped_execution');
+    expect(b).toContain('declare v_run public.financial_operation_runs');
+    expect(b).toContain('not_production_live');
+    expect(b).toContain("effective_control_state(p_op) not in ('scoped_execution', 'enabled')");
+    expect(b).toContain("effective_control_state('production_live_operations') <> 'enabled'");
+    expect(b).toContain('run_not_confirmed');
+    expect(b).toContain('run_expired');
+    expect(b).toContain('scope_required');
+    expect(b).toContain('batch_limit_exceeded');
+    expect(b).toContain("perform set_config('app.financial_scope_op', p_op, true)");
+    const a = fn('app_private.assert_financial_operation_allowed');
+    expect(a).toContain('declare v_state text; v_env text; v_max int; v_run public.financial_operation_runs');
+    expect(a).toContain('control_disabled');
+    expect(a).toContain('run_not_confirmed');
+  });
+  it('the 3C1 control plane is exactly 0073 + the additive 0074 block-event correction', () => {
+    const nums = readdirSync(MIGRATIONS_DIR).filter((f) => /^\d{4}_.*\.sql$/.test(f)).map((f) => f.slice(0, 4)).sort();
+    // Both 3C1 migrations exist; the 0073 ordering correction did NOT spawn its own migration.
+    expect(nums).toContain('0073');
+    expect(nums).toContain('0074');
+    expect(readdirSync(MIGRATIONS_DIR).filter((f) => /^0074/.test(f))).toEqual(['0074_persist_financial_operation_block_events.sql']);
+    // (Later stages add higher-numbered migrations additively; 0073/0074 stay immutable.)
+  });
+});
+
+describe('0074 blocked-event persistence — structured result instead of insert-then-raise', () => {
+  it('redefines ONLY support_execute_operation_run and reloads PostgREST', () => {
+    expect(M74).toContain('create or replace function public.support_execute_operation_run(p_run_id uuid, p_confirmation_token text)');
+    expect((M74.match(/create or replace function/g) ?? [])).toHaveLength(1);   // one function only
+    expect(M74).toContain("select pg_notify('pgrst', 'reload schema')");
+    expect(M74).not.toContain('create table');                                  // no schema changes
+  });
+  it('an expected control block writes ONE deduplicated event then RETURNS a structured result (no raise)', () => {
+    const e = M74.slice(M74.indexOf('create or replace function public.support_execute_operation_run'));
+    // The block branch: dedup guard + insert control_blocked + structured return, NOT a raise.
+    expect(e).toContain("if v_state in ('disabled', 'dry_run_only') then");
+    expect(e).toMatch(/not exists \(select 1 from public\.financial_operation_run_events[\s\S]*?action = 'control_blocked'\)/);
+    expect(e).toContain("'control_blocked'");
+    expect(e).toMatch(/return jsonb_build_object\(\s*'ok', false, 'executed', false,\s*'code'/);
+    // The two OLD raises for these states are gone.
+    expect(e).not.toContain("raise exception 'control_disabled");
+    expect(e).not.toContain("raise exception 'execution_not_permitted");
+  });
+  it('every OTHER guard still raises (auth, not_found, token, expired, cancelled, stage_not_enabled) and no worker/Stripe added', () => {
+    const e = M74.slice(M74.indexOf('create or replace function public.support_execute_operation_run'));
+    for (const g of ['not_found: run', 'invalid_token', 'run_cancelled', 'run_expired', 'confirmation_required',
+                     "v_control <> 'earning_release'", 'stage_not_enabled', 'batch_limit_exceeded']) {
+      expect(e, g).toContain(g);
+    }
+    // Only the non-Stripe earning-release primitive; no transfer/refund/dispute/reconciliation worker, no Stripe/cron.
+    expect(e).toContain('perform app_private.make_earning_payable(v_id)');
+    const lc = stripSql(e).toLowerCase();   // executable SQL only (comments explain what it avoids)
+    for (const bad of ['claim_plan_transfers', 'claim_payment_refunds', 'finalize_transfer', 'finalize_refund',
+                       'run_financial_reconciliation', 'process_plan_renewals', 'stripe', 'pg_net', 'cron.schedule']) {
+      expect(lc, bad).not.toContain(bad);
+    }
+  });
+});
+
+describe('3C1 frontend route — support-only, server-protected, not in normal nav', () => {
+  it('mounts /support/operations behind SupportOnly and lazy-loads it', () => {
+    expect(APP).toContain("const InternalOperations = lazy(() => import('./pages/InternalOperations'))");
+    expect(APP).toContain('<Route path="/support/operations" element={<SupportOnly><InternalOperations /></SupportOnly>} />');
+  });
+});

@@ -1,5 +1,6 @@
 import { HashRouter, Link, Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import { useAccountRole } from './state/managedMember';
+import { useIsSupport } from './state/support';
 import { lazy, Suspense, useEffect, type ReactNode } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Shell } from './components/Shell';
@@ -9,18 +10,29 @@ import ProfileDetail from './pages/ProfileDetail';
 import MyProfile from './pages/MyProfile';
 import Conversations from './pages/Conversations';
 import BookingDetail from './pages/BookingDetail';
-const CallRoom = lazy(() => import('./pages/CallRoom'));
+const CallPage = lazy(() => import('./pages/CallPage'));
+const PaymentReturn = lazy(() => import('./pages/PaymentReturn'));
 const PlanMemberProfile = lazy(() => import('./pages/PlanMemberProfile'));
 const MessagesPage = lazy(() => import('./pages/MessagesPage'));
 const PlanDetail = lazy(() => import('./pages/PlanDetail'));
 const Notifications = lazy(() => import('./pages/Notifications'));
 const MembersPage = lazy(() => import('./pages/MembersPage'));
 const GuestJoin = lazy(() => import('./pages/GuestJoin'));
+const InternalIssues = lazy(() => import('./pages/InternalIssues'));
+const InternalIssueDetail = lazy(() => import('./pages/InternalIssueDetail'));
+const InternalDisputes = lazy(() => import('./pages/InternalDisputes'));
+const InternalDisputeDetail = lazy(() => import('./pages/InternalDisputeDetail'));
+const InternalReconciliation = lazy(() => import('./pages/InternalReconciliation'));
+const InternalReconciliationDetail = lazy(() => import('./pages/InternalReconciliationDetail'));
+const InternalOperations = lazy(() => import('./pages/InternalOperations'));
+const InternalTrust = lazy(() => import('./pages/InternalTrust'));
 import Settings from './pages/Settings';
 import AvailabilityRates from './pages/AvailabilityRates';
+import LandingPage from './pages/LandingPage';
 import SignupWizard from './signup/SignupWizard';
 import { hasSeenSignup } from './signup/storage';
 import { EmptyState } from './components/ui';
+import PaymentResumeNotice from './components/PaymentResumeNotice';
 import { isSupabaseMode } from './config/dataMode';
 import { AuthProvider, useAuth } from './auth/AuthProvider';
 import {
@@ -68,6 +80,10 @@ function Protected({ children }: { children: ReactNode }) {
     );
   }
   if (auth.status === 'unauthenticated') {
+    // The site root IS the public marketing page for signed-out visitors —
+    // rendered directly (no shell, no protected data). Deep links still route
+    // to sign-in, preserving the return path.
+    if (location.pathname === '/') return <LandingPage />;
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
   if (auth.status === 'setup_pending' || auth.status === 'error') {
@@ -104,6 +120,35 @@ function CoordinatorOnly({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+/**
+ * Internal route guard: authorisation is ALWAYS server-derived
+ * (public.am_i_support → DB-backed support_admins). No internal case data is
+ * rendered before authorisation resolves, and a non-support user never falls
+ * back to access — they get a neutral not-available state. Anonymous users
+ * are already redirected to sign-in by the surrounding Protected shell.
+ */
+function SupportOnly({ children }: { children: ReactNode }) {
+  const status = useIsSupport();
+  if (status === 'loading') {
+    return (
+      <div className="row" style={{ justifyContent: 'center', padding: 48 }}>
+        <Loader2 size={22} aria-hidden="true" />
+        <span className="visually-hidden">Checking access</span>
+      </div>
+    );
+  }
+  if (status !== 'yes') {
+    return (
+      <EmptyState
+        title="Not available"
+        body="This area is limited to the support team."
+        action={<Link to="/" className="btn btn-primary">Go home</Link>}
+      />
+    );
+  }
+  return <>{children}</>;
+}
+
 function PlanRedirect() {
   const { planId } = useParams();
   return <Navigate to={`/conversations/plans/${planId}`} replace />;
@@ -111,6 +156,11 @@ function PlanRedirect() {
 function PlanMemberRedirect() {
   const { planId } = useParams();
   return <Navigate to={`/conversations/plans/${planId}/member`} replace />;
+}
+/** Legacy 2F1 call room is retired: send old /calls links to the Stage 3A flow. */
+function CallRedirect() {
+  const { bookingId } = useParams();
+  return <Navigate to={`/conversations/${bookingId}/call`} replace />;
 }
 
 function AppRoutes() {
@@ -142,6 +192,10 @@ function AppRoutes() {
         }
       />
 
+      {/* Legacy marketing URL → the canonical public root. The landing page
+          itself renders at `/` for signed-out visitors (see Protected). */}
+      <Route path="/welcome" element={<Navigate to="/" replace />} />
+
       {/* Sign-up wizard renders outside the main shell */}
       <Route path="/signup" element={<SignupWizard />} />
       <Route path="/onboarding" element={<Navigate to="/signup" replace />} />
@@ -151,6 +205,9 @@ function AppRoutes() {
         element={
           <Protected>
             <Shell>
+              {/* Stage 3D-C: offer Resume payment when a durable payment
+                  session survived a redirect/reload/app restart. */}
+              <PaymentResumeNotice />
               {/* Heavy routes (LiveKit, messaging, plans, notifications)
                   load as separate chunks so the shell paints promptly. */}
               <Suspense
@@ -170,8 +227,10 @@ function AppRoutes() {
                 <Route path="/members" element={<MembersPage />} />
                 <Route path="/conversations" element={<Conversations />} />
                 <Route path="/conversations/:bookingId" element={<BookingDetail />} />
-                {/* Documented boundary for in-app calling (not built yet). */}
-                <Route path="/calls/:bookingId" element={<CallRoom />} />
+                {/* Stage 3A — secure audio call for the two booked participants. */}
+                <Route path="/conversations/:bookingId/call" element={<CallPage />} />
+                {/* Legacy 2F1 call room retired — redirect to the Stage 3A flow. */}
+                <Route path="/calls/:bookingId" element={<CallRedirect />} />
                 <Route path="/messages" element={<MessagesPage />} />
                 <Route path="/messages/:conversationId" element={<MessagesPage />} />
                 {/* Plans are unified into Conversations; old links keep working. */}
@@ -181,14 +240,31 @@ function AppRoutes() {
                 <Route path="/conversations/plans/:planId/member" element={<PlanMemberProfile />} />
                 <Route path="/plans/:planId/member" element={<PlanMemberRedirect />} />
                 <Route path="/notifications" element={<Notifications />} />
+                {/* Internal support queue — DB-role protected, not in normal nav. */}
+                <Route path="/internal/issues" element={<SupportOnly><InternalIssues /></SupportOnly>} />
+                <Route path="/internal/issues/:issueId" element={<SupportOnly><InternalIssueDetail /></SupportOnly>} />
+                {/* 2G6E-A internal dispute operations — DB-role protected. */}
+                <Route path="/internal/disputes" element={<SupportOnly><InternalDisputes /></SupportOnly>} />
+                <Route path="/internal/disputes/:disputeId" element={<SupportOnly><InternalDisputeDetail /></SupportOnly>} />
+                {/* 2G6E-C internal financial reconciliation — DB-role protected. */}
+                <Route path="/internal/finance/reconciliation" element={<SupportOnly><InternalReconciliation /></SupportOnly>} />
+                <Route path="/internal/finance/reconciliation/:findingId" element={<SupportOnly><InternalReconciliationDetail /></SupportOnly>} />
+                {/* Stage 3C1 — financial operations control plane (readiness + previews),
+                    DB-role protected, absent from normal navigation. */}
+                <Route path="/support/operations" element={<SupportOnly><InternalOperations /></SupportOnly>} />
+                <Route path="/internal/trust" element={<SupportOnly><InternalTrust /></SupportOnly>} />
+                <Route path="/internal/operations" element={<Navigate to="/support/operations" replace />} />
                 <Route path="/settings" element={<Settings />} />
+                {/* Stage 3D-C — durable payment authentication return/resume.
+                    The outcome param is NEVER treated as proof of payment. */}
+                <Route path="/payment/return" element={<PaymentReturn />} />
                 <Route path="/availability" element={<AvailabilityRates />} />
                 <Route
                   path="*"
                   element={
                     <EmptyState
                       title="Page not found"
-                      body="That route doesn’t exist in the prototype."
+                      body="We couldn’t find that page. It may have moved."
                       action={<Link to="/" className="btn btn-primary">Go home</Link>}
                     />
                   }

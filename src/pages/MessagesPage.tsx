@@ -22,6 +22,7 @@ import {
 } from '../messaging/hooks';
 import {
   MESSAGE_MAX_LENGTH,
+  respondToIntroduction,
   respondToMessageRequest,
   type ChatMessage,
 } from '../repositories/messagingRepository';
@@ -30,6 +31,7 @@ import { ProfileAvatar } from '../components/ProfileAvatar';
 import { useProfileAvatars } from '../state/avatars';
 import { browserTimezone } from '../domain/timezones';
 import { SystemEventMessage } from '../messaging/systemEvents';
+import { ReportConcernButton } from '../components/TrustSafety';
 
 /* ---------------- small formatting helpers ---------------- */
 
@@ -136,12 +138,13 @@ function ConversationList({ selectedId }: { selectedId: string | null }) {
       />
     );
   }
-  // Phase D: the Companion sees introductions in their own clearly
-  // labelled section, never mixed silently into active chats.
-  const isCompanionViewer = (c: ConversationWithPreview) =>
-    viewer.profileIds.has(c.companionProfileId) && !viewer.profileIds.has(c.memberProfileId);
+  // Section 2 — every message request lands in this clearly-labelled section,
+  // in BOTH directions, so the recipient can never miss it: a Companion
+  // receiving a Member/Coordinator request, OR a Member/Coordinator receiving a
+  // Companion introduction. Requests the viewer sent themselves also surface
+  // here (shown with a "sent" status), never silently mixed into active chats.
   const requests = conversations.filter(
-    (c) => isCompanionViewer(c) && (c.status === 'request_pending' || c.status === 'declined'),
+    (c) => c.status === 'request_pending' || c.status === 'declined',
   );
   const normal = conversations.filter((c) => !requests.includes(c));
 
@@ -387,6 +390,9 @@ function Thread({ conversationId, summary, viewer, onBack }: {
           </>
         )}
       </header>
+      <div className="px-4 pt-2">
+        <ReportConcernButton conversationId={conversationId} />
+      </div>
 
       <div className="msg-scroll" ref={scrollRef} onScroll={(e) => {
         const el = e.currentTarget;
@@ -498,6 +504,31 @@ function RequestStatePanel({ summary, viewer, threadUnavailable }: {
             </button>
           </>
         )}
+        {error && <p className="small" role="alert" style={{ color: 'var(--color-danger-text)', margin: 0 }}>{error}</p>}
+      </div>
+    );
+  }
+
+  // Member/Coordinator side receiving a COMPANION-initiated introduction
+  // (they did not send it): accept opens the thread, decline closes it.
+  if (!companionSide && summary.status === 'request_pending' && !summary.requestedByMe) {
+    const respondIntro = async (accept: boolean) => {
+      if (busy) return;
+      setBusy(true); setError(null);
+      try { await respondToIntroduction(summary.id, accept); announceMessagesChanged(); }
+      catch (e) { setError(e instanceof Error ? e.message : 'Something went wrong. Please try again.'); }
+      finally { setBusy(false); }
+    };
+    return (
+      <div className="msg-request-panel" role="group" aria-label="Introduction decision">
+        <p className="small" style={{ margin: 0 }}>
+          <strong>{summary.companionName}</strong> would like to say hello. Accept to reply, or
+          decline to close it.
+        </p>
+        <div className="row" style={{ gap: 8 }}>
+          <button className="btn btn-primary btn-small" disabled={busy} onClick={() => void respondIntro(true)}>Accept</button>
+          <button className="btn btn-secondary btn-small" disabled={busy} onClick={() => void respondIntro(false)}>Decline</button>
+        </div>
         {error && <p className="small" role="alert" style={{ color: 'var(--color-danger-text)', margin: 0 }}>{error}</p>}
       </div>
     );

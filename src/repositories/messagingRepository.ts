@@ -248,6 +248,57 @@ export async function respondToMessageRequest(
   if (error) throw mapMessagingError(error);
 }
 
+/* -------- Block 11: companion sees interested favouriters + introduces -------- */
+
+export interface CompanionFavouriter {
+  memberProfileId: string;
+  memberFirstName: string;
+  memberRegion: string | null;
+  viaCoordinator: boolean;
+  favouritedAt: string;
+  /** null = no conversation yet; else request_pending | active | declined. */
+  conversationStatus: string | null;
+}
+
+/** People who have favourited the signed-in Companion (safe fields only). */
+export async function getCompanionFavouriters(): Promise<CompanionFavouriter[]> {
+  if (!isSupabaseMode()) return [];
+  // RPC added by migration 0100 — cast until the generated types regenerate.
+  const { data, error } = await getSupabaseClient().rpc('companion_favouriters' as never);
+  if (error) throw mapMessagingError(error);
+  return ((data as Record<string, unknown>[] | null) ?? []).map((r) => ({
+    memberProfileId: String(r.member_profile_id),
+    memberFirstName: String(r.member_first_name ?? ''),
+    memberRegion: (r.member_region as string | null) ?? null,
+    viaCoordinator: Boolean(r.via_coordinator),
+    favouritedAt: String(r.favourited_at ?? ''),
+    conversationStatus: (r.conversation_status as string | null) ?? null,
+  }));
+}
+
+/** Companion sends ONE introduction to a favouriter (server-enforced). */
+export async function companionIntroduce(
+  companionProfileId: string,
+  memberProfileId: string,
+  message: string,
+): Promise<void> {
+  const { error } = await getSupabaseClient().rpc('companion_introduce' as never, {
+    p_companion: companionProfileId,
+    p_member: memberProfileId,
+    p_message: message,
+  } as never);
+  if (error) throw mapMessagingError(error);
+}
+
+/** Member/Coordinator side accepts or declines a companion-initiated intro. */
+export async function respondToIntroduction(conversationId: string, accept: boolean): Promise<void> {
+  const { error } = await getSupabaseClient().rpc('respond_to_introduction' as never, {
+    p_conversation: conversationId,
+    p_accept: accept,
+  } as never);
+  if (error) throw mapMessagingError(error);
+}
+
 export async function setMessagingPermission(
   profileId: string,
   accountId: string,

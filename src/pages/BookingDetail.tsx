@@ -27,6 +27,7 @@ import {
   type AvailableSlot,
 } from '../repositories/bookingRepository';
 import { RepoError } from '../repositories/profileRepository';
+import { getConnectStatus } from '../repositories/billingRepository';
 import { formatMinor } from '../repositories/availabilityRepository';
 import { browserTimezone } from '../domain/timezones';
 import { MEDIUM_LABELS } from '../domain/format';
@@ -42,6 +43,7 @@ import { RatingPanel } from '../components/RatingPanel';
 import { BookingCreditPanel } from '../components/BookingCreditBadge';
 import { GuestInvitationPanel } from '../components/GuestInvitationPanel';
 import { AttendanceCard } from '../components/AttendanceCard';
+import { CallEvidenceNote } from '../components/CallEvidenceNote';
 import { CoordinatorPostConversationCard } from '../components/CoordinatorPostConversationCard';
 import { ProfileAvatar } from '../components/ProfileAvatar';
 import { useProfileAvatars } from '../state/avatars';
@@ -156,6 +158,27 @@ export default function BookingDetail() {
     };
   }, [booking, isCompanionSide]);
 
+  // Section 3 — a Companion may ACCEPT a paid booking WITHOUT an active payout
+  // account: the earning is created held/not-payable and no transfer is
+  // attempted, so we never block acceptance on payouts. We only surface a calm,
+  // non-blocking notice (never a raw error) with a clear route to set up
+  // payouts. This is distinct from BOTH message-request acceptance (which needs
+  // no card and no payout at all) and the PAYER's card (enforced up-front by the
+  // setup-first booking flow, never at the Companion's accept step).
+  const isPaidRequest = !!booking && !booking.is_trial && booking.price_minor > 0;
+  const [payoutReady, setPayoutReady] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!isSupabaseMode() || !booking || !isCompanionSide || booking.status !== 'requested' || !isPaidRequest) {
+      setPayoutReady(null);
+      return;
+    }
+    let live = true;
+    getConnectStatus()
+      .then((s) => { if (live) setPayoutReady(Boolean(s.ready)); })
+      .catch(() => { if (live) setPayoutReady(null); });
+    return () => { live = false; };
+  }, [booking, isCompanionSide, isPaidRequest]);
+
   if (!isSupabaseMode()) {
     return (
       <EmptyState
@@ -187,6 +210,10 @@ export default function BookingDetail() {
   }
 
   const ended = new Date(booking.ends_at).getTime() <= Date.now();
+  // Only an ACCEPTED (confirmed) booking enters the completion/attendance/earning
+  // workflow — matches the 0067 server invariant. A requested/declined/cancelled
+  // booking has no completion, review or payout, regardless of elapsed time.
+  const eligibleForCompletion = booking.status === 'confirmed';
   // Once a conversation has ended, reschedule/cancel no longer make sense —
   // the completion panel takes over.
   const active = ['requested', 'confirmed', 'change_proposed'].includes(booking.status) && !ended;
@@ -281,15 +308,16 @@ export default function BookingDetail() {
             {IN_APP_CALL_EXPLAINER}{' '}
             {canRescheduleBooking(booking) ? RESCHEDULE_OPEN_COPY : ''}
           </p>
-          {/* 2F1: the way into the call room. The room itself opens ten
-              minutes before the start; the server decides admission. */}
+          {/* Stage 3A: the way into the secure audio call. Admission (window +
+              participant check) is decided by the server; the page opens the
+              pre-join screen and the server issues a short-lived token. */}
           {booking.status === 'confirmed' && !ended && (
             <div className="col" style={{ gap: 4 }}>
-              <Link to={`/calls/${booking.id}`} className="btn btn-primary" style={{ alignSelf: 'flex-start' }}>
-                <Phone size={18} aria-hidden="true" /> Open the call room
+              <Link to={`/conversations/${booking.id}/call`} className="btn btn-primary" style={{ alignSelf: 'flex-start' }}>
+                <Phone size={18} aria-hidden="true" /> Join the audio call
               </Link>
               <span className="faint">
-                The room opens ten minutes before your conversation starts.
+                Audio only · opens ten minutes before your conversation starts · not recorded.
               </span>
             </div>
           )}
@@ -308,27 +336,54 @@ export default function BookingDetail() {
       </section>
 
       {/* Funded, ended conversations get EXACTLY ONE post-conversation card
-          per role. Each card self-hides unless the server confirms the
-          booking is funded & eligible, so the legacy CompletionPanel /
-          RatingPanel below are additionally gated on `funded === false`.
+          per role. The completion workflow only applies to an ACCEPTED
+          (confirmed) booking: a request that was never accepted (requested), or
+          a declined/cancelled booking, has nothing to confirm, review or earn —
+          even if its time has passed. This mirrors the 0067 server invariant.
 
           Member side → the single combined outcome + review card. */}
-      {!isCompanionSide && isRequesterSide && ended && (
+
+      {/* Stage 3B1: a neutral, role-correct note about the authoritative call
+          connection record (evidence only — never a completion verdict or any
+          payout wording; the server redacts by role). Shown once the accepted
+          conversation has ended, above the role-specific action card. */}
+      {ended && eligibleForCompletion && (isCompanionSide || isRequesterSide) && (
+        <section className="section-tight">
+          <CallEvidenceNote bookingId={booking.id} />
+        </section>
+      )}
+
+      {!isCompanionSide && isRequesterSide && ended && eligibleForCompletion && (
         <section className="section-tight">
           <CoordinatorPostConversationCard
             bookingId={booking.id}
             memberName={booking.member_first_name}
             companionName={booking.companion_first_name}
+            onConfirmed={() => void load()}
           />
         </section>
       )}
 
-      {/* Companion side → ONLY the 2G4B attendance card (no status gate, so a
-          funded booking the old flow moved confirmed → completed still shows
-          it; the card self-hides unless ended & funded). */}
-      {isCompanionSide && ended && (
+      {/* Companion side → ONLY the 2G4B attendance card (accepted + ended; the
+          card additionally self-hides unless funded). */}
+      {isCompanionSide && ended && eligibleForCompletion && (
         <section className="section-tight">
-          <AttendanceCard bookingId={booking.id} memberName={booking.member_first_name} />
+          <AttendanceCard bookingId={booking.id} memberName={booking.member_first_name} onConfirmed={() => void load()} />
+        </section>
+      )}
+
+      {/* An accepted booking that never happened is out of scope for the
+          completion workflow; an unaccepted/ended request shows a neutral note
+          rather than a broken confirm/review action. */}
+      {ended && !eligibleForCompletion && (isCompanionSide || isRequesterSide) && (
+        <section className="section-tight">
+          <div className="card card-muted" style={{ margin: 0 }}>
+            <span className="muted small">
+              {booking.status === 'requested'
+                ? 'This request was not accepted, so there is nothing to confirm or review.'
+                : 'This conversation did not go ahead, so there is nothing to confirm or review.'}
+            </span>
+          </div>
         </section>
       )}
 
@@ -420,6 +475,27 @@ export default function BookingDetail() {
                 )}
               </>
             )}
+          </div>
+          {/* Section 3 — held-payout notice: accepting is allowed; the payout
+              simply waits until the Companion connects their account. Never a
+              blocker, never a technical error. */}
+          {isCompanionSide && booking.status === 'requested' && isPaidRequest && payoutReady === false && (
+            <div className="card card-tight col mt-2" style={{ gap: 8, maxWidth: 480 }} role="note">
+              <span className="bold">You can accept — payouts are on hold</span>
+              <span className="muted longform">
+                You can accept this conversation and hold it as normal. Your earnings will stay on
+                hold until you connect your payout account — then they’ll be released to you.
+              </span>
+              <button
+                className="btn btn-secondary btn-small"
+                style={{ alignSelf: 'flex-start' }}
+                onClick={() => navigate('/settings')}
+              >
+                Set up payouts
+              </button>
+            </div>
+          )}
+          <div className="row wrap" style={{ gap: 10 }}>
             {booking.status === 'confirmed' && (isCompanionSide || isRequesterSide)
               && (booking.offer_id || booking.package_purchase_id) && canRescheduleBooking(booking) && (
               <button className="btn btn-secondary" disabled={busy} onClick={() => setProposing(true)}>

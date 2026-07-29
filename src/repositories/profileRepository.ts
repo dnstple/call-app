@@ -429,3 +429,16 @@ export async function removeFavourite(profileId: string): Promise<void> {
   const { error } = await getSupabaseClient().from('favourites').delete().eq('profile_id', profileId);
   if (error) throw mapError(error);
 }
+
+/**
+ * How many people have saved (favourited) the signed-in Companion's own
+ * profile. Returns an aggregate count only — the server never exposes who
+ * favourited them (migration 0099). Zero for accounts that own no profile.
+ */
+export async function getMyFavouriteCount(): Promise<number> {
+  // `my_favourite_count` is added by migration 0099; the generated types are
+  // regenerated from the hosted schema after it is applied, so cast for now.
+  const { data, error } = await getSupabaseClient().rpc('my_favourite_count' as never);
+  if (error) throw mapError(error);
+  return typeof data === 'number' ? data : 0;
+}

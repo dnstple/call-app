@@ -25,6 +25,27 @@ const CORS = {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, 'Content-Type': 'application/json' } });
 
+// ---- Stage 3D-B1: central return-URL policy (audit §13/§15) ----------------
+// FAIL CLOSED: outside local development the APP_ORIGINS secret MUST be set —
+// there is no silent localhost fallback in hosted environments. The only
+// unset-env allowance is a browser origin that is itself localhost (dev).
+const resolveReturnOrigin = (requested: string): string => {
+  const allowed = (Deno.env.get('APP_ORIGINS') ?? '')
+    .split(',').map((s) => s.trim()).filter(Boolean);
+  if (allowed.length === 0) {
+    if (requested.startsWith('http://localhost')) return requested; // dev only
+    throw new Error('app_origins_unconfigured');
+  }
+  return allowed.includes(requested) ? requested : allowed[0];
+};
+// Stage 3D-C return-route contract (the client implements this route):
+//   <origin>/#/payment/return?order=<payment_order_id>&outcome=success|cancelled
+// Only the safe local order id travels in the URL — never secrets or intents.
+const paymentReturnUrls = (origin: string, orderId: string) => ({
+  success_url: `${origin}/#/payment/return?order=${orderId}&outcome=success`,
+  cancel_url: `${origin}/#/payment/return?order=${orderId}&outcome=cancelled`,
+});
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
@@ -105,11 +126,22 @@ Deno.serve(async (req) => {
     // confirms it — the redirect back is never trusted as proof.
     if (action === 'create_setup_session') {
       const { customerId } = await ensureCustomer();
-      // Return URLs derive ONLY from the allowlisted app origin.
-      const allowed = (Deno.env.get('APP_ORIGINS') ?? 'http://localhost:5173')
-        .split(',').map((s) => s.trim()).filter(Boolean);
-      const requested = typeof body.origin === 'string' ? body.origin : '';
-      const origin = allowed.includes(requested) ? requested : allowed[0];
+      // Return URLs derive ONLY from the allowlisted app origin (3D-B1
+      // central fail-closed policy). By default the setup return keeps its
+      // existing /#/settings?setup=… contract that BillingPanel handles.
+      const origin = resolveReturnOrigin(typeof body.origin === 'string' ? body.origin : '');
+      // Block 9: an OPTIONAL in-app return target so payment-method-first
+      // booking can resume the exact wizard. It is strictly allowlisted to a
+      // companion profile path ("/people/<uuid>") — never an external URL and
+      // never an arbitrary path — so this can only ever land back in this app.
+      const rp = typeof body.returnPath === 'string' ? body.returnPath : '';
+      const safeResume = /^\/people\/[0-9a-fA-F-]{36}$/.test(rp) ? rp : null;
+      const successUrl = safeResume
+        ? `${origin}/#${safeResume}?resume=booking&setup=success`
+        : `${origin}/#/settings?setup=success`;
+      const cancelUrl = safeResume
+        ? `${origin}/#${safeResume}?resume=booking&setup=cancelled`
+        : `${origin}/#/settings?setup=cancelled`;
       const session = await stripe.checkout.sessions.create(
         {
           mode: 'setup',
@@ -118,8 +150,8 @@ Deno.serve(async (req) => {
           // Metadata rides on the SetupIntent so the existing
           // setup_intent.succeeded webhook handler confirms completion.
           setup_intent_data: { metadata: { account_id: user.id } },
-          success_url: `${origin}/#/settings?setup=success`,
-          cancel_url: `${origin}/#/settings?setup=cancelled`,
+          success_url: successUrl,
+          cancel_url: cancelUrl,
         },
         { idempotencyKey: `setup-session-${user.id}-${Date.now()}` },
       );
@@ -204,6 +236,51 @@ Deno.serve(async (req) => {
       if (!cust?.default_payment_method_id) {
         return json({ ok: false, orderId: order.order_id, state: 'payment_method_required' }, 200);
       }
+      // Hosted confirmation path (3D-B1: shared by BOTH requires-action
+      // shapes): a payment-mode Checkout Session for the exact card
+      // shortfall (no frontend SDK needed).
+      const createAuthenticationSession = async () => {
+        const requested = typeof body.origin === 'string' ? body.origin : '';
+        const origin = resolveReturnOrigin(requested);
+        const urls = paymentReturnUrls(origin, order.order_id);
+        const session = await stripe.checkout.sessions.create(
+          {
+            mode: 'payment',
+            customer: customerId,
+            line_items: [{
+              price_data: {
+                currency: 'gbp', unit_amount: order.card_amount_minor,
+                product_data: { name: 'Conversation request' },
+              },
+              quantity: 1,
+            }],
+            payment_intent_data: { metadata: { payment_order_id: order.order_id } },
+            metadata: { payment_order_id: order.order_id },
+            success_url: urls.success_url,
+            cancel_url: urls.cancel_url,
+          },
+          { idempotencyKey: `order-session-${order.order_id}` },
+        );
+        // 0082: record the hosted Checkout session's PaymentIntent as this
+        // order's AUTHORITATIVE funding BEFORE returning. The superseded
+        // off-session intent is still metadata-linked to the order; once an
+        // authoritative intent is stored, that stale intent's later
+        // canceled/failed webhook is treated as foreign and can no longer
+        // poison the order (see migration 0082). Guarded on a null intent so
+        // idempotent retries never clobber an already-authoritative funding.
+        const sessionIntent = typeof session.payment_intent === 'string'
+          ? session.payment_intent
+          : null;
+        await admin.from('payment_orders')
+          .update({ stripe_checkout_session_id: session.id, stripe_payment_intent_id: sessionIntent })
+          .eq('id', order.order_id)
+          .is('stripe_payment_intent_id', null);
+        await admin.rpc('reconcile_payment_order', {
+          p_order: order.order_id, p_intent: sessionIntent, p_provider_status: 'requires_action',
+          p_amount_minor: null, p_currency: null, p_event_at: null, p_metadata_order: null,
+        });
+        return session.url;
+      };
       try {
         const intent = await stripe.paymentIntents.create(
           {
@@ -217,36 +294,32 @@ Deno.serve(async (req) => {
           },
           { idempotencyKey: `order-${order.order_id}` },
         );
-        // The webhook — never this response — finalises the order.
+        if (intent.status === 'requires_action' || intent.status === 'requires_confirmation') {
+          // 3D-B1 uniform contract: EVERY authentication requirement returns a
+          // hosted continuation URL (audit §6.1). ORDER MATTERS (0082): record
+          // the hosted session's intent as this order's authoritative funding
+          // FIRST, THEN cancel the superseded direct intent — so the cancel's
+          // webhook is already recognisable as a foreign/superseded terminal
+          // event (benign no-op) and can never race ahead to fail the order.
+          const url = await createAuthenticationSession();
+          try { await stripe.paymentIntents.cancel(intent.id); } catch { /* already terminal */ }
+          return json({ ok: true, orderId: order.order_id, state: 'requires_action', url });
+        }
+        // Server-observed projection (webhooks stay authoritative; a
+        // synchronous provider success finalises via the SAME shared
+        // reconcile path the webhook uses — never from browser assertions).
+        await admin.rpc('reconcile_payment_order', {
+          p_order: order.order_id, p_intent: intent.id, p_provider_status: intent.status,
+          p_amount_minor: intent.status === 'succeeded' ? (intent.amount_received ?? intent.amount) : null,
+          p_currency: intent.status === 'succeeded' ? intent.currency : null,
+          p_event_at: null, p_metadata_order: null,
+        });
         return json({ ok: true, orderId: order.order_id, state: intent.status });
       } catch (err) {
         const stripeErr = err as { code?: string; raw?: { payment_intent?: { id?: string } } };
         if (stripeErr.code === 'authentication_required') {
-          // Hosted confirmation path: a payment-mode Checkout Session for
-          // the exact card shortfall (no frontend SDK needed).
-          const allowed = (Deno.env.get('APP_ORIGINS') ?? 'http://localhost:5173')
-            .split(',').map((s) => s.trim()).filter(Boolean);
-          const requested = typeof body.origin === 'string' ? body.origin : '';
-          const origin = allowed.includes(requested) ? requested : allowed[0];
-          const session = await stripe.checkout.sessions.create(
-            {
-              mode: 'payment',
-              customer: customerId,
-              line_items: [{
-                price_data: {
-                  currency: 'gbp', unit_amount: order.card_amount_minor,
-                  product_data: { name: 'Conversation request' },
-                },
-                quantity: 1,
-              }],
-              payment_intent_data: { metadata: { payment_order_id: order.order_id } },
-              metadata: { payment_order_id: order.order_id },
-              success_url: `${origin}/#/conversations?payment=success`,
-              cancel_url: `${origin}/#/conversations?payment=cancelled`,
-            },
-            { idempotencyKey: `order-session-${order.order_id}` },
-          );
-          return json({ ok: true, orderId: order.order_id, state: 'requires_action', url: session.url });
+          const url = await createAuthenticationSession();
+          return json({ ok: true, orderId: order.order_id, state: 'requires_action', url });
         }
         // Card declined etc. → release the reservation via finalisation.
         await admin.rpc('finalize_paid_order', {
@@ -254,6 +327,45 @@ Deno.serve(async (req) => {
         });
         return json({ ok: false, orderId: order.order_id, state: 'failed' }, 200);
       }
+    }
+
+    if (action === 'check_payment_order') {
+      // ---- Stage 3D-B1: backend for the future “Check payment status” ----
+      // Input is ONLY the local order id. The stored provider identifiers are
+      // the sole lookup authority — an arbitrary client-supplied
+      // PaymentIntent id is never accepted, nothing is ever (re)charged and
+      // no provider object is ever created here. Repeats are idempotent.
+      const orderId = typeof body.orderId === 'string' ? body.orderId : '';
+      if (!orderId) return json({ error: 'not_found' }, 200);
+      const { data: ord } = await admin.from('payment_orders')
+        .select('id, coordinator_account_id, card_amount_minor, status, stripe_payment_intent_id, stripe_checkout_session_id')
+        .eq('id', orderId).maybeSingle();
+      if (!ord || ord.coordinator_account_id !== user.id) {
+        return json({ error: 'not_found' }, 200); // neutral — no existence leak
+      }
+      // Credit-only orders have no provider object; live card orders resolve
+      // the intent stored for THIS order (directly, or via its own session).
+      let intentId = (ord.stripe_payment_intent_id as string | null) ?? null;
+      if (!intentId && ord.stripe_checkout_session_id && ord.card_amount_minor > 0) {
+        const session = await stripe.checkout.sessions.retrieve(ord.stripe_checkout_session_id);
+        intentId = typeof session.payment_intent === 'string' ? session.payment_intent : null;
+      }
+      if (intentId && ord.card_amount_minor > 0) {
+        const pi = await stripe.paymentIntents.retrieve(intentId);
+        const linked = typeof pi.metadata?.payment_order_id === 'string'
+          ? pi.metadata.payment_order_id : null;
+        await admin.rpc('reconcile_payment_order', {
+          p_order: ord.id,
+          p_intent: pi.id,
+          p_provider_status: pi.status,
+          p_amount_minor: pi.status === 'succeeded' ? (pi.amount_received ?? pi.amount) : null,
+          p_currency: pi.status === 'succeeded' ? pi.currency : null,
+          p_event_at: null,
+          p_metadata_order: linked,
+        });
+      }
+      const { data: status } = await authed.rpc('get_payment_order_status', { p_order: orderId });
+      return json({ ok: true, status });
     }
 
     // ---------- 2G3: Stripe Connect onboarding (Companions) ----------
@@ -339,10 +451,9 @@ Deno.serve(async (req) => {
     if (action === 'create_connect_onboarding_link') {
       const made = await ensureConnectAccount();
       if ('error' in made) return json({ error: made.error }, 200);
-      const allowed = (Deno.env.get('APP_ORIGINS') ?? 'http://localhost:5173')
-        .split(',').map((s) => s.trim()).filter(Boolean);
-      const requested = typeof body.origin === 'string' ? body.origin : '';
-      const origin = allowed.includes(requested) ? requested : allowed[0];
+      // 3D-B1 central fail-closed origin policy (Connect return keeps its
+      // existing /#/settings?connect=… contract).
+      const origin = resolveReturnOrigin(typeof body.origin === 'string' ? body.origin : '');
       // Account Links are short-lived and single-use by Stripe design; an
       // expired link is simply regenerated here ("Continue setup").
       const link = await stripe.accountLinks.create({

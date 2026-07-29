@@ -76,10 +76,12 @@ afterEach(() => {
 /* ================= account model + navigation ================= */
 
 describe('role-based navigation', () => {
-  it('6+8. Coordinators get Explore + Members; Companions get neither', () => {
+  it('6+8. Coordinators get Explore (no Members primary link); Companions get no Explore', () => {
     const coordinator = navForRole('coordinator').map((n) => n.to);
     const companion = navForRole('companion').map((n) => n.to);
-    expect(coordinator).toEqual(['/', '/explore', '/messages', '/conversations', '/members']);
+    // Block 5: the single-managed-Member pilot removed the Members primary link.
+    expect(coordinator).toEqual(['/', '/explore', '/messages', '/conversations']);
+    expect(coordinator).not.toContain('/members');
     expect(companion).toEqual(['/', '/messages', '/conversations', '/profile']);
     expect(companion).not.toContain('/explore');
   });
@@ -103,8 +105,9 @@ describe('role-based navigation', () => {
     expect(SHELL_SRC).toMatch(/access_role === 'owner'/);
   });
 
-  it('member signup path is removed from the primary chooser (flagged, not deleted)', () => {
-    expect(SIGNUP_SRC).toContain('MEMBER_SELF_SIGNUP_ENABLED = false');
+  it('self-arranging Member is the third primary signup choice (flag enabled)', () => {
+    expect(SIGNUP_SRC).toContain('MEMBER_SELF_SIGNUP_ENABLED = true');
+    expect(SIGNUP_SRC).toContain('arrange conversations for myself');
   });
 
   it('old /plans routes redirect into the unified Conversations family', () => {

@@ -10,6 +10,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "tsc -b",
+    "scan:bundle": "node scripts/scan-bundle-secrets.mjs",
+    "build:verify": "npm run build && npm run scan:bundle",
     "types:generate": "supabase gen types typescript --linked > src/supabase/database.types.ts",
     "test:rls": "vitest run rls.integration"
   },
@@ -31,6 +33,7 @@
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^6.0.3",
     "jsdom": "^25.0.0",
+    "livekit-server-sdk": "^2.17.0",
     "typescript": "^5.5.4",
     "vite": "^8.1.5",
     "vitest": "^4.1.10"

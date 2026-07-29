@@ -13,10 +13,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CalendarHeart, Loader2, Sparkles } from 'lucide-react';
 import type { ConversationOfferRow, ConversationPlanRow, TrialState } from '../supabase/database.types';
 import type { User } from '../types';
-import { getTrialState, listMyPlans, PLAN_FREQUENCY_MIN } from '../repositories/planRepository';
+import { getTrialState, listMyPlans } from '../repositories/planRepository';
 import { listMyBookings } from '../repositories/bookingRepository';
 import { MessageActionButton } from '../messaging/MessageAction';
-import { getMemberPlanPreferences, recommendedFrequency } from '../repositories/planRepository';
 import { formatMinor } from '../repositories/availabilityRepository';
 import { useAuthSnapshot } from '../state/authBridge';
 import { PlanWizard } from './PlanWizard';
@@ -28,10 +27,13 @@ export function CompanionPlanHero({
   companion,
   offers,
   acceptingNewMembers,
+  onBookOneOff = () => undefined,
 }: {
   companion: User;
   offers: ConversationOfferRow[];
   acceptingNewMembers: boolean;
+  /** Opens the existing one-off booking flow (SupabaseBookingWizard). */
+  onBookOneOff?: () => void;
 }) {
   const auth = useAuthSnapshot();
 
@@ -47,10 +49,12 @@ export function CompanionPlanHero({
   const [trial, setTrial] = useState<TrialState | null>(null);
   const [plan, setPlan] = useState<ConversationPlanRow | null>(null);
   const [messagingEligible, setMessagingEligible] = useState(false);
-  const [recommended, setRecommended] = useState(3);
   const [loading, setLoading] = useState(true);
   const [planOpen, setPlanOpen] = useState(false);
   const [trialOpen, setTrialOpen] = useState(false);
+  // Shared booking-type selector: Regular is the recommended default; One-off
+  // is the secondary choice. Trial is offered separately (above) while eligible.
+  const [bookingType, setBookingType] = useState<'regular' | 'oneoff'>('regular');
 
   const trialOffer = offers.find((o) => o.offer_type === 'trial' && o.active) ?? null;
   const singleOffers = offers.filter((o) => o.offer_type === 'single' && o.active);
@@ -60,12 +64,9 @@ export function CompanionPlanHero({
       setLoading(false);
       return;
     }
-    const [state, plans, prefs, bookings] = await Promise.all([
+    const [state, plans, bookings] = await Promise.all([
       getTrialState(member.id, companion.id).catch(() => null),
       listMyPlans().catch(() => []),
-      getMemberPlanPreferences(member.id).catch(() => ({
-        preferredDays: [], preferredDayparts: [], preferredDurationMinutes: null,
-      })),
       listMyBookings().catch(() => []),
     ]);
     setTrial(state);
@@ -94,7 +95,6 @@ export function CompanionPlanHero({
           ['active', 'paused', 'ended'].includes(p.status),
       ),
     );
-    setRecommended(recommendedFrequency(prefs));
     setLoading(false);
   }, [member, companion.id]);
 
@@ -115,6 +115,21 @@ export function CompanionPlanHero({
 
   const canPlan = singleOffers.length > 0 && acceptingNewMembers && !plan;
   const showTrialCard = trial !== 'used' && trialOffer !== null && acceptingNewMembers && !plan;
+  // ONE authoritative price source: the cheapest single offer drives the "from
+  // £X per conversation" fact for both Regular and One-off (regular is built
+  // from the same per-conversation unit). Shown only when reliably available.
+  const cheapestSingleMinor = singleOffers.reduce(
+    (min, o) => Math.min(min, o.price_minor), Number.POSITIVE_INFINITY,
+  );
+  const fromLabel = Number.isFinite(cheapestSingleMinor) ? formatMinor(cheapestSingleMinor) : null;
+  // Real conversation duration, only when the offers agree or give a clear range.
+  const durations = Array.from(new Set(singleOffers.map((o) => o.duration_minutes))).sort((a, b) => a - b);
+  const durationLabel =
+    durations.length === 1
+      ? `${durations[0]}-minute conversations`
+      : durations.length > 1
+        ? `${durations[0]}–${durations[durations.length - 1]} minute conversations`
+        : null;
 
   return (
     <div className="col mt-4" style={{ gap: 12 }}>
@@ -177,25 +192,57 @@ export function CompanionPlanHero({
           <span className="faint">See your plan and next conversation on your home page.</span>
         </div>
       ) : canPlan ? (
-        <div className="card card-feature col" style={{ gap: 10 }} aria-label="Start regular conversations">
+        <div className="card card-feature col" style={{ gap: 12 }} aria-label="Book a conversation">
           <div className="col" style={{ gap: 4 }}>
-            <h2 style={{ margin: 0, fontSize: '1.15em' }}>
-              Start regular conversations with {companion.firstName}
-            </h2>
-            <p className="muted" style={{ margin: 0 }}>
-              A weekly rhythm at times that suit {member.first_name} — same companion, every week.
-            </p>
-            <p className="faint" style={{ margin: 0 }}>
-              Recommended for {member.first_name}: {recommended} conversation
-              {recommended === 1 ? '' : 's'} per week · from {PLAN_FREQUENCY_MIN} per week
-            </p>
+            <h2 style={{ margin: 0, fontSize: '1.15em' }}>Book a conversation with {companion.firstName}</h2>
+            <p className="muted" style={{ margin: 0 }}>Choose how you’d like to talk with {companion.firstName}.</p>
           </div>
-          <button className="btn btn-primary" style={{ alignSelf: 'flex-start' }} onClick={() => setPlanOpen(true)}>
-            Start regular conversations
-          </button>
-          <span className="faint longform">
-            {IN_APP_CALL_EXPLAINER} Prototype plan — no payment will be taken.
-          </span>
+
+          {/* One selector, two clear choices. Regular is recommended and
+              selected by default; one-off is secondary but plainly available. */}
+          <div className="booking-type-group" role="group" aria-label="Conversation type">
+            <button
+              type="button"
+              className="card card-tight card-selectable col booking-type-option"
+              aria-pressed={bookingType === 'regular'}
+              onClick={() => setBookingType('regular')}
+            >
+              <span className="row between" style={{ gap: 8 }}>
+                <span className="bold">Regular conversations</span>
+                <span className="badge badge-success">Recommended</span>
+              </span>
+              <span className="faint">Arrange an ongoing schedule with the same Companion.</span>
+              <ul className="booking-facts faint">
+                {durationLabel && <li>{durationLabel}</li>}
+                <li>Choose how often you would like to talk</li>
+                {fromLabel && <li>From {fromLabel} per conversation</li>}
+              </ul>
+            </button>
+            <button
+              type="button"
+              className="card card-tight card-selectable col booking-type-option"
+              aria-pressed={bookingType === 'oneoff'}
+              onClick={() => setBookingType('oneoff')}
+            >
+              <span className="bold">One-off conversation</span>
+              <span className="faint">A single conversation, with no ongoing commitment.</span>
+              <ul className="booking-facts faint">
+                {durationLabel && <li>{durationLabel}</li>}
+                {fromLabel && <li>From {fromLabel} per conversation</li>}
+              </ul>
+            </button>
+          </div>
+
+          {bookingType === 'regular' ? (
+            <button className="btn btn-primary" style={{ alignSelf: 'flex-start' }} onClick={() => setPlanOpen(true)}>
+              Set up regular conversations
+            </button>
+          ) : (
+            <button className="btn btn-primary" style={{ alignSelf: 'flex-start' }} onClick={onBookOneOff}>
+              Book a one-off conversation
+            </button>
+          )}
+          <span className="faint longform">{IN_APP_CALL_EXPLAINER}</span>
         </div>
       ) : (
         acceptingNewMembers && (

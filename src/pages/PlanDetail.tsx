@@ -46,13 +46,17 @@ import { scheduleSummary } from '../components/PlanWizard';
 import { PLAN_STATUS_LABELS } from '../components/PlanCards';
 import { PlanChangeWizard } from '../components/PlanChangeWizard';
 import { DateTimeSlotPicker, SLOT_WINDOW_DAYS } from '../components/DateTimeSlotPicker';
+import { PlanBillingPreviewCard } from '../components/PlanBillingPreviewCard';
+import { PlanBillingActivationCard } from '../components/PlanBillingActivationCard';
 import { EmptyState, Modal } from '../components/ui';
 import { IN_APP_CALL_LABEL } from '../components/FlowModal';
 import { loadPlanOverview, nextConversationLabel, type PlanOverview } from './PlansPage';
 import { MessageActionButton } from '../messaging/MessageAction';
 
-const BILLING_NOTICE = 'Prototype weekly plan — no payment is currently taken.';
-const BILLING_FUTURE = 'When payments are introduced, this plan will renew weekly.';
+const BILLING_NOTICE =
+  'Billed monthly for the conversations scheduled that calendar month — with a 10% monthly-plan discount.';
+const BILLING_FUTURE =
+  'Account credit is always applied first; only any remainder is charged to your card.';
 
 function fmt(iso: string, viewerTz: string, withTime = true): string {
   return new Intl.DateTimeFormat('en-GB', {
@@ -510,8 +514,26 @@ export default function PlanDetail() {
                 ? `${memberName}’s regular conversations with ${counterpartName}`
                 : `Regular conversations with ${counterpartName}`}
           </h1>
-          <span className="badge badge-neutral">{PLAN_STATUS_LABELS[plan.status]}</span>
+          <span className="badge badge-neutral">
+            {plan.status === 'active' && !plan.billing_enabled
+              ? 'Accepted · billing setup required'
+              : PLAN_STATUS_LABELS[plan.status]}
+          </span>
         </div>
+        {/* Role-aware lifecycle hint. */}
+        {plan.status === 'requested' && (
+          <span className="faint small">
+            {viewerSide === 'companion'
+              ? 'Awaiting your response — accept or decline below.'
+              : 'Awaiting the companion’s response.'}
+          </span>
+        )}
+        {plan.status === 'active' && !plan.billing_enabled && canManage && (
+          <span className="faint small">Accepted — set up monthly billing to begin scheduling.</span>
+        )}
+        {plan.status === 'active' && plan.billing_enabled && (
+          <span className="faint small">Active — billed monthly with a 10% plan discount.</span>
+        )}
         <span className="muted">
           {plan.frequency_per_week} conversation{plan.frequency_per_week === 1 ? '' : 's'} per week ·{' '}
           {plan.duration_minutes} minutes · {IN_APP_CALL_LABEL}
@@ -566,6 +588,19 @@ export default function PlanDetail() {
         <span className="faint">{BILLING_NOTICE}</span>
         <span className="faint">{BILLING_FUTURE}</span>
       </section>
+
+      {/* 2G5B: coordinator billing activation (accepted, not yet billed). */}
+      {canManage && (
+        <PlanBillingActivationCard
+          planId={plan.id}
+          active={plan.status === 'active'}
+          billingEnabled={plan.billing_enabled}
+          onActivated={() => void load()}
+        />
+      )}
+
+      {/* 2G5A: read-only recurring-billing estimate (coordinator side). */}
+      {canManage && plan.billing_enabled && <PlanBillingPreviewCard planId={plan.id} />}
 
       <MessagesCard view={view} requesterCanEdit={isRequester && canManage} onSaved={() => void load()} />
 

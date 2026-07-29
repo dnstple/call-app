@@ -79,7 +79,8 @@ describe('Supabase trial checkout (paid flow)', () => {
     expect(WIZ).toContain('if (!slot || !member || submitting) return; // duplicate-click protection');
     expect(WIZ).toContain('idempotencyRef.current = `trial-${member.id}-${trialOffer.id}-${slot.startsAt}`');
     expect(WIZ).toContain('getPaymentOrderState(result.orderId)');
-    expect(WIZ).toContain('Payment is being confirmed.');
+    // 3D-C approved copy replaced the terse confirming line.
+    expect(WIZ).toContain('Your payment was received. We’re confirming your conversation.');
     expect(WIZ).toContain('Payment received. Waiting for the Companion’s response.');
   });
 

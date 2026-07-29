@@ -117,7 +117,7 @@ function planRow(partial: Partial<ConversationPlanRow> = {}): ConversationPlanRo
     created_by_account_id: 'auth-user-1', frequency_per_week: 3, duration_minutes: 30,
     communication_method: 'phone', per_conversation_price_minor: 900, weekly_price_minor: 2700,
     currency: 'GBP', status: 'active', allowance_purchase_id: 'pp1', pending_change: null,
-    generated_until: null, paused_at: null, ended_at: null, end_reason: null,
+    generated_until: null, paused_at: null, ended_at: null, end_reason: null, billing_enabled: false, funding_mode: 'recurring',
     pause_reason: null, resume_on: null,
     request_message: null, response_message: null,
     created_at: '', updated_at: '',
@@ -171,11 +171,23 @@ const renderWizard = () =>
 /* ---------------- profile hero ---------------- */
 
 describe('Companion profile hero', () => {
-  it('leads with regular conversations, using the member’s recommended frequency', async () => {
+  it('leads with regular conversations using clear, non-contradictory copy', async () => {
     render(<CompanionPlanHero companion={companion} offers={[trialOffer, singleOffer]} acceptingNewMembers />);
-    expect(await screen.findByRole('button', { name: /Start regular conversations/ })).toBeTruthy();
-    expect(screen.getByText(/Recommended for Mary: 3 conversations per week/)).toBeTruthy();
-    expect(screen.getByText(/Prototype plan — no payment will be taken/)).toBeTruthy();
+    expect(await screen.findByRole('button', { name: /Set up regular conversations/ })).toBeTruthy();
+    // Regular is the recommended choice, selected by default. Copy is factual —
+    // one duration, an invitation to choose frequency, one authoritative price —
+    // with no dev shorthand and no fixture names.
+    const group = screen.getByRole('group', { name: /Conversation type/i });
+    const regular = within(group).getByRole('button', { name: /Regular conversations/i });
+    expect(regular.getAttribute('aria-pressed')).toBe('true');
+    expect(regular.textContent).toMatch(/Recommended/);
+    expect(regular.textContent).toMatch(/Arrange an ongoing schedule/);
+    expect(regular.textContent).toMatch(/Choose how often you would like to talk/);
+    expect(regular.textContent).toMatch(/30-minute conversations/);
+    expect(regular.textContent).toMatch(/From £9\.00 per conversation/);
+    // No slash-style shorthand and no fixture name leaks.
+    expect(regular.textContent).not.toMatch(/\/week/);
+    expect(regular.textContent).not.toMatch(/Mary/);
   });
 
   it('offers the one-time test call while it is available', async () => {
@@ -194,7 +206,7 @@ describe('Companion profile hero', () => {
   it('hides the test call permanently once used — plans remain', async () => {
     mock.rpcResults.get_trial_state = { data: 'used', error: null };
     render(<CompanionPlanHero companion={companion} offers={[trialOffer, singleOffer]} acceptingNewMembers />);
-    expect(await screen.findByRole('button', { name: /Start regular conversations/ })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: /Set up regular conversations/ })).toBeTruthy();
     expect(screen.queryByText(/test call/i)).toBeNull();
   });
 
@@ -203,7 +215,7 @@ describe('Companion profile hero', () => {
     render(<CompanionPlanHero companion={companion} offers={[trialOffer, singleOffer]} acceptingNewMembers />);
     expect(await screen.findByText(/Your regular conversations with Daniel/)).toBeTruthy();
     expect(screen.getByText(/Pending approval/)).toBeTruthy();
-    expect(screen.queryByRole('button', { name: /Start regular conversations/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Set up regular conversations/ })).toBeNull();
   });
 
   it('companions and visitors see no member actions', () => {
@@ -216,7 +228,7 @@ describe('Companion profile hero', () => {
 
   it('says nothing about packages, credits or purchases', async () => {
     const view = render(<CompanionPlanHero companion={companion} offers={[trialOffer, singleOffer]} acceptingNewMembers />);
-    await screen.findByRole('button', { name: /Start regular conversations/ });
+    await screen.findByRole('button', { name: /Set up regular conversations/ });
     expect(view.container.textContent).not.toMatch(/package|credit|purchase|buy plan/i);
   });
 });

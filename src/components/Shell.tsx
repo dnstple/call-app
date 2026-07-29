@@ -2,10 +2,10 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   Bell, CalendarHeart, ChevronDown, Compass, LogOut, MessageCircle,
-  Home as HomeIcon, Settings as SettingsIcon, UserRound, Users,
+  Home as HomeIcon, Settings as SettingsIcon, ShieldAlert, UserRound,
 } from 'lucide-react';
 import { useAppState } from '../state/store';
-import { currentUser, managedMembers, settingsFor, unreadCount } from '../state/selectors';
+import { currentUser, settingsFor, unreadCount } from '../state/selectors';
 import { switchIdentity } from '../state/actions';
 import { DEMO_IDENTITIES } from '../data/seed';
 import { getDataMode, isSupabaseMode } from '../config/dataMode';
@@ -13,6 +13,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { useAccountRole } from '../state/managedMember';
 import { useUnreadTotal } from '../messaging/hooks';
 import { useUnreadNotifications } from '../messaging/NotificationsSupabase';
+import { useIsSupport } from '../state/support';
 import { ToastStack } from './ui';
 import { APP_NAME } from '../config/branding';
 
@@ -25,18 +26,59 @@ import { APP_NAME } from '../config/branding';
  */
 type NavItem = { to: string; label: string; Icon: typeof HomeIcon };
 
+/**
+ * The mobile bottom navigation. It is fed the SAME role-filtered `navForRole`
+ * list the desktop sidebar renders, so Explore (and every other destination)
+ * appears on mobile exactly when — and only when — it appears on desktop.
+ * There is no second nav definition and no duplicate Explore route.
+ */
+export function BottomNav({ items, badgeFor }: {
+  items: NavItem[];
+  badgeFor?: (to: string) => ReactNode;
+}) {
+  return (
+    <nav className="bottomnav" aria-label="Primary mobile">
+      {items.map(({ to, label, Icon }) => (
+        <NavLink key={to} to={to} end={to === '/'}>
+          <span style={{ position: 'relative' }}>
+            <Icon size={22} aria-hidden="true" />
+            {badgeFor?.(to)}
+          </span>
+          {label}
+        </NavLink>
+      ))}
+    </nav>
+  );
+}
+
+const HOME = { to: '/', label: 'Home', Icon: HomeIcon } as const;
+const EXPLORE = { to: '/explore', label: 'Explore', Icon: Compass } as const;
+const MESSAGES = { to: '/messages', label: 'Messages', Icon: MessageCircle } as const;
+const CONVERSATIONS = { to: '/conversations', label: 'Conversations', Icon: CalendarHeart } as const;
+const PROFILE = { to: '/profile', label: 'Profile', Icon: UserRound } as const;
+const SETTINGS = { to: '/settings', label: 'Settings', Icon: SettingsIcon } as const;
+
+/**
+ * Desktop sidebar primary destinations (Settings is rendered separately below
+ * the list). For the single-managed-Member pilot the Coordinator no longer has
+ * a "Members" primary link — managed-member management lives in the account menu
+ * (Your profile → /members).
+ */
 export function navForRole(role: string): NavItem[] {
-  const home = { to: '/', label: 'Home', Icon: HomeIcon };
-  const explore = { to: '/explore', label: 'Explore', Icon: Compass };
-  const messages = { to: '/messages', label: 'Messages', Icon: MessageCircle };
-  const conversations = { to: '/conversations', label: 'Conversations', Icon: CalendarHeart };
-  if (role === 'companion') {
-    return [home, messages, conversations, { to: '/profile', label: 'Profile', Icon: UserRound }];
-  }
-  if (role === 'coordinator') {
-    return [home, explore, messages, conversations, { to: '/members', label: 'Members', Icon: Users }];
-  }
-  return [home, explore, messages, conversations, { to: '/profile', label: 'Profile', Icon: UserRound }];
+  if (role === 'companion') return [HOME, MESSAGES, CONVERSATIONS, PROFILE];
+  if (role === 'coordinator') return [HOME, EXPLORE, MESSAGES, CONVERSATIONS];
+  return [HOME, EXPLORE, MESSAGES, CONVERSATIONS, PROFILE];
+}
+
+/**
+ * Mobile bottom navigation: exactly five destinations ending in Settings
+ * (bottom-right) for every signed-in role. Settings is not duplicated in the
+ * sidebar's mobile view because the sidebar is hidden on mobile.
+ */
+export function mobileNavForRole(role: string): NavItem[] {
+  if (role === 'companion') return [HOME, MESSAGES, CONVERSATIONS, PROFILE, SETTINGS];
+  // Coordinator + self-managed Member: Home · Explore · Messages · Conversations · Settings.
+  return [HOME, EXPLORE, MESSAGES, CONVERSATIONS, SETTINGS];
 }
 
 const NEW_USER_VALUE = '__start-signup';
@@ -55,7 +97,10 @@ export function Shell({ children }: { children: ReactNode }) {
   const unreadNotifications = useUnreadNotifications(supabase && auth.status === 'authenticated');
   const bellCount = supabase ? unreadNotifications : unread;
 
-  const nav = navForRole(supabase ? accountRole : me.role);
+  const role = supabase ? accountRole : me.role;
+  const nav = navForRole(role);
+  // Discreet internal entry — shown ONLY when the server confirms support.
+  const supportStatus = useIsSupport();
 
   const navBadge = (to: string) =>
     to === '/messages' && unreadMessages > 0 ? (
@@ -93,23 +138,17 @@ export function Shell({ children }: { children: ReactNode }) {
 
   return (
     <div>
-      <div className="dev-notice simple-hide">
-        Prototype build — fictional people, simulated payments and notifications.
-        {getDataMode() === 'supabase' &&
-          ' Supabase mode: real sign-in; your activity starts empty until each feature migrates.'}
-      </div>
+      {/* Ordinary (supabase) users never see developer language. In local mock
+          mode only, show one restrained preview badge. */}
+      {!supabase && (
+        <div className="dev-notice simple-hide">Preview build — sample data, no real accounts or payments.</div>
+      )}
       <div className="shell">
         <nav className="sidenav" aria-label="Primary">
           <div className="brand">
-            {/* The app logo always goes home. */}
-            <NavLink
-              to="/"
-              className="name brand-lockup"
-              aria-label={`${APP_NAME} — home`}
-              style={{ textDecoration: 'none', color: 'inherit' }}
-            >
-              <img src="/icon.svg" alt="" className="brand-icon" />
-              {APP_NAME}
+            {/* Logo mark only (no wordmark); always goes home. */}
+            <NavLink to="/" className="brand-lockup" aria-label={`${APP_NAME} home`} style={{ textDecoration: 'none' }}>
+              <img src="/icon.svg" alt="" className="brand-mark" />
             </NavLink>
           </div>
           {nav.map(({ to, label, Icon }) => (
@@ -121,18 +160,17 @@ export function Shell({ children }: { children: ReactNode }) {
           <NavLink to="/settings">
             <SettingsIcon size={20} aria-hidden="true" /> Settings
           </NavLink>
+          {supportStatus === 'yes' && (
+            <NavLink to="/internal/issues">
+              <ShieldAlert size={20} aria-hidden="true" /> Issue queue
+            </NavLink>
+          )}
         </nav>
 
         <div className="main-col">
           <header className="topbar">
-            <NavLink
-              to="/"
-              className="brand-mobile brand-lockup"
-              aria-label={`${APP_NAME} — home`}
-              style={{ textDecoration: 'none', color: 'inherit' }}
-            >
-              <img src="/icon.svg" alt="" className="brand-icon" />
-              {APP_NAME}
+            <NavLink to="/" className="brand-mobile brand-lockup" aria-label={`${APP_NAME} home`} style={{ textDecoration: 'none', marginRight: 'auto' }}>
+              <img src="/icon.svg" alt="" className="brand-mark" />
             </NavLink>
 
             {!supabase && (
@@ -180,17 +218,7 @@ export function Shell({ children }: { children: ReactNode }) {
         </div>
       </div>
 
-      <nav className="bottomnav" aria-label="Primary mobile">
-        {nav.map(({ to, label, Icon }) => (
-          <NavLink key={to} to={to} end={to === '/'}>
-            <span style={{ position: 'relative' }}>
-              <Icon size={22} aria-hidden="true" />
-              {navBadge(to)}
-            </span>
-            {label}
-          </NavLink>
-        ))}
-      </nav>
+      <BottomNav items={mobileNavForRole(role)} badgeFor={navBadge} />
 
       <ToastStack />
     </div>

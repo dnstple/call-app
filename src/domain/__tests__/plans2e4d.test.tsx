@@ -125,7 +125,7 @@ function planRow(partial: Partial<ConversationPlanRow> = {}): ConversationPlanRo
     created_by_account_id: 'auth-user-1', frequency_per_week: 2, duration_minutes: 30,
     communication_method: 'in_app', per_conversation_price_minor: 900, weekly_price_minor: 1800,
     currency: 'GBP', status: 'active', allowance_purchase_id: 'pp1', pending_change: null,
-    generated_until: null, paused_at: null, ended_at: null, end_reason: null,
+    generated_until: null, paused_at: null, ended_at: null, end_reason: null, billing_enabled: false, funding_mode: 'recurring',
     pause_reason: null, resume_on: null,
     request_message: 'Mary loves gardening.', response_message: 'Happy to talk with Mary.',
     created_at: '2026-07-01T09:00:00Z', updated_at: '',
@@ -263,9 +263,13 @@ describe('plan detail', () => {
     expect(text).toContain('Happy to talk with Mary.'); // response message
     expect(text).toContain('Sent with their acceptance');
     expect(text).toContain('£18.00 per week');
-    expect(text).toContain('Prototype weekly plan — no payment is currently taken.');
-    expect(text).toContain('When payments are introduced, this plan will renew weekly.');
-    expect(text).not.toMatch(/payment (was|has been) taken|paid/i); // 38.
+    // 2G5B: calendar-month billing copy (no more "no payment / renews weekly").
+    expect(text).toContain('Billed monthly for the conversations scheduled that calendar month');
+    expect(text).toContain('10% monthly-plan discount');
+    expect(text).toContain('Account credit is always applied first');
+    expect(text).not.toContain('no payment is currently taken');
+    expect(text).not.toContain('renew weekly');
+    expect(text).not.toMatch(/payment (was|has been) taken/i); // 38.
     expect(text).toContain('Next conversation:');
     expect(text).toContain('This message is now locked'); // 6.
     expect(text).toContain('Messaging between Members and Companions will be added later.');

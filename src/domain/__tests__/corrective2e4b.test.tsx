@@ -330,7 +330,7 @@ describe('test-call flow', () => {
         <CompanionPlanHero companion={companion} offers={[trialOffer, singleOffer]} acceptingNewMembers />
       </MemoryRouter>,
     );
-    expect(await screen.findByRole('button', { name: /Start regular conversations/ })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: /Set up regular conversations/ })).toBeTruthy();
     expect(used.container.textContent).not.toMatch(/test call/i);
   });
 });

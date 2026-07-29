@@ -79,7 +79,7 @@ function plan(partial: Partial<ConversationPlanRow> = {}): ConversationPlanRow {
     allowance_purchase_id: 'pp1', pending_change: null, generated_until: null,
     pause_reason: null, resume_on: null,
     request_message: null, response_message: null,
-    paused_at: null, ended_at: null, end_reason: null, created_at: '', updated_at: '',
+    paused_at: null, ended_at: null, end_reason: null, billing_enabled: false, funding_mode: 'recurring', created_at: '', updated_at: '',
     ...partial,
   };
 }

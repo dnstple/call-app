@@ -103,7 +103,8 @@ describe('Edge Function contracts', () => {
     expect(WEBHOOK_FN).toContain('await req.text()');
     // Dual-destination secrets: each attempt still verifies the RAW body.
     expect(WEBHOOK_FN).toContain('constructEventAsync(rawBody, signature, secret)');
-    const persistIdx = WEBHOOK_FN.indexOf("from('stripe_webhook_events').insert");
+    // 0059 fund-event-ordering switched the persist step from insert to upsert.
+    const persistIdx = WEBHOOK_FN.indexOf("from('stripe_webhook_events').upsert");
     const effectIdx = WEBHOOK_FN.indexOf('switch (event.type)');
     expect(persistIdx).toBeGreaterThan(-1);
     expect(persistIdx).toBeLessThan(effectIdx);
@@ -126,7 +127,7 @@ describe('Edge Function contracts', () => {
     expect(PAYMENTS_FN).toContain('idempotencyKey: `setup-');
   });
 
-  it('webhook handles exactly the 2G1-relevant events', () => {
+  it('webhook handles the 2G1 events (transfer/refund/dispute handlers were added by 2G6)', () => {
     for (const evt of [
       'setup_intent.succeeded', 'checkout.session.completed',
       'payment_intent.succeeded', 'payment_intent.payment_failed',
@@ -134,8 +135,9 @@ describe('Edge Function contracts', () => {
     ]) {
       expect(WEBHOOK_FN).toContain(`'${evt}'`);
     }
-    // No speculative handlers for events this phase doesn't use.
+    // Still no speculative handlers for events no stage uses.
     expect(WEBHOOK_FN).not.toContain('invoice.paid');
-    expect(WEBHOOK_FN).not.toContain('transfer.created');
+    // transfer.* events are legitimately handled since 2G6B (settlement finalisation).
+    expect(WEBHOOK_FN).toContain("case 'transfer.created'");
   });
 });

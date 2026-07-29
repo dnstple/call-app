@@ -10,6 +10,7 @@ import {
   Users,
   Wand2,
   RotateCcw,
+  LogOut,
 } from 'lucide-react';
 import type { Role } from '../types';
 import { getState, newId } from '../state/store';
@@ -46,10 +47,11 @@ import { isSupabaseMode } from '../config/dataMode';
 import { useAuth } from '../auth/AuthProvider';
 import { AuthAppError } from '../auth/authErrors';
 
-/** Member self-signup is out of the primary product flow (managed Members
- * have no login). Kept as a flag, not deleted — the schema still supports
- * linking a Member account later. */
-const MEMBER_SELF_SIGNUP_ENABLED = false;
+/** Self-arranging Members ARE part of the primary flow: someone can set up
+ * companionship for themselves, managing their own account and bookings. The
+ * flag remains so the choice can be withdrawn again without deleting the
+ * (fully-wired) member step sequence and completion path. */
+const MEMBER_SELF_SIGNUP_ENABLED = true;
 
 const SAMPLE_BIO =
   'I grew up around here and love hearing how the area has changed. I enjoy long walks, old films and a proper natter about anything from family recipes to famous matches. I’m a patient listener and I always keep an eye on the time so calls end when you want them to.';
@@ -302,8 +304,17 @@ export default function SignupWizard() {
         },
       });
     }
+    // Always offer an escape from the wizard for a signed-in account (pilot UX
+    // fix: previously a signed-in-but-incomplete account could get stuck here).
+    if (supabase) {
+      items.push({
+        label: 'Sign out',
+        icon: <LogOut size={18} aria-hidden="true" />,
+        onSelect: () => { void auth.signOut().then(() => navigate('/login', { replace: true })); },
+      });
+    }
     return items;
-  }, [data.role, step]);
+  }, [data.role, step, supabase, auth, navigate]);
 
   const fieldError = (cond: boolean, msg: string) => (attempted && cond ? msg : undefined);
 
@@ -342,8 +353,8 @@ export default function SignupWizard() {
               ...(MEMBER_SELF_SIGNUP_ENABLED ? [{
                 role: 'member' as Role,
                 Icon: MessagesSquare,
-                title: 'I would like someone to talk with',
-                text: 'Find a friendly Companion for regular conversations through the app.',
+                title: 'I would like to arrange conversations for myself',
+                text: 'Set up your own regular companionship — you manage your own account and bookings.',
               }] : []),
             ]).map(({ role, Icon, title, text }) => (
               <button
@@ -456,7 +467,7 @@ export default function SignupWizard() {
                       reader.readAsDataURL(file);
                     }}
                   />
-                  <span className="hint">Stored only on this device — nothing is uploaded in the prototype.</span>
+                  <span className="hint">Kept on this device until you finish signing up.</span>
                   {data.photoDataUrl && (
                     <button className="btn btn-ghost btn-small" style={{ alignSelf: 'flex-start' }} onClick={() => patch({ photoDataUrl: '' })}>
                       Remove photo
@@ -513,14 +524,46 @@ export default function SignupWizard() {
         {step === 'permission' && (
           <SignupStep
             title="A quick check first"
-            intro="These are prototype confirmations, not final legal consent documents."
+            intro="Please confirm each of these before we set up the profile."
             onBack={back}
             onNext={next}
             error={error}
           >
-            <Switch label={`${data.memberFirstName || 'They'} know${data.memberFirstName ? 's' : ''} this profile is being created`} checked={data.permKnows} onChange={(v) => patch({ permKnows: v })} />
-            <Switch label={`${data.memberFirstName || 'They'} ${data.memberFirstName ? 'has' : 'have'} agreed to receive conversations`} checked={data.permAgreed} onChange={(v) => patch({ permAgreed: v })} />
-            <Switch label="I have permission to manage the bookings" checked={data.permManage} onChange={(v) => patch({ permManage: v })} />
+            {(() => {
+              // Each item starts unchecked, is individually toggleable, and is
+              // required. "Confirm all" is a convenience only — it never
+              // pre-selects on the user's behalf before they act.
+              const items = [
+                { key: 'permKnows' as const, label: `${data.memberFirstName || 'They'} know${data.memberFirstName ? 's' : ''} this profile is being created` },
+                { key: 'permAgreed' as const, label: `${data.memberFirstName || 'They'} ${data.memberFirstName ? 'has' : 'have'} agreed to receive conversations` },
+                { key: 'permManage' as const, label: 'I have permission to manage the bookings' },
+              ];
+              const allChecked = items.every((i) => data[i.key]);
+              return (
+                <>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-small"
+                    style={{ alignSelf: 'flex-start' }}
+                    aria-pressed={allChecked}
+                    disabled={allChecked}
+                    onClick={() => patch({ permKnows: true, permAgreed: true, permManage: true })}
+                  >
+                    Confirm all
+                  </button>
+                  {items.map((i) => (
+                    <div key={i.key} className="col" style={{ gap: 4 }}>
+                      <Switch label={i.label} checked={data[i.key]} onChange={(v) => patch({ [i.key]: v })} />
+                      {attempted && !data[i.key] && (
+                        <span className="faint" role="alert" style={{ color: 'var(--color-danger-text)' }}>
+                          Please confirm this to continue.
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </>
+              );
+            })()}
           </SignupStep>
         )}
 
@@ -689,7 +732,7 @@ export default function SignupWizard() {
         {step === 'notifications' && (
           <SignupStep
             title="How should we remind you?"
-            intro="Delivery methods are simulated in this prototype."
+            intro="Choose how you'd like to hear about upcoming conversations. You can change this any time in Settings."
             onBack={back}
             onNext={next}
             error={error}
@@ -711,7 +754,7 @@ export default function SignupWizard() {
         {step === 'notifRouting' && (
           <SignupStep
             title="Who should hear about what?"
-            intro="You can route each update to yourself, to them, or to both. Delivery is simulated in the prototype."
+            intro="You can route each update to yourself, to them, or to both."
             onBack={back}
             onNext={next}
             error={error}
@@ -756,7 +799,7 @@ export default function SignupWizard() {
         {step === 'trust' && (
           <SignupStep
             title="Trust and expectations"
-            intro="Prototype wording — not final legal documentation."
+            intro="A few shared expectations that keep conversations kind and safe."
             onBack={back}
             onNext={next}
             error={error}
@@ -842,7 +885,7 @@ function PricingStep({
   return (
     <SignupStep
       title="Your pricing"
-      intro="You decide what to charge for a 30-minute conversation. Payments are simulated in this prototype."
+      intro="You decide what to charge for a 30-minute conversation. You can change this any time."
       onBack={onBack}
       onNext={onNext}
       error={error}
@@ -899,6 +942,25 @@ function PackagesStep({
   const [custom, setCustom] = useState<Omit<PackageDraft, 'id'>>({
     title: 'Custom package', count: 4, durationMins: 30, price: '40.00', validityDays: 42, recurring: false,
   });
+  // When set, the custom form edits this existing package in place instead of
+  // adding a new one — so a companion can adjust a package without deleting it.
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  function startEditPackage(p: PackageDraft) {
+    setCustom({ title: p.title, count: p.count, durationMins: p.durationMins, price: p.price, validityDays: p.validityDays, recurring: p.recurring });
+    setEditingId(p.id);
+    setShowCustom(true);
+  }
+
+  function saveCustomPackage() {
+    if (editingId) {
+      patch({ packages: data.packages.map((x) => (x.id === editingId ? { ...custom, id: editingId } : x)) });
+    } else {
+      patch({ packages: [...data.packages, { ...custom, id: newId('pkgd') }] });
+    }
+    setEditingId(null);
+    setShowCustom(false);
+  }
 
   const has = (title: string) => data.packages.some((p) => p.title === title);
   function toggleSuggested(s: Omit<PackageDraft, 'id'>) {
@@ -940,12 +1002,15 @@ function PackagesStep({
         </button>
       ))}
 
-      <button className="btn btn-ghost btn-small" style={{ alignSelf: 'flex-start' }} onClick={() => setShowCustom(!showCustom)}>
-        {showCustom ? 'Hide custom package' : 'Create a custom package'}
-      </button>
+      {!showCustom && (
+        <button className="btn btn-ghost btn-small" style={{ alignSelf: 'flex-start' }} onClick={() => { setEditingId(null); setShowCustom(true); }}>
+          Create a custom package
+        </button>
+      )}
 
       {showCustom && (
         <div className="card card-muted col reveal" style={{ gap: 12 }}>
+          <h4 style={{ margin: 0 }}>{editingId ? 'Edit package' : 'New package'}</h4>
           <FormField id="su-pkg-title" label="Package name" value={custom.title} onChange={(v) => setCustom({ ...custom, title: v })} />
           <div className="grid-2" style={{ gap: 12 }}>
             <div className="field" style={{ marginBottom: 0 }}>
@@ -965,13 +1030,14 @@ function PackagesStep({
             </div>
           </div>
           <Switch label="Recurring" description="Intended to repeat, rather than a one-off bundle" checked={custom.recurring} onChange={(v) => setCustom({ ...custom, recurring: v })} />
-          <button
-            className="btn btn-secondary btn-small"
-            style={{ alignSelf: 'flex-start' }}
-            onClick={() => patch({ packages: [...data.packages, { ...custom, id: newId('pkgd') }] })}
-          >
-            <Plus size={16} aria-hidden="true" /> Add this package
-          </button>
+          <div className="row" style={{ gap: 10 }}>
+            <button className="btn btn-secondary btn-small" style={{ alignSelf: 'flex-start' }} onClick={saveCustomPackage}>
+              <Plus size={16} aria-hidden="true" /> {editingId ? 'Save package' : 'Add this package'}
+            </button>
+            <button className="btn btn-ghost btn-small" onClick={() => { setEditingId(null); setShowCustom(false); }}>
+              Cancel
+            </button>
+          </div>
         </div>
       )}
 
@@ -984,9 +1050,12 @@ function PackagesStep({
                 <span className="bold">{p.title}</span>{' '}
                 <span className="faint">· {p.count} × {p.durationMins} mins · £{p.price}</span>
               </span>
-              <button className="icon-btn" aria-label={`Remove ${p.title}`} onClick={() => patch({ packages: data.packages.filter((x) => x.id !== p.id) })}>
-                <Trash2 size={18} aria-hidden="true" />
-              </button>
+              <span className="row" style={{ gap: 6 }}>
+                <button className="btn btn-ghost btn-small" onClick={() => startEditPackage(p)}>Edit</button>
+                <button className="icon-btn" aria-label={`Remove ${p.title}`} onClick={() => { if (editingId === p.id) { setEditingId(null); setShowCustom(false); } patch({ packages: data.packages.filter((x) => x.id !== p.id) }); }}>
+                  <Trash2 size={18} aria-hidden="true" />
+                </button>
+              </span>
             </div>
           ))}
         </div>

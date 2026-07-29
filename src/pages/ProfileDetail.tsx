@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Ban, Flag, Heart, Loader2, UserX } from 'lucide-react';
 import { isSupabaseMode } from '../config/dataMode';
+import { APP_NAME } from '../config/branding';
 import { loadMarketplaceProfile, marketplaceCache } from '../state/marketplace';
 import {
   ensureFavouritesLoaded,
@@ -37,6 +38,9 @@ import {
 } from '../components/ui';
 import { BookingWizard, PackagePurchaseDialog } from '../components/BookingWizard';
 import { SupabaseBookingWizard } from '../components/SupabaseBookingWizard';
+import { getBillingStatus } from '../repositories/billingRepository';
+import { clearBookingDraft, loadBookingDraft } from '../payments/bookingDraft';
+import { pushToast } from '../state/store';
 import { PublicPackages } from '../components/PackagePurchaseSupabase';
 import { CardRatingSummary, CompanionReviews } from '../components/CompanionReviews';
 import { CompanionPlanHero } from '../components/CompanionPlanHero';
@@ -44,6 +48,7 @@ import { IN_APP_CALL_LABEL } from '../components/FlowModal';
 import { useAuthSnapshot } from '../state/authBridge';
 import { ReportDialog } from '../components/ConversationRow';
 import { roleLabel } from '../components/Shell';
+import { BlockControl } from '../components/TrustSafety';
 import type { PackageOffer } from '../types';
 
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -71,10 +76,47 @@ export default function ProfileDetail() {
   const [realRules, setRealRules] = useState<AvailabilityRuleRow[]>([]);
   const [realBooking, setRealBooking] = useState(false);
   const [showPackages, setShowPackages] = useState(false);
+  // Block 9 — payment-method-first booking resume after the Stripe setup redirect.
+  const [resumeDraft, setResumeDraft] = useState<{ offerId: string; memberId: string; startsAt: string } | null>(null);
+  const location = useLocation();
+  const resumeHandledRef = useRef(false);
 
   useEffect(() => {
     if (supabase) void ensureFavouritesLoaded();
   }, [supabase]);
+
+  // Return from Stripe hosted card setup (?resume=booking&setup=…). We verify
+  // the card SERVER-SIDE (billing_status for this customer) and only then reopen
+  // the exact wizard from the owner-bound draft. A cancelled/unverified setup
+  // keeps the draft and creates nothing.
+  useEffect(() => {
+    if (!supabase || resumeHandledRef.current || !user) return;
+    const params = new URLSearchParams(location.search);
+    if (params.get('resume') !== 'booking') return;
+    resumeHandledRef.current = true;
+    const setupOutcome = params.get('setup');
+    // Strip the query so a refresh or Back can't replay the resume.
+    navigate(`/people/${id}`, { replace: true });
+
+    const accountId = authSnap.userId;
+    if (!accountId) return;
+    const draft = loadBookingDraft(accountId); // owner-bound + fresh, else null
+    if (!draft || draft.companionId !== user.id) return; // not this account's / not this companion
+
+    if (setupOutcome === 'cancelled') {
+      pushToast('No card was added. Your booking is saved — you can try again.', 'neutral');
+      return; // keep the draft; create nothing
+    }
+    // Confirm a usable card actually exists for THIS authenticated customer.
+    void getBillingStatus().then((s) => {
+      if (s.paymentMethodReady) {
+        setResumeDraft({ offerId: draft.offerId, memberId: draft.memberId, startsAt: draft.startsAt });
+        setRealBooking(true);
+      } else {
+        pushToast('We couldn’t confirm your card yet. Your booking is saved — please try again.', 'warn');
+      }
+    }).catch(() => undefined);
+  }, [supabase, location.search, user, id, authSnap.userId, navigate]);
 
   // Genuine availability + offers for Supabase-mode Companion profiles.
   useEffect(() => {
@@ -141,6 +183,12 @@ export default function ProfileDetail() {
   const canBookReal =
     realOffers.length > 0 &&
     authSnap.profiles.some((p) => p.profile.role === 'member' && p.access.can_book);
+  // The Companion viewing their OWN public profile: they manage this profile.
+  // They get an edit action for availability & rates, never booking actions.
+  const isOwnerViewing =
+    supabase &&
+    user.role === 'companion' &&
+    authSnap.profiles.some((p) => p.profile.id === user.id && p.access.access_role === 'owner');
   const bookingMemberId = me.role === 'coordinator' ? (state.session.activeMemberId ?? '') : me.id;
   const trialOk = bookingMemberId ? trialEligible(state.bookings, bookingMemberId, user.id) : true;
   const fav = supabase ? supaFavs.ids.includes(user.id) : isFavourite(state, user.id);
@@ -227,40 +275,43 @@ export default function ProfileDetail() {
           companion={user}
           offers={realOffers}
           acceptingNewMembers={getMarketMeta(user.id)?.acceptingNewMembers !== false}
+          onBookOneOff={() => setRealBooking(true)}
         />
       )}
 
-      <section className="section-tight">
-        <h2>About {user.firstName}</h2>
-        {/* Free text people write: wraps, never escapes the column. */}
-        <p className="muted longform" style={{ maxWidth: 640 }}>{user.bio}</p>
-        <p className="muted longform">
-          Speaks {user.languages.join(' and ')}
-          {user.style ? ` · prefers ${user.style} conversations` : ''}
-          {supabase ? ` · ${IN_APP_CALL_LABEL}` : ` · ${user.mediums.map((m) => MEDIUM_LABELS[m]).join(', ')}`}
-        </p>
-        <div className="row-wrap mt-2">
-          {user.interests.map((i) => (
-            <span key={i} className="chip">
-              {i}{me.interests.includes(i) ? ' · shared' : ''}
-            </span>
-          ))}
-        </div>
-        {user.role === 'member' && (
-          <div className="mt-4 muted">
-            {user.preferredTimes && <p style={{ margin: 0 }}>Preferred times: {user.preferredTimes}</p>}
-            {user.accessibilityNeeds && <p style={{ margin: 0 }}>Good to know: {user.accessibilityNeeds}</p>}
+      {/* Section 4 — Availability & rates sits directly beneath the identity /
+          action row, above About. The owner gets an edit action and no booking
+          controls; viewers get the booking selector (hero, above) plus the
+          usual-availability guide here. */}
+      {isOwnerViewing && (
+        <section className="section-tight" aria-label="Availability and rates">
+          <div className="row between wrap" style={{ gap: 12 }}>
+            <h2 style={{ margin: 0 }}>Availability &amp; rates</h2>
+            <button className="btn btn-secondary btn-small" onClick={() => navigate('/availability')}>
+              Edit availability and rates
+            </button>
           </div>
-        )}
-      </section>
-
-      {/* Reviews sit above the diary: people first, logistics second. */}
-      {supabase && user.role === 'companion' && (
-        <CompanionReviews profileId={user.id} firstName={user.firstName} />
+          {realOffers.filter((o) => o.active).length === 0 ? (
+            <p className="muted mt-2">You haven’t set your conversation types or rates yet.</p>
+          ) : (
+            <div className="stack-list mt-2">
+              {realOffers
+                .filter((o) => o.active)
+                .map((o) => (
+                  <div key={o.id} className="card card-tight row between wrap">
+                    <div className="faint">
+                      {o.offer_type === 'trial' ? 'Trial conversation' : `${o.duration_minutes}-minute conversation`}
+                    </div>
+                    <span className="bold">{formatMinor(o.price_minor)}</span>
+                  </div>
+                ))}
+            </div>
+          )}
+        </section>
       )}
 
       {supabase && user.role === 'companion' && realRules.length > 0 && (
-        <section className="section-tight">
+        <section className="section-tight" aria-label="Usually available">
           <h2>Usually available</h2>
           <div className="col" style={{ gap: 6 }}>
             {[1, 2, 3, 4, 5, 6, 7]
@@ -294,49 +345,60 @@ export default function ProfileDetail() {
               })}
           </div>
           <p className="faint mt-2">
-            A general guide — you’ll pick exact weekly times when you start regular conversations.
+            A general guide — you’ll pick exact weekly times when you set up regular conversations.
           </p>
         </section>
       )}
 
-      {/* One-off conversations: deliberately quiet, below the plan. */}
+      <section className="section-tight">
+        <h2>About {user.firstName}</h2>
+        {/* Free text people write: wraps, never escapes the column. */}
+        <p className="muted longform" style={{ maxWidth: 640 }}>{user.bio}</p>
+        <p className="muted longform">
+          Speaks {user.languages.join(' and ')}
+          {user.style ? ` · prefers ${user.style} conversations` : ''}
+          {supabase ? ` · ${IN_APP_CALL_LABEL}` : ` · ${user.mediums.map((m) => MEDIUM_LABELS[m]).join(', ')}`}
+        </p>
+        <div className="row-wrap mt-2">
+          {user.interests.map((i) => (
+            <span key={i} className="chip">
+              {i}{me.interests.includes(i) ? ' · shared' : ''}
+            </span>
+          ))}
+        </div>
+        {user.role === 'member' && (
+          <div className="mt-4 muted">
+            {user.preferredTimes && <p style={{ margin: 0 }}>Preferred times: {user.preferredTimes}</p>}
+            {user.accessibilityNeeds && <p style={{ margin: 0 }}>Good to know: {user.accessibilityNeeds}</p>}
+          </div>
+        )}
+      </section>
+
+      {/* Reviews sit above the diary: people first, logistics second. */}
+      {supabase && user.role === 'companion' && (
+        <CompanionReviews profileId={user.id} firstName={user.firstName} />
+      )}
+
+      {/* Block 2 — a member/coordinator can block this companion. */}
+      {supabase && user.role === 'companion' && (me.role === 'member' || me.role === 'coordinator') && bookingMemberId && (
+        <section className="section-tight">
+          <BlockControl memberProfileId={bookingMemberId} companionProfileId={user.id} />
+        </section>
+      )}
+
+      {/* Regular & one-off now share ONE selector inside the hero above. This
+          quiet reveal exposes the Companion's prepaid package bundles, which
+          belong with the recurring/regular flow. */}
       {supabase && user.role === 'companion' && realOffers.some((o) => o.offer_type === 'single') && (
         <section className="section-tight">
-          <h2>Prefer a single conversation?</h2>
-          <p className="muted" style={{ marginTop: 0 }}>
-            Most people arrange regular conversations, but you can also book a one-off.
-          </p>
-          <div className="grid-2">
-            {realOffers
-              .filter((o) => o.offer_type === 'single')
-              .map((o) =>
-                canBookReal ? (
-                  // The tile itself opens the full booking flow (all options).
-                  <button
-                    key={o.id}
-                    className="card card-tight card-click row between wrap"
-                    style={{ textAlign: 'left' }}
-                    onClick={() => setRealBooking(true)}
-                    aria-label={`Book a ${o.duration_minutes}-minute conversation with ${user.firstName}`}
-                  >
-                    <div className="faint">{o.duration_minutes}-minute conversation</div>
-                    <span className="bold">{formatMinor(o.price_minor)}</span>
-                  </button>
-                ) : (
-                  <div key={o.id} className="card card-tight row between wrap">
-                    <div className="faint">{o.duration_minutes}-minute conversation</div>
-                    <span className="bold">{formatMinor(o.price_minor)}</span>
-                  </div>
-                ),
-              )}
-          </div>
           {!showPackages ? (
-            <button className="btn btn-ghost btn-small mt-4" onClick={() => setShowPackages(true)}>
-              See more
+            <button className="btn btn-ghost btn-small" onClick={() => setShowPackages(true)}>
+              See conversation packages
             </button>
           ) : (
-            /* "See more" reveals the Companion's package bundles too. */
-            <div className="mt-4">
+            <div>
+              <h2>Conversation packages</h2>
+              <p className="muted" style={{ marginTop: 0 }}>Prepaid bundles you can buy up front.</p>
               <PublicPackages companion={user} />
               {canBookReal && (
                 <button className="btn btn-primary btn-small mt-2" onClick={() => setRealBooking(true)}>
@@ -345,7 +407,6 @@ export default function ProfileDetail() {
               )}
             </div>
           )}
-          <p className="faint mt-2">No payment will be taken yet.</p>
         </section>
       )}
 
@@ -406,11 +467,14 @@ export default function ProfileDetail() {
           )}
 
           <section className="section-tight">
-            <h2>Boundaries & reliability</h2>
+            <h2>Boundaries</h2>
             <p className="muted">{user.boundaries}</p>
-            <p className="faint simple-hide">
-              Responds to {user.responseRatePct ?? '—'}% of requests · completes {user.completionReliabilityPct ?? '—'}% of booked calls (demo figures)
-            </p>
+            {/* No fabricated reliability percentages. We only ever surface
+                real, evidenced figures; until a Companion has a track record
+                we simply say so rather than inventing metrics. */}
+            {rating.reviewerCount === 0 && (
+              <p className="faint">New to {APP_NAME} — no completed conversations yet.</p>
+            )}
           </section>
         </>
       )}
@@ -437,7 +501,7 @@ export default function ProfileDetail() {
           <span className="faint">One rating per person — repeat conversations update it, never stack.</span>
         </div>
         {comments.length === 0 ? (
-          <p className="faint">No written reviews yet.</p>
+          <p className="muted">No reviews yet — reviews will appear here after completed conversations.</p>
         ) : (
           <div className="stack-list">
             {comments.map((c) => {
@@ -462,7 +526,12 @@ export default function ProfileDetail() {
 
       {booking && <BookingWizard companion={user} onClose={() => setBooking(false)} />}
       {realBooking && (
-        <SupabaseBookingWizard companion={user} offers={realOffers} onClose={() => setRealBooking(false)} />
+        <SupabaseBookingWizard
+          companion={user}
+          offers={realOffers}
+          resume={resumeDraft}
+          onClose={() => { setRealBooking(false); setResumeDraft(null); }}
+        />
       )}
       {buyPackage && <PackagePurchaseDialog offer={buyPackage} companion={user} onClose={() => setBuyPackage(null)} />}
       {reporting && <ReportDialog reportedUser={user} onClose={() => setReporting(false)} />}

@@ -353,6 +353,15 @@ export type MyBookingRow = BookingRow & {
   member_last_initial: string | null;
   companion_first_name: string;
   companion_last_initial: string | null;
+  /**
+   * Outcome-confirmation read-model (migration 0051). Existence-only booleans:
+   * has each side confirmed the conversation outcome (2G4 attendance/review, or
+   * legacy completion_confirmations)? `your_side` is the side the signed-in
+   * caller represents. Optional so mock rows and older fixtures still typecheck.
+   */
+  member_outcome_submitted?: boolean;
+  companion_outcome_submitted?: boolean;
+  your_side?: 'member' | 'companion' | null;
 };
 
 export type BookingHistoryRow = {
@@ -537,6 +546,10 @@ export type ConversationPlanRow = {
   resume_on: string | null;
   ended_at: string | null;
   end_reason: string | null;
+  /** 2G5B recurring billing: true once the coordinator activates monthly billing. */
+  billing_enabled: boolean;
+  /** 2G5B: 'recurring' (billed, funded before generation) or legacy 'simulated' (self-granting). */
+  funding_mode: 'simulated' | 'recurring';
   created_at: string;
   updated_at: string;
 };
@@ -670,6 +683,24 @@ export type Database = {
       notifications: Table<NotificationRow>;
       plan_schedule_slots: Table<PlanScheduleSlotRow>;
       plan_generation_log: Table<PlanGenerationLogRow>;
+      plan_billing_periods: Table<{
+        id: string;
+        plan_id: string;
+        coordinator_account_id: string;
+        period_start: string;
+        period_end: string;
+        status: string;
+        occurrences_count: number;
+        currency: string;
+        gross_minor: number;
+        discount_minor: number;
+        net_minor: number;
+        credit_applied_minor: number;
+        card_amount_minor: number;
+        payment_order_id: string | null;
+        created_at: string;
+        updated_at: string;
+      }>;
       platform_config: Table<{
         id: number;
         standard_commission_pct: number;
@@ -934,6 +965,39 @@ export type Database = {
         Args: { p_booking: string };
         Returns: Record<string, unknown>;
       };
+      /* 2G4E — internal issue-review queue (support/admin only). */
+      am_i_support: { Args: Record<string, never>; Returns: boolean };
+      get_internal_issue_queue: {
+        Args: {
+          p_states?: string[] | null;
+          p_priority?: string | null;
+          p_category?: string | null;
+          p_reporter_role?: string | null;
+        };
+        Returns: Record<string, unknown>[];
+      };
+      get_internal_issue_detail: {
+        Args: { p_issue: string };
+        Returns: Record<string, unknown>;
+      };
+      resolve_conversation_issue: {
+        Args: {
+          p_issue: string;
+          p_outcome: string;
+          p_note: string;
+          p_companion_minor: number | null;
+          p_credit_minor: number | null;
+          p_idempotency: string;
+        };
+        Returns: Record<string, unknown>;
+      };
+      /* 2G5A — recurring billing foundation (read-only preview). */
+      preview_plan_billing_period: {
+        Args: { p_plan: string; p_period_start: string };
+        Returns: Record<string, unknown>;
+      };
+      /* 2G5B — coordinator-consented billing activation. */
+      activate_plan_billing: { Args: { p_plan: string }; Returns: Record<string, unknown> };
       /* Redesign Phase F — companion completeness. */
       activate_companion_profile: { Args: { p_profile: string }; Returns: { active: boolean } };
       companion_completion_checklist: { Args: { p_profile: string }; Returns: Record<string, unknown> };
