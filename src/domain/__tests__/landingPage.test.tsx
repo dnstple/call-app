@@ -46,7 +46,7 @@ describe('public landing page', () => {
     const text = document.body.textContent ?? '';
     expect(text).toMatch(/Apricoti helps you arrange friendly video conversations for someone you care about/i);
     expect(text).toMatch(/Start with one conversation\. Continue if it feels right/i);
-    expect(text).toMatch(/another regular point of connection for someone you care about/i);
+    expect(text).toMatch(/arrange regular conversations for someone you care about with a trusted Companion/i);
     expect(text).toMatch(/Each Member can book one paid trial with each Companion/i);
     // Terminology preserved; no alarmist / clinical claims.
     expect(text).toMatch(/Companion/);

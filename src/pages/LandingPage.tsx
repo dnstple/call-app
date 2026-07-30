@@ -105,39 +105,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* How it works */}
-      <section className="landing-section">
-        <div className="landing-container">
-          <div className="landing-section-head">
-            <h2>How it works</h2>
-            <p>From first visit to a regular conversation.</p>
-          </div>
-          <ol className="landing-steps">
-            <li className="card">
-              <span className="landing-step-num" aria-hidden="true">1</span>
-              <h3>Explore Companions</h3>
-              <p>Browse profiles and consider interests, conversation style, availability, languages and price.</p>
-            </li>
-            <li className="card">
-              <span className="landing-step-num" aria-hidden="true">2</span>
-              <h3>Choose together</h3>
-              <p>Select the Companion who feels most suitable. When someone else is arranging the call, keep the Member involved.</p>
-            </li>
-            <li className="card">
-              <span className="landing-step-num" aria-hidden="true">3</span>
-              <h3>Start with a trial</h3>
-              <p>Book one paid video conversation at a time and see how the match feels.</p>
-            </li>
-            <li className="card">
-              <span className="landing-step-num" aria-hidden="true">4</span>
-              <h3>Make it regular</h3>
-              <p>When both people are happy, arrange future conversations around their availability.</p>
-            </li>
-          </ol>
-        </div>
-      </section>
-
-      {/* For families / Coordinators — image left */}
+      {/* For families / Coordinators — moved above How it works */}
       <section className="landing-section landing-section-muted">
         <div className="landing-container landing-split">
           <LandingImage slot={landingImages.coordinator} />
@@ -152,6 +120,33 @@ export default function LandingPage() {
             </ul>
             <Link to={startTo} className="btn btn-primary btn-large">{c.coordinator.cta}</Link>
           </div>
+        </div>
+      </section>
+
+      {/* How it works — three steps, one row on desktop */}
+      <section className="landing-section">
+        <div className="landing-container">
+          <div className="landing-section-head">
+            <h2>How it works</h2>
+            <p>From first visit to a regular conversation.</p>
+          </div>
+          <ol className="landing-steps landing-steps-3">
+            <li className="card">
+              <span className="landing-step-num" aria-hidden="true">1</span>
+              <h3>Explore Companions</h3>
+              <p>Browse profiles and consider interests, conversation style, availability, languages and price.</p>
+            </li>
+            <li className="card">
+              <span className="landing-step-num" aria-hidden="true">2</span>
+              <h3>Start with a trial</h3>
+              <p>Book one paid video conversation at a time and see how the match feels.</p>
+            </li>
+            <li className="card">
+              <span className="landing-step-num" aria-hidden="true">3</span>
+              <h3>Make it regular</h3>
+              <p>When both people are happy, arrange future conversations around their availability.</p>
+            </li>
+          </ol>
         </div>
       </section>
 

@@ -107,12 +107,12 @@ export const landingCopy = {
     title: 'Stay involved, even when you cannot always be there',
     body:
       'Work, distance and everyday responsibilities can make it difficult to be present as often ' +
-      'as you would like. Apricoti helps you arrange another regular point of connection for someone ' +
-      'you care about — not a replacement for family, but a positive addition to their week.',
+      'as you would like with your loved ones. Apricoti helps you arrange regular conversations for ' +
+      'someone you care about with a trusted Companion chosen by you.',
     ticks: [
-      'Help create a Member profile, with their permission',
-      'Explore Companions and arrange conversations',
-      'See what’s coming up, with the Member involved',
+      'Create a Member profile with their permission',
+      'Explore Companions and book a trial',
+      'Arrange regular conversations at suitable times',
     ],
     cta: 'Arrange a trial conversation',
   },

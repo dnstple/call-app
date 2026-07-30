@@ -1387,3 +1387,6 @@ table.plain th { color: var(--color-text-secondary); font-weight: 600; }
 .guest-remote-placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 16px; color: #f6f3ef; background: #201c19; }
 .guest-local-inset { position: absolute; right: 12px; bottom: 12px; width: 30%; max-width: 160px; aspect-ratio: 3 / 4; border-radius: var(--radius-m); overflow: hidden; border: 2px solid rgba(255,255,255,0.5); background: #000; }
 .guest-local-inset[hidden] { display: none; }
+
+/* How it works: guarantee three steps in one row on desktop. */
+@media (min-width: 760px) { .landing-steps-3 { grid-template-columns: repeat(3, 1fr); } }
