@@ -16,6 +16,8 @@
  * UI). Each slot declares its aspect ratio, focal point, alt text and mobile
  * treatment so the layout is stable before and after art is added.
  */
+import heroImg from '../assets/landing/1.jpeg';
+import coordinatorImg from '../assets/landing/2.jpeg';
 
 export interface LandingImageSlot {
   /** Set to an imported asset to replace the placeholder. null = styled frame. */
@@ -45,12 +47,14 @@ function slot(partial: Partial<LandingImageSlot> & Pick<LandingImageSlot, 'alt'>
 
 export const landingImages = {
   hero: slot({
+    src: heroImg,
     alt: 'An older person smiling during a friendly video conversation at home',
     aspectRatio: '5 / 4',
     objectPosition: 'center 35%',
     tone: 'apricot',
   }),
   coordinator: slot({
+    src: coordinatorImg,
     alt: 'A family member helping arrange a conversation for a loved one',
     tone: 'sky',
   }),
