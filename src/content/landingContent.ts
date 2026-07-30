@@ -18,6 +18,10 @@
  */
 import heroImg from '../assets/landing/1.jpeg';
 import coordinatorImg from '../assets/landing/2.jpeg';
+import selfImg from '../assets/landing/3.jpeg';
+import regularImg from '../assets/landing/4.jpeg';
+import trialImg from '../assets/landing/5.jpeg';
+import companionImg from '../assets/landing/6.jpeg';
 
 export interface LandingImageSlot {
   /** Set to an imported asset to replace the placeholder. null = styled frame. */
@@ -59,19 +63,23 @@ export const landingImages = {
     tone: 'sky',
   }),
   self: slot({
+    src: selfImg,
     alt: 'A person settling in for their own weekly conversation',
     tone: 'sage',
   }),
   regular: slot({
+    src: regularImg,
     alt: 'The same two people talking warmly over several weeks',
     aspectRatio: '16 / 9',
     tone: 'apricot',
   }),
   trial: slot({
+    src: trialImg,
     alt: 'A first, gentle introductory conversation',
     tone: 'ivory',
   }),
   companion: slot({
+    src: companionImg,
     alt: 'A companion offering their time for a warm conversation',
     tone: 'sage',
   }),
