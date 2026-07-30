@@ -103,12 +103,9 @@ export const landingCopy = {
       'with a Companion they choose.',
     fineprint: 'Start with one conversation. Continue if it feels right.',
   },
-  // Reassurance strip (§5.3), verbatim.
+  // Brand-line band beneath the hero.
   trust: [
-    'Choose the person',
-    'Start with a trial',
-    'Clear prices before booking',
-    'Regular video conversations',
+    'Combatting loneliness one call at a time',
   ],
   // For families and trusted Coordinators (§5.7), verbatim heading + body.
   coordinator: {

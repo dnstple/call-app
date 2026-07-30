@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
-import { CheckCircle2, Heart, Shield, Sparkles, UserRound } from 'lucide-react';
+import { CheckCircle2, Shield, Sparkles } from 'lucide-react';
 import { APP_NAME } from '../config/branding';
 import { isSupabaseMode } from '../config/dataMode';
 import { landingCopy, landingImages, type LandingImageSlot } from '../content/landingContent';
@@ -93,16 +93,10 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Trust strip */}
-      <section className="landing-trust" aria-label="What guides us">
+      {/* Brand-line band */}
+      <section className="landing-trust" aria-label="Our mission">
         <div className="landing-container landing-trust-row">
-          {c.trust.map((t, i) => (
-            <span key={t} className="landing-trust-item">
-              {[<Shield key="s" size={18} aria-hidden="true" />, <Heart key="h" size={18} aria-hidden="true" />,
-                <UserRound key="u" size={18} aria-hidden="true" />, <CheckCircle2 key="c" size={18} aria-hidden="true" />][i]}
-              {' '}{t}
-            </span>
-          ))}
+          <p className="landing-trust-tagline">{c.trust[0]}</p>
         </div>
       </section>
 

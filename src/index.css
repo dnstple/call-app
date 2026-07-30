@@ -1283,8 +1283,14 @@ table.plain th { color: var(--color-text-secondary); font-weight: 600; }
 .landing-hero h1 { font-size: clamp(2em, 1.3em + 3vw, 3.1em); }
 .landing-lede { font-size: clamp(1.05em, 1em + 0.4vw, 1.2em); color: var(--color-text-secondary); max-width: 620px; margin: var(--space-4) auto var(--space-5); }
 .landing-cta-row { display: flex; flex-wrap: nowrap; gap: var(--space-3); align-items: stretch; }
-.landing-cta-row .btn { min-width: 0; } /* allow the two CTAs to share one row on any width */
+/* Two CTAs always on one row, each label always on one line. */
+.landing-cta-row .btn { white-space: nowrap; }
+@media (max-width: 480px) {
+  .landing-cta-row { gap: var(--space-2); }
+  .landing-cta-row .btn.btn-large { padding: 12px 14px; font-size: 0.9rem; }
+}
 .landing-hero-inner .landing-cta-row, .landing-cta-center { justify-content: center; }
+.landing-trust-tagline { margin: 0; text-align: center; font-weight: 700; font-size: clamp(1.05rem, 0.95rem + 0.8vw, 1.4rem); color: var(--color-brand-strong); }
 .landing-fineprint { margin-top: var(--space-4); color: var(--color-text-muted); font-size: 0.9em; }
 
 /* Trust strip */
