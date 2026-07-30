@@ -273,6 +273,19 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* Contact — placeholder feature (not wired up yet) */}
+      <section id="contact" className="landing-section landing-section-muted">
+        <div className="landing-container landing-center">
+          <span className="section-label">Contact</span>
+          <h2>Questions? Get in touch</h2>
+          <p className="landing-center-lede">
+            Have a question about Apricoti, becoming a Companion, or arranging conversations for
+            someone you care about? We’d love to hear from you.
+          </p>
+          <button type="button" className="btn btn-primary btn-large">Contact us</button>
+        </div>
+      </section>
+
       {/* Footer */}
       <footer className="landing-footer">
         <div className="landing-container landing-footer-row">
@@ -283,6 +296,7 @@ export default function LandingPage() {
           <nav className="landing-footer-links" aria-label="Footer">
             <Link to={startTo}>Find a Companion</Link>
             <Link to={startTo}>Become a Companion</Link>
+            <a href="#contact">Contact</a>
             <Link to="/login">Sign in</Link>
           </nav>
           <p className="landing-footer-note">

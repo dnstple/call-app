@@ -1266,6 +1266,10 @@ table.plain th { color: var(--color-text-secondary); font-weight: 600; }
    only on the design-system tokens. No new libraries.
    ============================================================ */
 .landing { background: var(--color-background); color: var(--color-text-primary); }
+/* Landing runs ~2px smaller than the app: scale the em-based type down together. */
+.landing { font-size: 14px; }
+.landing .btn { font-size: 0.92rem; }
+.landing .btn-large { font-size: 0.98rem; }
 .landing-container { width: 100%; max-width: 1080px; margin: 0 auto; padding: 0 var(--space-5); }
 
 /* Header */
