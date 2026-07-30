@@ -81,105 +81,105 @@ export const landingImages = {
 export type LandingImageKey = keyof typeof landingImages;
 
 export const landingCopy = {
+  // Recommended hero (Copy Scope §5.2 / Hero B), verbatim.
   hero: {
-    eyebrow: 'Warm, arranged companionship by phone and video',
-    // Source: product vision — "a warm, low-friction marketplace that helps
-    // older people enjoy regular, meaningful conversations with younger people".
-    title: 'Meaningful conversations for the people you care about.',
+    eyebrow: 'Warm, arranged companionship by video',
+    title: 'Regular conversation. Genuine connection.',
     lede:
-      'A warm, low-friction way to arrange regular, meaningful conversations — for an older ' +
-      'parent, a loved one, or yourself. A booking can be made directly, or by a family member ' +
-      'or trusted person on their behalf. You choose who, how often and for how long.',
-    fineprint: 'Free to set up. You only pay for the conversations you arrange.',
+      'Apricoti helps you arrange friendly video conversations for someone you care about, ' +
+      'with a Companion they choose.',
+    fineprint: 'Start with one conversation. Continue only when it feels right.',
   },
-  // Source: "For the platform: a marketplace model funded by a commission on
-  // non-trial transactions" + safety framing → reassurance strip (factual only).
+  // Reassurance strip (§5.3), verbatim.
   trust: [
-    'Safety-first by design',
-    'Kind, unhurried conversation',
-    'Companions you choose yourself',
-    'Cancel or change at any time',
+    'Choose the person',
+    'Start with a trial',
+    'Clear prices before booking',
+    'Regular video conversations',
   ],
+  // For families and trusted Coordinators (§5.7), verbatim heading + body.
   coordinator: {
-    label: 'For families & coordinators',
-    // Source value proposition, verbatim intent.
-    title: 'Arrange companionship for somebody you care about',
+    label: 'For families & trusted Coordinators',
+    title: 'Stay involved, even when you cannot always be there',
     body:
-      'A simple, transparent way to arrange companionship for somebody you care about. Choose the ' +
-      'Companion, the schedule and the format, with consent — your loved one simply answers a call ' +
-      'or clicks a link when it is time.',
+      'Work, distance and everyday responsibilities can make it difficult to be present as often ' +
+      'as you would like. Apricoti helps you arrange another regular point of connection for someone ' +
+      'you care about — not a replacement for family, but a positive addition to their week.',
     ticks: [
-      'Manage it all from one place',
-      'No app or account needed for them to join',
-      'Change or pause the routine whenever life shifts',
+      'Help create a Member profile, with their permission',
+      'Explore Companions and arrange conversations',
+      'See what’s coming up, with the Member involved',
     ],
-    cta: 'Arrange for someone else',
+    cta: 'Arrange a trial conversation',
   },
+  // For Members (§5.8), verbatim heading + body.
   self: {
-    label: 'For yourself',
-    // Source value proposition for Members.
-    title: 'Regular, friendly conversation on your terms',
+    label: 'For Members',
+    title: 'Talk to someone you choose, about the things you enjoy',
     body:
-      'Regular friendly contact, choice, continuity and conversations based on shared interests. ' +
-      'Create your own account, choose a Companion, and build a routine that fits around your life.',
+      'Find a Companion who shares your interests, speaks your language or simply feels easy to ' +
+      'talk to. There is no pressure to continue after a trial. The aim is friendly, informal ' +
+      'conversation that feels natural to you.',
     ticks: [
-      'A friendly, familiar voice each week',
-      'Phone or video, whatever suits you',
-      'Full control of times and frequency',
+      'A Companion chosen around your interests',
+      'No pressure to continue after a trial',
+      'You stay at the centre of the choice',
     ],
-    cta: 'Arrange for myself',
+    cta: 'Find someone to talk to',
   },
+  // Core value (§5.5 / “A familiar conversation…”), verbatim.
   regular: {
-    title: 'The value is in the routine',
+    title: 'A familiar conversation, arranged around the person',
     body:
-      'A single conversation is lovely. A regular one becomes something to look forward to — the ' +
-      'same Companion, a familiar rhythm, and continuity built on shared interests over time.',
-    cta: 'Set up a regular conversation',
+      'Browse Companion profiles, consider shared interests and availability, and choose who feels ' +
+      'like the right fit. Conversations are scheduled in advance, so they can become a positive and ' +
+      'familiar part of the week.',
+    cta: 'Find a Companion',
   },
+  // Trial (§5.10), verbatim heading + body.
   trial: {
     label: 'Start gently',
-    // Source: "Trial: one 30-minute introductory conversation" + "£5 recommendation".
-    title: 'Try a 30-minute introductory conversation',
+    title: 'Start with one conversation',
     body:
-      'Not sure where to begin? Start with a short trial conversation — around 30 minutes, from £5 ' +
-      '— to see whether a Companion feels like the right fit before arranging a regular routine. ' +
-      'If it is not right, you can simply choose someone else.',
-    cta: 'Start with a trial',
+      'Each Member can book one paid trial with each Companion. The length and price are shown ' +
+      'before payment, so both people can see whether the match feels comfortable before arranging ' +
+      'anything regular.',
+    cta: 'Find a Companion',
   },
+  // For Companions (§5.9), verbatim heading + body + boundary note.
   companion: {
     label: 'Become a Companion',
-    // Source value proposition for Companions.
-    title: 'Flexible, paid conversations that reward genuine interest',
+    title: 'Earn flexibly through meaningful conversation',
     body:
-      'If you enjoy conversation and want to make a difference, offer your time as a Companion. ' +
-      'Set your own availability and the kinds of conversations you offer, and connect with people ' +
-      'who value a warm, regular chat. Empathy, reliability and genuine interest are what matter.',
+      'Create a profile that reflects your interests and personality, choose when you are available, ' +
+      'and set your price within Apricoti’s platform rules. The best Companions bring curiosity, ' +
+      'consistency, respect and a genuine interest in other people.',
     ticks: [
-      'Choose your own hours',
-      'Offer trials, one-off chats, or regular routines',
-      'Get paid for the conversations you hold',
+      'Choose your own availability',
+      'Set your price within the platform’s rules',
+      'Build respectful, ongoing conversations',
     ],
-    cta: 'Apply to be a Companion',
+    cta: 'Become a Companion',
   },
-  // Source: "the service is social companionship, respectful conduct, no
-  // emergency support and no sharing of financial credentials" + safety centre.
+  // Safety and boundaries (§5.12 / homepage safety copy), verbatim heading + body.
   safety: {
-    title: 'Built to feel safe',
+    title: 'Clear roles. Clear boundaries. A simple way to raise a concern.',
     body:
-      'Companionship should feel comfortable and secure for everyone. This is social ' +
-      'companionship — warm, respectful conversation, not emergency or crisis support.',
+      'Apricoti is designed for social conversation. Booking, payment and call access stay connected ' +
+      'to the platform, and either side can report a problem with a conversation. Personal contact ' +
+      'details don’t need to be shared before booking.',
     cards: [
       {
-        title: 'Companions are reviewed',
-        body: 'Companion profiles are checked and approved before they appear to families and Members.',
+        title: 'Clear roles and boundaries',
+        body: 'Apricoti is for social conversation — not healthcare, therapy, counselling, care or emergency support.',
       },
       {
-        title: 'You stay in control',
-        body: 'Report a concern or block someone at any time. You decide who you speak with, and when.',
+        title: 'A simple way to raise a concern',
+        body: 'Either side can report a problem with a conversation through the booking. Private complaint details are not shared with the other person.',
       },
       {
         title: 'Private by default',
-        body: 'Contact details are shared only where needed to arrange and hold a conversation — never before.',
+        body: 'Personal contact details don’t need to be shared before a booking is confirmed.',
       },
     ],
   },

@@ -70,7 +70,7 @@ export default function LandingPage() {
           </Link>
           <nav className="landing-header-actions" aria-label="Account">
             <Link to="/login" className="btn btn-ghost">Sign in</Link>
-            <Link to={startTo} className="btn btn-primary">Get started</Link>
+            <Link to={startTo} className="btn btn-primary">Find a Companion</Link>
           </nav>
         </div>
       </header>
@@ -83,7 +83,7 @@ export default function LandingPage() {
             <h1>{c.hero.title}</h1>
             <p className="landing-lede">{c.hero.lede}</p>
             <div className="landing-cta-row">
-              <Link to={startTo} className="btn btn-primary btn-large">Get started</Link>
+              <Link to={startTo} className="btn btn-primary btn-large">Find a Companion</Link>
               <Link to={startTo} className="btn btn-secondary btn-large">Become a Companion</Link>
             </div>
             <p className="landing-fineprint">{c.hero.fineprint}</p>
@@ -110,23 +110,28 @@ export default function LandingPage() {
         <div className="landing-container">
           <div className="landing-section-head">
             <h2>How it works</h2>
-            <p>Three simple steps from first visit to first conversation.</p>
+            <p>From first visit to a regular conversation.</p>
           </div>
           <ol className="landing-steps">
             <li className="card">
               <span className="landing-step-num" aria-hidden="true">1</span>
-              <h3>Browse Companions</h3>
-              <p>Read Companion profiles and choose someone whose warmth and interests feel right.</p>
+              <h3>Explore Companions</h3>
+              <p>Browse profiles and consider interests, conversation style, availability, languages and price.</p>
             </li>
             <li className="card">
               <span className="landing-step-num" aria-hidden="true">2</span>
-              <h3>Arrange a conversation</h3>
-              <p>Pick a time and length. Start with a trial, a single conversation, or a regular routine.</p>
+              <h3>Choose together</h3>
+              <p>Select the Companion who feels most suitable. When someone else is arranging the call, keep the Member involved.</p>
             </li>
             <li className="card">
               <span className="landing-step-num" aria-hidden="true">3</span>
-              <h3>Connect by phone or video</h3>
-              <p>Join with a simple link or a phone call. We send reminders so no one has to remember.</p>
+              <h3>Start with a trial</h3>
+              <p>Book one paid video conversation at a time and see how the match feels.</p>
+            </li>
+            <li className="card">
+              <span className="landing-step-num" aria-hidden="true">4</span>
+              <h3>Make it regular</h3>
+              <p>When both people are happy, arrange future conversations around their availability.</p>
             </li>
           </ol>
         </div>
@@ -236,20 +241,28 @@ export default function LandingPage() {
             <h2>Questions, answered</h2>
           </div>
           <details className="landing-faq-item">
-            <summary>Who is {APP_NAME} for?</summary>
-            <p>Anyone who would value regular, friendly conversation — arranged by a family member or coordinator, or by the person themselves.</p>
+            <summary>What is a Companion?</summary>
+            <p>A Companion is someone who offers scheduled social conversations through Apricoti. They create a profile, set their availability and price, and talk with Members about everyday life and shared interests. They are not carers, therapists or medical professionals in this role.</p>
           </details>
           <details className="landing-faq-item">
-            <summary>Does the person I arrange for need an account?</summary>
-            <p>No. If you arrange conversations on someone else’s behalf, they can join with a simple link or a phone call — no app or account required.</p>
+            <summary>Who are the conversations for?</summary>
+            <p>Apricoti is designed for adults who would enjoy more regular, friendly conversation. A Member can arrange conversations themselves, or a family member, friend or trusted person can help with permission.</p>
           </details>
           <details className="landing-faq-item">
-            <summary>Phone or video?</summary>
-            <p>Both. You can hold conversations by phone or by video, whichever is more comfortable.</p>
+            <summary>Can I arrange conversations for somebody else?</summary>
+            <p>Yes. You can help create or manage a Member profile, explore Companions and arrange conversations for someone you care about. The Member should remain involved in the choice wherever possible.</p>
           </details>
           <details className="landing-faq-item">
-            <summary>How does payment work?</summary>
-            <p>Setting up an account is free. You pay for the conversations you arrange, and you can see the price before you confirm anything.</p>
+            <summary>How does a trial conversation work?</summary>
+            <p>Each Member can book one paid trial with each Companion. The length and price are shown before payment. A trial is a chance for both people to decide whether they would like to speak again.</p>
+          </details>
+          <details className="landing-faq-item">
+            <summary>Are Companions carers or therapists?</summary>
+            <p>No. Apricoti is for social companionship. Companions do not provide personal care, therapy, counselling, medical advice or emergency support.</p>
+          </details>
+          <details className="landing-faq-item">
+            <summary>How do payments work?</summary>
+            <p>The Companion’s price and any Apricoti service fee are shown before payment. Payments are taken through the platform. Companion payouts are handled separately after the completion checks are satisfied.</p>
           </details>
         </div>
       </section>
@@ -257,11 +270,11 @@ export default function LandingPage() {
       {/* Final CTA */}
       <section className="landing-section landing-final">
         <div className="landing-container landing-center">
-          <h2>Ready to arrange a conversation?</h2>
-          <p className="landing-center-lede">It takes a few minutes to set up, and you can change your mind at any point.</p>
+          <h2>Start with one conversation.</h2>
+          <p className="landing-center-lede">Explore Companions, choose who feels right, and arrange a friendly video conversation at a time that works. No pressure to continue — the first conversation is simply a chance to see how it feels.</p>
           <div className="landing-cta-row landing-cta-center">
-            <Link to={startTo} className="btn btn-primary btn-large">Get started</Link>
-            <Link to="/login" className="btn btn-secondary btn-large">Sign in</Link>
+            <Link to={startTo} className="btn btn-primary btn-large">Find a Companion</Link>
+            <Link to={startTo} className="btn btn-secondary btn-large">Become a Companion</Link>
           </div>
         </div>
       </section>
@@ -274,10 +287,14 @@ export default function LandingPage() {
             <span className="landing-brand-name">{APP_NAME}</span>
           </div>
           <nav className="landing-footer-links" aria-label="Footer">
-            <Link to={startTo}>Get started</Link>
+            <Link to={startTo}>Find a Companion</Link>
+            <Link to={startTo}>Become a Companion</Link>
             <Link to="/login">Sign in</Link>
           </nav>
-          <p className="landing-footer-note">© {new Date().getFullYear()} {APP_NAME}. Warm companionship, arranged with care.</p>
+          <p className="landing-footer-note">
+            Apricoti provides social companionship through scheduled conversations. It is not a
+            healthcare, counselling, care or emergency service. © {new Date().getFullYear()} {APP_NAME}.
+          </p>
         </div>
       </footer>
     </div>

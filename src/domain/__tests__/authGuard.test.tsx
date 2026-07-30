@@ -27,7 +27,7 @@ describe('route protection by data mode', () => {
     // Root is the marketing page: no protected app content, and its sections render.
     expect(screen.queryByText(/Good (morning|afternoon|evening), Alex/)).toBeNull();
     expect(await screen.findByRole('heading', { name: /How it works/i })).toBeTruthy();
-    expect(screen.getAllByRole('link', { name: /Get started/i }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('link', { name: /Find a Companion/i }).length).toBeGreaterThan(0);
     expect(screen.getAllByRole('link', { name: /Sign in/i }).length).toBeGreaterThan(0);
   });
 
