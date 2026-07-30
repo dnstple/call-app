@@ -1282,7 +1282,8 @@ table.plain th { color: var(--color-text-secondary); font-weight: 600; }
 .landing-eyebrow { text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.78em; font-weight: 700; color: var(--color-brand-strong); margin: 0 0 var(--space-3); }
 .landing-hero h1 { font-size: clamp(2em, 1.3em + 3vw, 3.1em); }
 .landing-lede { font-size: clamp(1.05em, 1em + 0.4vw, 1.2em); color: var(--color-text-secondary); max-width: 620px; margin: var(--space-4) auto var(--space-5); }
-.landing-cta-row { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.landing-cta-row { display: flex; flex-wrap: nowrap; gap: var(--space-3); align-items: stretch; }
+.landing-cta-row .btn { min-width: 0; } /* allow the two CTAs to share one row on any width */
 .landing-hero-inner .landing-cta-row, .landing-cta-center { justify-content: center; }
 .landing-fineprint { margin-top: var(--space-4); color: var(--color-text-muted); font-size: 0.9em; }
 
@@ -1346,7 +1347,9 @@ table.plain th { color: var(--color-text-secondary); font-weight: 600; }
 /* ── Landing closeout (Sections 9–10): hero grid, replaceable image slots,
    larger CTAs, alternating layout, reduced-motion. ─────────────────────── */
 .btn-large { padding: 14px 22px; font-size: 1.05rem; border-radius: var(--radius-m); }
-.landing-cta-row { flex-wrap: wrap; gap: var(--space-3); }
+/* CTAs stay side-by-side on one row (they shrink rather than wrap). */
+.landing-cta-row { flex-wrap: nowrap; gap: var(--space-3); }
+.landing-cta-row .btn { min-width: 0; }
 
 .landing-hero-grid { display: grid; grid-template-columns: 1fr; gap: var(--space-6); align-items: center; }
 .landing-hero-text h1 { font-size: clamp(2.1em, 1.3em + 3.2vw, 3.2em); line-height: 1.08; margin: 0 0 var(--space-3); }
