@@ -87,8 +87,9 @@ export type LandingImageKey = keyof typeof landingImages;
 export const landingCopy = {
   // Hero — founder-chosen brand line at the top.
   hero: {
-    eyebrow: 'Companionship for your loved ones',
-    title: 'Combatting loneliness one call at a time',
+    eyebrow: 'Talking is Life',
+    title: 'Companionship for your loved ones',
+    tagline: 'Combatting loneliness one call at a time',
     lede:
       'Apricoti helps you arrange friendly video conversations for someone you care about, ' +
       'with a Companion they choose.',

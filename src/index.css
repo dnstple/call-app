@@ -1390,3 +1390,6 @@ table.plain th { color: var(--color-text-secondary); font-weight: 600; }
 
 /* How it works: guarantee three steps in one row on desktop. */
 @media (min-width: 760px) { .landing-steps-3 { grid-template-columns: repeat(3, 1fr); } }
+
+/* Hero tagline: a warm subheading under the H1, smaller than section H2s. */
+.landing-hero-tagline { margin: var(--space-2) 0 0; font-size: clamp(1.15rem, 1rem + 1vw, 1.5rem); font-weight: 600; color: var(--color-brand-strong); }

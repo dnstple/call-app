@@ -81,6 +81,7 @@ export default function LandingPage() {
           <div className="landing-hero-text">
             <p className="landing-eyebrow">{c.hero.eyebrow}</p>
             <h1>{c.hero.title}</h1>
+            <h2 className="landing-hero-tagline">{c.hero.tagline}</h2>
             <p className="landing-lede">{c.hero.lede}</p>
             <div className="landing-cta-row">
               <Link to={startTo} className="btn btn-primary btn-large">Find a Companion</Link>
