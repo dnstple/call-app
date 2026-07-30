@@ -1277,7 +1277,7 @@ table.plain th { color: var(--color-text-secondary); font-weight: 600; }
 .landing-header-actions { display: flex; align-items: center; gap: var(--space-2); }
 
 /* Hero */
-.landing-hero { background: linear-gradient(180deg, var(--color-brand-subtle) 0%, var(--color-background) 100%); padding: var(--space-8) 0; }
+.landing-hero { background: linear-gradient(180deg, var(--color-brand-subtle) 0%, var(--color-background) 100%); padding: var(--space-6) 0; }
 .landing-hero-inner { max-width: 760px; text-align: center; margin: 0 auto; }
 .landing-eyebrow { text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.78em; font-weight: 700; color: var(--color-brand-strong); margin: 0 0 var(--space-3); }
 .landing-hero h1 { font-size: clamp(2em, 1.3em + 3vw, 3.1em); }
@@ -1294,16 +1294,16 @@ table.plain th { color: var(--color-text-secondary); font-weight: 600; }
 .landing-fineprint { margin-top: var(--space-4); color: var(--color-text-muted); font-size: 0.9em; }
 
 /* Trust strip */
-.landing-trust { border-top: 1px solid var(--color-border); border-bottom: 1px solid var(--color-border); background: var(--color-surface); }
-.landing-trust-row { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-4) var(--space-6); padding: var(--space-4) var(--space-5); }
+.landing-trust { background: var(--color-brand-subtle); }
+.landing-trust-row { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-4) var(--space-6); padding: var(--space-3) var(--space-5); }
 .landing-trust-item { display: inline-flex; align-items: center; gap: var(--space-2); font-weight: 600; font-size: 0.95em; color: var(--color-text-secondary); }
 .landing-trust-item svg { color: var(--color-brand-strong); }
 
 /* Generic section */
-.landing-section { padding: var(--space-8) 0; }
+.landing-section { padding: var(--space-6) 0; }
 .landing-section-muted { background: var(--color-surface-muted); }
 .landing-section-brand { background: var(--color-brand-soft); }
-.landing-section-head { text-align: center; max-width: 640px; margin: 0 auto var(--space-6); }
+.landing-section-head { text-align: center; max-width: 640px; margin: 0 auto var(--space-5); }
 .landing-section-head p { color: var(--color-text-secondary); margin: 0; }
 .landing-center { text-align: center; max-width: 680px; margin: 0 auto; }
 .landing-center-icon { color: var(--color-brand-strong); margin-bottom: var(--space-3); }

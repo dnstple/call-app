@@ -93,11 +93,9 @@ export const landingImages = {
 export type LandingImageKey = keyof typeof landingImages;
 
 export const landingCopy = {
-  // Hero — founder-chosen brand line at the top.
+  // Hero. The brand line lives in the band beneath (trust), not repeated here.
   hero: {
-    eyebrow: 'Talking is Life',
     title: 'Companionship for your loved ones',
-    tagline: 'Combatting loneliness one call at a time',
     lede:
       'Apricoti helps you arrange friendly video conversations for someone you care about, ' +
       'with a Companion they choose.',
