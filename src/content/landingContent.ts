@@ -101,9 +101,12 @@ export const landingCopy = {
       'with a Companion they choose.',
     fineprint: 'Start with one conversation. Continue if it feels right.',
   },
-  // Brand-line band beneath the hero.
+  // Feature / USP strip beneath the hero.
   trust: [
-    'Combatting loneliness one call at a time',
+    'Friendly video conversations',
+    'Choose your own Companion',
+    'Start with a trial',
+    'Clear prices before booking',
   ],
   // For families and trusted Coordinators (§5.7), verbatim heading + body.
   coordinator: {

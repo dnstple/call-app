@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
-import { CheckCircle2, Shield, Sparkles } from 'lucide-react';
+import { CheckCircle2, Shield, Sparkles, Tag, UserRound, Video } from 'lucide-react';
 import { APP_NAME } from '../config/branding';
 import { isSupabaseMode } from '../config/dataMode';
 import { landingCopy, landingImages, type LandingImageSlot } from '../content/landingContent';
@@ -91,10 +91,16 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Brand-line band */}
-      <section className="landing-trust" aria-label="Our mission">
+      {/* Feature / USP strip */}
+      <section className="landing-trust" aria-label="What Apricoti offers">
         <div className="landing-container landing-trust-row">
-          <p className="landing-trust-tagline">{c.trust[0]}</p>
+          {c.trust.map((t, i) => (
+            <span key={t} className="landing-trust-item">
+              {[<Video key="v" size={18} aria-hidden="true" />, <UserRound key="u" size={18} aria-hidden="true" />,
+                <Sparkles key="s" size={18} aria-hidden="true" />, <Tag key="t" size={18} aria-hidden="true" />][i]}
+              {' '}{t}
+            </span>
+          ))}
         </div>
       </section>
 

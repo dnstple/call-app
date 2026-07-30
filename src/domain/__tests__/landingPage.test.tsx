@@ -37,9 +37,9 @@ describe('public landing page', () => {
     ]) {
       expect(screen.getByRole('heading', { name: heading })).toBeTruthy();
     }
-    // The hero headline; the brand line sits in the band beneath it.
+    // The hero headline, with a feature strip beneath it.
     expect(screen.getByRole('heading', { level: 1, name: /Companionship for your loved ones/i })).toBeTruthy();
-    expect(document.body.textContent ?? '').toMatch(/Combatting loneliness one call at a time/i);
+    expect(document.body.textContent ?? '').toMatch(/Choose your own Companion/i);
   });
 
   it('uses the approved marketing copy (hero + section wording, verbatim)', () => {
