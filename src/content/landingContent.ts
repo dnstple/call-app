@@ -85,14 +85,14 @@ export const landingImages = {
 export type LandingImageKey = keyof typeof landingImages;
 
 export const landingCopy = {
-  // Recommended hero (Copy Scope §5.2 / Hero B), verbatim.
+  // Hero — founder-chosen brand line at the top.
   hero: {
-    eyebrow: 'Warm, arranged companionship by video',
-    title: 'Regular conversation. Genuine connection.',
+    eyebrow: 'Companionship for your loved ones',
+    title: 'Combatting loneliness one call at a time',
     lede:
       'Apricoti helps you arrange friendly video conversations for someone you care about, ' +
       'with a Companion they choose.',
-    fineprint: 'Start with one conversation. Continue only when it feels right.',
+    fineprint: 'Start with one conversation. Continue if it feels right.',
   },
   // Reassurance strip (§5.3), verbatim.
   trust: [

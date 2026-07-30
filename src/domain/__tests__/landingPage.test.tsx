@@ -37,15 +37,15 @@ describe('public landing page', () => {
     ]) {
       expect(screen.getByRole('heading', { name: heading })).toBeTruthy();
     }
-    // The recommended hero headline.
-    expect(screen.getByRole('heading', { level: 1, name: /Regular conversation\. Genuine connection\./i })).toBeTruthy();
+    // The hero headline (founder brand line).
+    expect(screen.getByRole('heading', { level: 1, name: /Combatting loneliness one call at a time/i })).toBeTruthy();
   });
 
   it('uses the approved marketing copy (hero + section wording, verbatim)', () => {
     renderLanding();
     const text = document.body.textContent ?? '';
     expect(text).toMatch(/Apricoti helps you arrange friendly video conversations for someone you care about/i);
-    expect(text).toMatch(/Start with one conversation\. Continue only when it feels right/i);
+    expect(text).toMatch(/Start with one conversation\. Continue if it feels right/i);
     expect(text).toMatch(/another regular point of connection for someone you care about/i);
     expect(text).toMatch(/Each Member can book one paid trial with each Companion/i);
     // Terminology preserved; no alarmist / clinical claims.
