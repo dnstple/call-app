@@ -200,15 +200,18 @@ describe('0066 unifies the managed (guest) Member into the ONE Member slot', () 
   });
 });
 
-describe('guest frontend (/join/:token) is audio-only — no legacy camera CallRoom', () => {
-  it('uses the Stage 3A audio adapter and exposes no camera/video/screen-share', () => {
-    expect(GUEST).toContain("from '../calls/audioCall'");
-    expect(GUEST).toContain('connectAudioCall');
-    // No camera / video / legacy call-room APIs.
-    expect(GUEST).not.toMatch(/setCameraEnabled\s*\(|attachVideo|attachLocalVideo|createLocalVideoTrack|startScreenShare/);
-    expect(GUEST).not.toMatch(/getUserMedia\([^)]*video/);
+describe('guest frontend (/join/:token) uses the unified video call — no legacy CallRoom', () => {
+  it('uses the Stage 3A video adapter (mic + camera), no screen-share or legacy call room', () => {
+    // The validated managed Member joins the SAME two-person video experience as
+    // the Companion, via the shared videoCall adapter.
+    expect(GUEST).toContain("from '../calls/videoCall'");
+    expect(GUEST).toContain('connectVideoCall');
+    // Mic AND camera are part of the managed-Member experience.
+    expect(GUEST).toContain('setCameraEnabled');
+    expect(GUEST).toContain('setMuted');
+    // Still no screen-share, no recording, and no legacy call-room surface.
+    expect(GUEST).not.toMatch(/startScreenShare|SCREEN_SHARE/);
     expect(GUEST).not.toMatch(/from '\.\.\/pages\/CallRoom'|CallRoom/);
-    expect(GUEST).not.toMatch(/\bcamOn\b|videoRef|<video/);
     expect(GUEST).not.toMatch(/connectCall\b|startPreview\b/); // legacy livekit call surface
     // Leave screen offers Rejoin + a clear Close (no authenticated nav).
     expect(GUEST).toContain('Rejoin');
@@ -301,10 +304,11 @@ describe('the generated token is a mic+camera, short-lived single-room grant (no
     expect(TOKEN_FN).toContain('[TrackSource.MICROPHONE, TrackSource.CAMERA]');
     expect(TOKEN_FN).not.toMatch(/TrackSource\.SCREEN_SHARE/);
     expect(TOKEN_FN).not.toMatch(/roomRecord|\bEgress\b|egressAdmin/);
-    // The legacy guest branch remains microphone-only.
+    // The managed-Member guest branch mints the SAME mic+camera grant as an
+    // authenticated participant — and nothing more (no screen-share/record).
     const guestBranch = TOKEN_FN.slice(TOKEN_FN.indexOf('handleGuestJoin'), TOKEN_FN.indexOf('Deno.serve'));
-    expect(guestBranch).toContain('canPublishSources: [TrackSource.MICROPHONE]');
-    expect(guestBranch).not.toMatch(/TrackSource\.CAMERA/);
+    expect(guestBranch).toContain('canPublishSources: [TrackSource.MICROPHONE, TrackSource.CAMERA]');
+    expect(guestBranch).not.toMatch(/TrackSource\.SCREEN_SHARE/);
   });
 });
 
