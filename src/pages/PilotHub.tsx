@@ -1,18 +1,20 @@
 /**
- * Companion Pilot Hub (/pilot) — the deliberate waitlist experience.
+ * Pilot Hub (/pilot) — the deliberate waitlist experience, role-aware.
  *
- * A waitlisted Companion completes their setup here while waiting for a pilot
- * place. Everything shown is AUTHORITATIVE: the checklist and application status
- * come from the server (application_checklist / current_account_access), never
- * from local draft state. Submit for review revalidates server-side. The full
- * app (Explore, Messages, Conversations, booking, calls) is NOT reachable and
- * NOT shown as disabled — it simply isn't part of this experience yet.
+ * A waitlisted COMPANION completes their application here (authoritative
+ * server checklist + Submit for review). Waitlisted COORDINATORS and MEMBERS
+ * are not applying to be a Companion, so they get a role-appropriate waiting
+ * portal instead — their status, what happens next, and setup they can do while
+ * they wait. The full app (Explore, Messages, Conversations, booking, calls) is
+ * NOT reachable and NOT shown as disabled — it isn't part of this experience yet.
  */
 import { useEffect, useState } from 'react';
-import { Link, Navigate, useNavigate } from 'react-router-dom';
-import { CheckCircle2, Circle, Clock, Loader2, LifeBuoy } from 'lucide-react';
+import { Link, Navigate, useNavigate, type NavigateFunction } from 'react-router-dom';
+import { CheckCircle2, Circle, Clock, Loader2, LifeBuoy, UserRound } from 'lucide-react';
 import { isSupabaseMode } from '../config/dataMode';
 import { useAccess } from '../state/access';
+import { useAccountRole } from '../state/managedMember';
+import { roleLabel } from '../components/Shell';
 import {
   fetchChecklist, submitApplication, type ApplicationChecklist, type ApplicationStatus,
 } from '../repositories/accessRepository';
@@ -21,6 +23,69 @@ import { EmptyState } from '../components/ui';
 const SECTION_ROUTE: Record<string, string> = {
   profile: '/profile', availability: '/availability', settings: '/settings',
 };
+
+/** Waiting portal for non-Companion roles (Coordinator / Member). */
+function RoleWaitingHub({ role, navigate }: { role: string; navigate: NavigateFunction }) {
+  const isCoordinator = role === 'coordinator';
+  const label = roleLabel(role);
+  const intro = isCoordinator
+    ? 'You’ll be able to arrange conversations for the people you care about once your pilot access is ready. You can get set up here in the meantime.'
+    : 'You’ll be able to explore Companions and arrange conversations once your pilot access is ready. You can get set up here in the meantime.';
+  const nextThen = isCoordinator
+    ? 'then you can set up conversations for the people you care about.'
+    : 'then you can explore Companions and book a conversation.';
+
+  return (
+    <div className="col" style={{ gap: 20, maxWidth: 760 }}>
+      <header className="col" style={{ gap: 6 }}>
+        <span className="section-label">{label} · pilot</span>
+        <h1 style={{ margin: 0 }}>Your Pilot Hub</h1>
+        <p className="text-secondary" style={{ margin: 0 }}>{intro}</p>
+      </header>
+
+      <section className="card access-status-card access-tone-info">
+        <div className="row" style={{ gap: 10, alignItems: 'center' }}>
+          <Clock size={20} aria-hidden="true" />
+          <h2 style={{ margin: 0, fontSize: '1.05rem' }}>You’re on the waitlist</h2>
+        </div>
+        <p className="text-secondary" style={{ margin: '8px 0 0' }}>
+          You’re on the waitlist for the Apricoti pilot. We’ll let you know as soon as your access
+          is ready — there’s nothing you need to submit.
+        </p>
+      </section>
+
+      <section className="card">
+        <h2 style={{ margin: 0, fontSize: '1.05rem' }}>While you wait</h2>
+        <p className="text-secondary" style={{ margin: '8px 0 12px' }}>
+          You can set up your profile and notification preferences now.
+        </p>
+        <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
+          <button className="btn btn-secondary btn-small" onClick={() => navigate('/profile')}>
+            <UserRound size={16} aria-hidden="true" /> Set up your profile
+          </button>
+          <button className="btn btn-ghost btn-small" onClick={() => navigate('/settings')}>
+            Notification preferences
+          </button>
+        </div>
+      </section>
+
+      <section className="card">
+        <h2 style={{ margin: 0, fontSize: '1.05rem' }}>What happens next</h2>
+        <ol className="access-next" style={{ marginTop: 10 }}>
+          <li>Set up your profile and preferences.</li>
+          <li>We enable pilot access for your account.</li>
+          <li>You’ll get a notification the moment your access is ready — {nextThen}</li>
+        </ol>
+      </section>
+
+      <section className="card access-support-row">
+        <LifeBuoy size={18} aria-hidden="true" />
+        <span style={{ flex: 1 }}>Have a question while you wait?</span>
+        <Link to="/settings" className="btn btn-ghost btn-small">Contact &amp; help</Link>
+      </section>
+    </div>
+  );
+}
 
 function statusCopy(status: ApplicationStatus): { title: string; body: string; tone: string } {
   switch (status) {
@@ -39,7 +104,9 @@ function statusCopy(status: ApplicationStatus): { title: string; body: string; t
 
 export default function PilotHub() {
   const { mode, access, reload } = useAccess();
+  const role = useAccountRole();
   const navigate = useNavigate();
+  const isCompanion = role === 'companion';
   const [checklist, setChecklist] = useState<ApplicationChecklist | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -47,7 +114,8 @@ export default function PilotHub() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!isSupabaseMode()) { setLoading(false); return; }
+    // Only Companions have an application checklist to load.
+    if (!isSupabaseMode() || !isCompanion) { setLoading(false); return; }
     let live = true;
     setLoading(true);
     fetchChecklist()
@@ -55,11 +123,17 @@ export default function PilotHub() {
       .catch(() => live && setError('We couldn’t load your setup checklist. Please refresh.'))
       .finally(() => live && setLoading(false));
     return () => { live = false; };
-  }, [access?.applicationStatus]);
+  }, [access?.applicationStatus, isCompanion]);
 
   // Only waitlisted accounts belong here; everyone else goes to their home.
   if (isSupabaseMode() && mode !== 'waitlist' && mode !== 'loading') {
     return <Navigate to="/" replace />;
+  }
+
+  // Coordinators and Members get a role-appropriate waiting portal (no Companion
+  // application). Companions continue to the checklist + Submit for review below.
+  if (isSupabaseMode() && !isCompanion) {
+    return <RoleWaitingHub role={role} navigate={navigate} />;
   }
 
   const status = access?.applicationStatus ?? 'incomplete';
@@ -87,11 +161,11 @@ export default function PilotHub() {
   return (
     <div className="col" style={{ gap: 20, maxWidth: 760 }}>
       <header className="col" style={{ gap: 6 }}>
-        <span className="section-label">Companion pilot</span>
+        <span className="section-label">Companion · pilot</span>
         <h1 style={{ margin: 0 }}>Your Pilot Hub</h1>
         <p className="text-secondary" style={{ margin: 0 }}>
-          Welcome. We’re forming our first Companion cohort — get your profile ready here and we’ll
-          let you know when a pilot place is available.
+          Welcome. Get your Companion profile ready here and submit it for review — we’ll let you
+          know when your pilot place is available.
         </p>
       </header>
 

@@ -17,7 +17,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { deriveMode } from '../../state/access';
-import { WAITLIST_NAV } from '../../components/Shell';
+import { waitlistNavForRole } from '../../components/Shell';
 import type { AccountAccess } from '../../repositories/accessRepository';
 
 function snap(p: Partial<AccountAccess>): AccountAccess {
@@ -48,8 +48,8 @@ describe('access snapshot → shell mode', () => {
 });
 
 describe('waitlist navigation', () => {
-  it('exposes only setup surfaces — never the full app', () => {
-    const paths = WAITLIST_NAV.map((n) => n.to);
+  it('Companions get setup surfaces (incl. Availability) — never the full app', () => {
+    const paths = waitlistNavForRole('companion').map((n) => n.to);
     expect(paths).toContain('/');
     expect(paths).toContain('/profile');
     expect(paths).toContain('/availability');
@@ -59,10 +59,20 @@ describe('waitlist navigation', () => {
     expect(paths).not.toContain('/conversations');
     expect(paths).not.toContain('/members');
   });
+  it('Coordinators/Members are treated by role — no Companion Availability & rates', () => {
+    const paths = waitlistNavForRole('coordinator').map((n) => n.to);
+    expect(paths).toContain('/');
+    expect(paths).toContain('/profile');
+    expect(paths).not.toContain('/availability');
+    expect(paths).not.toContain('/explore');
+    expect(paths).not.toContain('/conversations');
+  });
 });
 
 // --- Pilot Hub: authoritative checklist drives Submit for review ----------
 vi.mock('../../config/dataMode', () => ({ isSupabaseMode: () => true }));
+// Render the Companion path of the Hub (Coordinators/Members get a different view).
+vi.mock('../../state/managedMember', () => ({ useAccountRole: () => 'companion' }));
 
 vi.mock('../../state/access', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../state/access')>();

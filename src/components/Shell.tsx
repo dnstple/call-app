@@ -60,8 +60,15 @@ const PROFILE = { to: '/profile', label: 'Profile', Icon: UserRound } as const;
 const AVAILABILITY = { to: '/availability', label: 'Availability & rates', Icon: CalendarHeart } as const;
 const SETTINGS = { to: '/settings', label: 'Settings', Icon: SettingsIcon } as const;
 
-/** Waitlisted Companions get only setup surfaces — never a disabled full app. */
-export const WAITLIST_NAV: NavItem[] = [HOME, PROFILE, AVAILABILITY];
+/**
+ * Waitlisted accounts get only setup surfaces — never a disabled full app.
+ * Companions also prepare Availability & rates; Coordinators and Members just
+ * set up their profile (Settings is always rendered separately).
+ */
+export function waitlistNavForRole(role: string): NavItem[] {
+  if (role === 'companion') return [HOME, PROFILE, AVAILABILITY];
+  return [HOME, PROFILE];
+}
 
 /**
  * Desktop sidebar primary destinations (Settings is rendered separately below
@@ -108,7 +115,7 @@ export function Shell({ children }: { children: ReactNode }) {
 
   const role = supabase ? accountRole : me.role;
   const waitlist = supabase && accessMode === 'waitlist';
-  const nav = waitlist ? WAITLIST_NAV : navForRole(role);
+  const nav = waitlist ? waitlistNavForRole(role) : navForRole(role);
   // Discreet internal entry — shown ONLY when the server confirms support.
   const supportStatus = useIsSupport();
 
@@ -233,7 +240,7 @@ export function Shell({ children }: { children: ReactNode }) {
         </div>
       </div>
 
-      <BottomNav items={waitlist ? [...WAITLIST_NAV, SETTINGS] : mobileNavForRole(role)} badgeFor={navBadge} />
+      <BottomNav items={waitlist ? [...waitlistNavForRole(role), SETTINGS] : mobileNavForRole(role)} badgeFor={navBadge} />
 
       <ToastStack />
     </div>
