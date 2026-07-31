@@ -108,8 +108,8 @@ export default function LandingPage() {
 
             {inPilot && (
               <div className="landing-launch-note" role="note">
-                Apricoti is currently in a private pilot. You’re welcome to sign up and set up your
-                profile while we roll out full access gradually.
+                Apricoti is currently in a pilot. Please set up your profile while we roll out full
+                access gradually.
               </div>
             )}
 
