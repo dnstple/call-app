@@ -1406,3 +1406,60 @@ table.plain th { color: var(--color-text-secondary); font-weight: 600; }
 
 /* Hero tagline: a warm subheading under the H1, smaller than section H2s. */
 .landing-hero-tagline { margin: var(--space-2) 0 0; font-size: clamp(1.15rem, 1rem + 1vw, 1.5rem); font-weight: 600; color: var(--color-brand-strong); }
+
+/* ===========================================================================
+   Pilot access — Companion Pilot Hub, account status, admin console.
+   =========================================================================== */
+.landing-launch-note {
+  margin: var(--space-3) 0; padding: 12px 14px; border-radius: 10px;
+  background: var(--color-brand-soft); color: var(--color-brand-strong);
+  border: 1px solid var(--color-brand-subtle); font-size: 0.95rem; line-height: 1.4;
+}
+
+.access-status-card { border-left: 4px solid var(--color-border-strong); }
+.access-tone-good { border-left-color: var(--color-success-text); }
+.access-tone-info { border-left-color: var(--color-info-text); }
+.access-tone-warn { border-left-color: var(--color-danger-text); }
+.access-inline-good { color: var(--color-success-text); margin: 0; }
+.access-inline-error { color: var(--color-danger-text); margin: 0; }
+
+.access-progress { height: 8px; border-radius: 999px; background: var(--color-brand-subtle); margin-top: 10px; overflow: hidden; }
+.access-progress-fill { height: 100%; background: var(--color-brand); transition: width .3s ease; }
+
+.access-checklist, .access-next, .access-mini-list { list-style: none; margin: 0; padding: 0; }
+.access-check-item { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--color-border); }
+.access-check-item:last-child { border-bottom: 0; }
+.access-check-done { color: var(--color-success-text); }
+.access-check-todo { color: var(--color-text-secondary); }
+.access-chip, .access-badge {
+  display: inline-block; margin-left: 8px; padding: 2px 8px; border-radius: 999px;
+  font-size: 0.72rem; background: var(--color-surface-muted, var(--color-brand-subtle)); color: var(--color-text-secondary);
+}
+.access-next { counter-reset: step; }
+.access-next li { position: relative; padding: 6px 0 6px 28px; }
+.access-next li::before {
+  counter-increment: step; content: counter(step);
+  position: absolute; left: 0; top: 6px; width: 20px; height: 20px; border-radius: 999px;
+  background: var(--color-brand-soft); color: var(--color-brand-strong);
+  display: grid; place-items: center; font-size: 0.75rem; font-weight: 600;
+}
+.access-support-row { display: flex; align-items: center; gap: 10px; }
+
+/* Admin console */
+.access-dash-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.access-dash-tile { display: flex; flex-direction: column; gap: 4px; }
+.access-dash-num { font-size: 1.6rem; font-weight: 700; color: var(--color-brand-strong); }
+.access-filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.access-table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+.access-table th, .access-table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--color-border); vertical-align: top; }
+.access-badge.a-full, .access-badge.s-approved { background: var(--color-success-bg); color: var(--color-success-text); }
+.access-badge.a-pilot { background: var(--color-info-bg); color: var(--color-info-text); }
+.access-badge.a-blocked, .access-badge.s-suspended, .access-badge.s-rejected { background: var(--color-danger-bg); color: var(--color-danger-text); }
+
+.access-drawer-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; justify-content: flex-end; z-index: 60; }
+.access-drawer { width: min(520px, 100%); height: 100%; overflow-y: auto; background: var(--color-surface); padding: 20px; box-shadow: -8px 0 24px rgba(0,0,0,.15); }
+.access-drawer-sec { margin-top: 18px; border-top: 1px solid var(--color-border); padding-top: 12px; }
+.access-drawer-sec h3 { margin: 0 0 8px; font-size: 0.95rem; }
+.access-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.access-mini-list li { padding: 6px 0; border-bottom: 1px solid var(--color-border); font-size: 0.88rem; }
+.access-mini-list li:last-child { border-bottom: 0; }

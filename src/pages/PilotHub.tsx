@@ -1,0 +1,190 @@
+/**
+ * Companion Pilot Hub (/pilot) — the deliberate waitlist experience.
+ *
+ * A waitlisted Companion completes their setup here while waiting for a pilot
+ * place. Everything shown is AUTHORITATIVE: the checklist and application status
+ * come from the server (application_checklist / current_account_access), never
+ * from local draft state. Submit for review revalidates server-side. The full
+ * app (Explore, Messages, Conversations, booking, calls) is NOT reachable and
+ * NOT shown as disabled — it simply isn't part of this experience yet.
+ */
+import { useEffect, useState } from 'react';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
+import { CheckCircle2, Circle, Clock, Loader2, LifeBuoy } from 'lucide-react';
+import { isSupabaseMode } from '../config/dataMode';
+import { useAccess } from '../state/access';
+import {
+  fetchChecklist, submitApplication, type ApplicationChecklist, type ApplicationStatus,
+} from '../repositories/accessRepository';
+import { EmptyState } from '../components/ui';
+
+const SECTION_ROUTE: Record<string, string> = {
+  profile: '/profile', availability: '/availability', settings: '/settings',
+};
+
+function statusCopy(status: ApplicationStatus): { title: string; body: string; tone: string } {
+  switch (status) {
+    case 'ready_for_review':
+      return { title: 'Application submitted', body: 'Thanks — your application is in the queue. We’ll review it and let you know what happens next.', tone: 'info' };
+    case 'under_review':
+      return { title: 'Your application is under review', body: 'Our team is looking at your application now. There’s nothing more you need to do.', tone: 'info' };
+    case 'approved':
+      return { title: 'Approved — waiting for a pilot place', body: 'You’ve been approved. We’ll be in touch as soon as a pilot place opens up for you.', tone: 'good' };
+    case 'rejected':
+      return { title: 'Not moving forward right now', body: 'We’re not able to take your application further at the moment. You can keep your profile ready in case that changes.', tone: 'warn' };
+    default:
+      return { title: 'Finish setting up your profile', body: 'Complete the steps below, then submit your application to join the Companion pilot.', tone: 'info' };
+  }
+}
+
+export default function PilotHub() {
+  const { mode, access, reload } = useAccess();
+  const navigate = useNavigate();
+  const [checklist, setChecklist] = useState<ApplicationChecklist | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isSupabaseMode()) { setLoading(false); return; }
+    let live = true;
+    setLoading(true);
+    fetchChecklist()
+      .then((c) => live && setChecklist(c))
+      .catch(() => live && setError('We couldn’t load your setup checklist. Please refresh.'))
+      .finally(() => live && setLoading(false));
+    return () => { live = false; };
+  }, [access?.applicationStatus]);
+
+  // Only waitlisted accounts belong here; everyone else goes to their home.
+  if (isSupabaseMode() && mode !== 'waitlist' && mode !== 'loading') {
+    return <Navigate to="/" replace />;
+  }
+
+  const status = access?.applicationStatus ?? 'incomplete';
+  const copy = statusCopy(status);
+  const pct = checklist?.completionPct ?? 0;
+  const canSubmit = Boolean(checklist?.complete) && (status === 'incomplete' || status === 'rejected');
+
+  async function onSubmit() {
+    setSubmitting(true); setError(null); setMessage(null);
+    try {
+      const res = await submitApplication();
+      setMessage(res.message);
+      reload();
+      const c = await fetchChecklist(); setChecklist(c);
+    } catch (e) {
+      const m = String((e as { message?: string })?.message ?? '').toLowerCase();
+      setError(m.includes('incomplete')
+        ? 'Some required steps are still unfinished. Please complete them and try again.'
+        : 'We couldn’t submit your application just now. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="col" style={{ gap: 20, maxWidth: 760 }}>
+      <header className="col" style={{ gap: 6 }}>
+        <span className="section-label">Companion pilot</span>
+        <h1 style={{ margin: 0 }}>Your Pilot Hub</h1>
+        <p className="text-secondary" style={{ margin: 0 }}>
+          Welcome. We’re forming our first Companion cohort — get your profile ready here and we’ll
+          let you know when a pilot place is available.
+        </p>
+      </header>
+
+      {/* Status card */}
+      <section className={`card access-status-card access-tone-${copy.tone}`}>
+        <div className="row" style={{ gap: 10, alignItems: 'center' }}>
+          <Clock size={20} aria-hidden="true" />
+          <h2 style={{ margin: 0, fontSize: '1.05rem' }}>{copy.title}</h2>
+        </div>
+        <p className="text-secondary" style={{ margin: '8px 0 0' }}>{copy.body}</p>
+        {message && <p className="access-inline-good" style={{ marginTop: 10 }}>{message}</p>}
+      </section>
+
+      {/* Profile completion + checklist */}
+      <section className="card">
+        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
+          <h2 style={{ margin: 0, fontSize: '1.05rem' }}>Setup checklist</h2>
+          <span className="text-secondary">{pct}% complete</span>
+        </div>
+        <div className="access-progress" aria-hidden="true">
+          <div className="access-progress-fill" style={{ width: `${pct}%` }} />
+        </div>
+
+        {loading ? (
+          <div className="row" style={{ justifyContent: 'center', padding: 24 }}>
+            <Loader2 size={20} aria-hidden="true" />
+            <span className="visually-hidden">Loading checklist</span>
+          </div>
+        ) : checklist && checklist.items.length > 0 ? (
+          <ul className="access-checklist" style={{ marginTop: 12 }}>
+            {checklist.items.map((it) => (
+              <li key={it.key} className="access-check-item">
+                {it.done
+                  ? <CheckCircle2 size={18} aria-hidden="true" className="access-check-done" />
+                  : <Circle size={18} aria-hidden="true" className="access-check-todo" />}
+                <span style={{ flex: 1 }}>
+                  {it.label}
+                  {it.category === 'deferred' && <span className="access-chip">optional for now</span>}
+                </span>
+                {!it.done && SECTION_ROUTE[it.section] && (
+                  <button className="btn btn-ghost btn-small"
+                    onClick={() => navigate(SECTION_ROUTE[it.section])}>
+                    {it.category === 'deferred' ? 'Set up' : 'Complete'}
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-secondary" style={{ marginTop: 12 }}>
+            We couldn’t find a Companion profile to set up yet.
+          </p>
+        )}
+
+        {error && <p className="access-inline-error" style={{ marginTop: 10 }}>{error}</p>}
+
+        <div className="row" style={{ marginTop: 14, gap: 10, alignItems: 'center' }}>
+          <button className="btn btn-primary" disabled={!canSubmit || submitting} onClick={onSubmit}>
+            {submitting ? 'Submitting…' : status === 'rejected' ? 'Resubmit for review' : 'Submit for review'}
+          </button>
+          {!canSubmit && (status === 'incomplete' || status === 'rejected') && (
+            <span className="text-secondary" style={{ fontSize: '0.9rem' }}>
+              Finish the required steps to submit.
+            </span>
+          )}
+        </div>
+      </section>
+
+      {/* What happens next */}
+      <section className="card">
+        <h2 style={{ margin: 0, fontSize: '1.05rem' }}>What happens next</h2>
+        <ol className="access-next" style={{ marginTop: 10 }}>
+          <li>Finish the required steps and submit your application.</li>
+          <li>Our team reviews it and may follow up if we need anything.</li>
+          <li>Once approved, we’ll add you to a pilot cohort when a place opens.</li>
+          <li>You’ll get a notification the moment your pilot access is ready.</li>
+        </ol>
+      </section>
+
+      {/* Support */}
+      <section className="card access-support-row">
+        <LifeBuoy size={18} aria-hidden="true" />
+        <span style={{ flex: 1 }}>Have a question while you wait?</span>
+        <Link to="/settings" className="btn btn-ghost btn-small">Contact &amp; help</Link>
+      </section>
+
+      <p className="text-secondary" style={{ fontSize: '0.85rem' }}>
+        You can keep editing your profile any time. We’ll only move you forward once you submit.
+      </p>
+      {/* Empty fallback keeps a11y tree stable if profile is missing entirely. */}
+      {!loading && !checklist && (
+        <EmptyState title="Setup unavailable" body="Please refresh to load your Companion setup." />
+      )}
+    </div>
+  );
+}

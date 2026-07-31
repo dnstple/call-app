@@ -11,6 +11,7 @@ import { DEMO_IDENTITIES } from '../data/seed';
 import { getDataMode, isSupabaseMode } from '../config/dataMode';
 import { useAuth } from '../auth/AuthProvider';
 import { useAccountRole } from '../state/managedMember';
+import { useAccess } from '../state/access';
 import { useUnreadTotal } from '../messaging/hooks';
 import { useUnreadNotifications } from '../messaging/NotificationsSupabase';
 import { useIsSupport } from '../state/support';
@@ -56,7 +57,11 @@ const EXPLORE = { to: '/explore', label: 'Explore', Icon: Compass } as const;
 const MESSAGES = { to: '/messages', label: 'Messages', Icon: MessageCircle } as const;
 const CONVERSATIONS = { to: '/conversations', label: 'Conversations', Icon: CalendarHeart } as const;
 const PROFILE = { to: '/profile', label: 'Profile', Icon: UserRound } as const;
+const AVAILABILITY = { to: '/availability', label: 'Availability & rates', Icon: CalendarHeart } as const;
 const SETTINGS = { to: '/settings', label: 'Settings', Icon: SettingsIcon } as const;
+
+/** Waitlisted Companions get only setup surfaces — never a disabled full app. */
+export const WAITLIST_NAV: NavItem[] = [HOME, PROFILE, AVAILABILITY];
 
 /**
  * Desktop sidebar primary destinations (Settings is rendered separately below
@@ -98,7 +103,9 @@ export function Shell({ children }: { children: ReactNode }) {
   const bellCount = supabase ? unreadNotifications : unread;
 
   const role = supabase ? accountRole : me.role;
-  const nav = navForRole(role);
+  const accessMode = useAccess().mode;
+  const waitlist = supabase && accessMode === 'waitlist';
+  const nav = waitlist ? WAITLIST_NAV : navForRole(role);
   // Discreet internal entry — shown ONLY when the server confirms support.
   const supportStatus = useIsSupport();
 
@@ -161,9 +168,14 @@ export function Shell({ children }: { children: ReactNode }) {
             <SettingsIcon size={20} aria-hidden="true" /> Settings
           </NavLink>
           {supportStatus === 'yes' && (
-            <NavLink to="/internal/issues">
-              <ShieldAlert size={20} aria-hidden="true" /> Issue queue
-            </NavLink>
+            <>
+              <NavLink to="/internal/issues">
+                <ShieldAlert size={20} aria-hidden="true" /> Issue queue
+              </NavLink>
+              <NavLink to="/internal/access">
+                <ShieldAlert size={20} aria-hidden="true" /> Pilot access
+              </NavLink>
+            </>
           )}
         </nav>
 
@@ -218,7 +230,7 @@ export function Shell({ children }: { children: ReactNode }) {
         </div>
       </div>
 
-      <BottomNav items={mobileNavForRole(role)} badgeFor={navBadge} />
+      <BottomNav items={waitlist ? [...WAITLIST_NAV, SETTINGS] : mobileNavForRole(role)} badgeFor={navBadge} />
 
       <ToastStack />
     </div>

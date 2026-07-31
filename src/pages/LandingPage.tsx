@@ -1,9 +1,29 @@
-import type { CSSProperties } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { CheckCircle2, Shield, Sparkles, Tag, UserRound, Video } from 'lucide-react';
 import { APP_NAME } from '../config/branding';
 import { isSupabaseMode } from '../config/dataMode';
+import { publicLaunchMode, type LaunchMode } from '../repositories/accessRepository';
 import { landingCopy, landingImages, type LandingImageSlot } from '../content/landingContent';
+
+/**
+ * The signed-out landing page adapts to the authoritative launch mode
+ * (public.public_launch_mode). During the companion_waitlist launch the primary
+ * action is "Apply to become a Companion" and Member/Coordinator access is shown
+ * as invitation-only — public booking is never implied. Invited sign-up links
+ * keep working throughout. index.html's noindex,nofollow is preserved.
+ */
+function useLaunchMode(): LaunchMode {
+  // Local preview (mock mode) has no pilot — show the open experience.
+  const [mode, setMode] = useState<LaunchMode>(isSupabaseMode() ? 'companion_waitlist' : 'public');
+  useEffect(() => {
+    if (!isSupabaseMode()) return;
+    let live = true;
+    publicLaunchMode().then((m) => live && m && setMode(m)).catch(() => {});
+    return () => { live = false; };
+  }, []);
+  return mode;
+}
 
 /**
  * Public landing page (Block 12 + closeout Sections 9–10).
@@ -58,6 +78,11 @@ export default function LandingPage() {
   // Account creation starts registration in hosted mode; the local preview
   // opens the sign-up wizard.
   const startTo = isSupabaseMode() ? '/register' : '/signup';
+  const launchMode = useLaunchMode();
+  const waitlistLaunch = launchMode === 'companion_waitlist' || launchMode === 'controlled_pilot';
+  const closedLaunch = launchMode === 'closed';
+  // Primary companion action label adapts to the launch stage.
+  const companionCta = waitlistLaunch ? 'Apply to become a Companion' : 'Become a Companion';
 
   return (
     <div className="landing">
@@ -70,7 +95,11 @@ export default function LandingPage() {
           </Link>
           <nav className="landing-header-actions" aria-label="Account">
             <Link to="/login" className="btn btn-ghost">Sign in</Link>
-            <Link to={startTo} className="btn btn-primary">Find a Companion</Link>
+            {!closedLaunch && (
+              <Link to={startTo} className="btn btn-primary">
+                {waitlistLaunch ? 'Apply as a Companion' : 'Find a Companion'}
+              </Link>
+            )}
           </nav>
         </div>
       </header>
@@ -81,11 +110,43 @@ export default function LandingPage() {
           <div className="landing-hero-text">
             <h1>{c.hero.title}</h1>
             <p className="landing-lede">{c.hero.lede}</p>
-            <div className="landing-cta-row">
-              <Link to={startTo} className="btn btn-primary btn-large">Find a Companion</Link>
-              <Link to={startTo} className="btn btn-secondary btn-large">Become a Companion</Link>
-            </div>
-            <p className="landing-fineprint">{c.hero.fineprint}</p>
+
+            {waitlistLaunch && (
+              <div className="landing-launch-note" role="note">
+                We’re forming our first Companion cohort. Create your profile now and we’ll contact
+                you when pilot places become available.
+              </div>
+            )}
+            {closedLaunch && (
+              <div className="landing-launch-note" role="note">
+                Registration is currently closed. Existing members can sign in below — we’ll reopen
+                applications soon.
+              </div>
+            )}
+
+            {closedLaunch ? (
+              <div className="landing-cta-row">
+                <Link to="/login" className="btn btn-primary btn-large">Sign in</Link>
+              </div>
+            ) : waitlistLaunch ? (
+              <>
+                <div className="landing-cta-row">
+                  <Link to={startTo} className="btn btn-primary btn-large">{companionCta}</Link>
+                </div>
+                <p className="landing-fineprint">
+                  Members and Coordinators join by invitation during the pilot. Have an invite?{' '}
+                  <Link to="/login">Sign in</Link>.
+                </p>
+              </>
+            ) : (
+              <>
+                <div className="landing-cta-row">
+                  <Link to={startTo} className="btn btn-primary btn-large">Find a Companion</Link>
+                  <Link to={startTo} className="btn btn-secondary btn-large">{companionCta}</Link>
+                </div>
+                <p className="landing-fineprint">{c.hero.fineprint}</p>
+              </>
+            )}
           </div>
           <LandingImage slot={landingImages.hero} className="landing-hero-photo" />
         </div>
@@ -267,8 +328,16 @@ export default function LandingPage() {
           <h2>Start with one conversation.</h2>
           <p className="landing-center-lede">Explore Companions, choose who feels right, and arrange a friendly video conversation at a time that works. No pressure to continue — the first conversation is simply a chance to see how it feels.</p>
           <div className="landing-cta-row landing-cta-center">
-            <Link to={startTo} className="btn btn-primary btn-large">Find a Companion</Link>
-            <Link to={startTo} className="btn btn-secondary btn-large">Become a Companion</Link>
+            {closedLaunch ? (
+              <Link to="/login" className="btn btn-primary btn-large">Sign in</Link>
+            ) : waitlistLaunch ? (
+              <Link to={startTo} className="btn btn-primary btn-large">{companionCta}</Link>
+            ) : (
+              <>
+                <Link to={startTo} className="btn btn-primary btn-large">Find a Companion</Link>
+                <Link to={startTo} className="btn btn-secondary btn-large">Become a Companion</Link>
+              </>
+            )}
           </div>
         </div>
       </section>
