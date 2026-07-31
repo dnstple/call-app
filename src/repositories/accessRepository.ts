@@ -149,6 +149,7 @@ export const adminActions = {
   clearOverride: (a: string, feature: string) => rpc('admin_clear_feature_override', { p_account: a, p_feature: feature }),
   addNote: (a: string, note: string) => rpc('admin_add_note', { p_account: a, p_note: note }),
   resendNotification: (a: string, event: string, reason?: string) => rpc('admin_resend_notification', { p_account: a, p_event: event, p_reason: reason ?? null }),
+  deleteUser: (a: string, reason: string) => rpc('admin_delete_user', { p_account: a, p_reason: reason }),
 };
 
 export const cohortActions = {

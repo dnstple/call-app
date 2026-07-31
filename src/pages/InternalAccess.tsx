@@ -36,6 +36,8 @@ function errText(e: unknown): string {
   if (/reason_required/i.test(m)) return 'A reason is required.';
   if (/cohort_full/i.test(m)) return 'That cohort is at capacity.';
   if (/cohort_closed/i.test(m)) return 'That cohort is not accepting assignments.';
+  if (/cannot_delete_self/i.test(m)) return 'You can’t delete your own account.';
+  if (/cannot_delete_admin/i.test(m)) return 'Remove support-admin status before deleting this account.';
   return 'That action could not be completed.';
 }
 
@@ -180,6 +182,23 @@ function DetailDrawer({ accountId, cohorts, onClose, onChanged }: {
     void run(label, () => fn(r));
   };
 
+  // Permanent deletion: extra confirmation, reason, then close the drawer (the
+  // account no longer exists, so we don't reload it — just refresh the list).
+  async function deleteUser() {
+    const name = `${profile.first_name ?? ''} ${profile.last_name ?? ''}`.trim() || 'this user';
+    if (!window.confirm(`Permanently delete ${name}? This cannot be undone and removes their account, profile and access.`)) return;
+    const reason = reasonPrompt('delete user'); if (reason === null) return;
+    setBusy(true); setErr(null);
+    try {
+      await adminActions.deleteUser(accountId, reason);
+      onChanged();
+      onClose();
+    } catch (e) {
+      setErr(errText(e));
+      setBusy(false);
+    }
+  }
+
   const d = detail ?? {};
   const profile = (d.profile as Record<string, unknown>) ?? {};
   const checklist = d.checklist as { completion_pct?: number; items?: Array<Record<string, unknown>> } | null;
@@ -285,6 +304,16 @@ function DetailDrawer({ accountId, cohorts, onClose, onChanged }: {
           <ul className="access-mini-list">{audit.slice(0, 20).map((a, i) => (
             <li key={i}><span className="text-secondary">{new Date(String(a.created_at)).toLocaleString()}</span> — {pretty(String(a.action))}{a.reason ? ` · ${String(a.reason)}` : ''}</li>
           ))}{audit.length === 0 && <li className="text-secondary">No history yet.</li>}</ul>
+        </section>
+
+        <section className="access-drawer-sec access-danger-zone">
+          <h3>Danger zone</h3>
+          <p className="text-secondary" style={{ fontSize: '0.9rem', margin: '0 0 10px' }}>
+            Permanently deletes this account, its profile and access. This can’t be undone.
+          </p>
+          <button className="btn btn-small offer-delete" disabled={busy} onClick={() => void deleteUser()}>
+            Delete user
+          </button>
         </section>
       </aside>
     </div>

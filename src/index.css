@@ -1457,7 +1457,9 @@ table.plain th { color: var(--color-text-secondary); font-weight: 600; }
 .access-badge.a-blocked, .access-badge.s-suspended, .access-badge.s-rejected { background: var(--color-danger-bg); color: var(--color-danger-text); }
 
 .access-drawer-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; justify-content: flex-end; z-index: 60; }
-.access-drawer { width: min(520px, 100%); height: 100%; overflow-y: auto; background: var(--color-surface); padding: 20px; box-shadow: -8px 0 24px rgba(0,0,0,.15); }
+.access-drawer { width: min(820px, 100%); height: 100%; overflow-y: auto; background: var(--color-surface); padding: 24px 28px; box-shadow: -8px 0 24px rgba(0,0,0,.15); }
+.access-danger-zone { border-top: 1px solid var(--color-danger-text); }
+.access-danger-zone h3 { color: var(--color-danger-text); }
 .access-drawer-sec { margin-top: 18px; border-top: 1px solid var(--color-border); padding-top: 12px; }
 .access-drawer-sec h3 { margin: 0 0 8px; font-size: 0.95rem; }
 .access-actions { display: flex; flex-wrap: wrap; gap: 8px; }
