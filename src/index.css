@@ -288,14 +288,21 @@ button.chip[aria-pressed='true'] {
 .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: var(--space-4); }
 .field label { font-weight: 600; font-size: 0.95em; }
 .field .hint { color: var(--color-text-secondary); font-size: 0.88em; }
-input[type='text'], input[type='email'], input[type='tel'], input[type='date'],
-input[type='number'], input[type='time'], select, textarea {
+/* Style EVERY text-like input, plus select and textarea, consistently. Listing
+   types individually missed password/search/url/etc. (unformatted controls);
+   this excludes only the non-text controls (checkbox, radio, range, file,
+   buttons, colour). Anything text-entry gets the same border + radius + size. */
+input:not([type='checkbox'], [type='radio'], [type='range'], [type='file'], [type='submit'], [type='button'], [type='reset'], [type='color'], [type='image']),
+select, textarea {
   font: inherit; color: var(--color-text-primary);
   background: var(--color-surface);
   border: 1.5px solid var(--color-border); border-radius: var(--radius-m);
   padding: 12px 16px; min-height: 48px; width: 100%;
 }
 textarea { min-height: 100px; resize: vertical; }
+/* Hide the browser's native password-reveal / clear controls so only our own
+   show/hide eye button appears (fixes the duplicate eye icon). */
+input[type='password']::-ms-reveal, input[type='password']::-ms-clear { display: none; }
 input:focus, select:focus, textarea:focus { border-color: var(--color-brand-pressed); outline: none; }
 input[aria-invalid='true'], select[aria-invalid='true'], textarea[aria-invalid='true'] { border-color: var(--color-danger-text); }
 select.quiet {
