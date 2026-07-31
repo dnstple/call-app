@@ -179,6 +179,21 @@ export default function BookingDetail() {
     return () => { live = false; };
   }, [booking, isCompanionSide, isPaidRequest]);
 
+  // Section 5 (first-come seat) — a Coordinator who ARRANGED a booking for a
+  // managed Member, and is not the Member themselves, may take the single
+  // Member-side call seat OR let the Member join via their link. Whoever joins
+  // FIRST holds the seat; the other can join once they leave. No advance choice
+  // is needed — we just make the rule clear to the Coordinator here.
+  const isMemberOwner = useMemo(
+    () => !!booking && auth.profiles.some(
+      (p) => p.profile.id === booking.member_profile_id && p.access.access_role === 'owner',
+    ),
+    [booking, auth.profiles],
+  );
+  const showSeatNote = !!booking && isRequesterSide && !isMemberOwner
+    && booking.booked_by_account_id === auth.userId
+    && ['requested', 'confirmed'].includes(booking.status);
+
   if (!isSupabaseMode()) {
     return (
       <EmptyState
@@ -459,6 +474,18 @@ export default function BookingDetail() {
       {active && (isCompanionSide || isRequesterSide) && (
         <section className="section-tight">
           <h2>Actions</h2>
+          {/* Section 5 (first-come) — make the one-seat rule clear to the
+              arranging Coordinator. Either they or the Member can join; whoever
+              joins first holds the seat until they leave. */}
+          {showSeatNote && (
+            <div className="card card-tight col mb-4" style={{ gap: 6, maxWidth: 520 }} role="note">
+              <span className="bold">Only one of you can be in the call</span>
+              <span className="muted">
+                {booking.companion_first_name} talks with one other person — either you or {booking.member_first_name}.
+                Whoever joins first stays in the call; the other can join once they leave.
+              </span>
+            </div>
+          )}
           <div className="row wrap" style={{ gap: 10 }}>
             {isCompanionSide && booking.status === 'requested' && (
               <>

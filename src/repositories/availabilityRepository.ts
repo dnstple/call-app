@@ -287,7 +287,29 @@ export async function updateOffer(
   if ((data ?? []).length === 0) throw new RepoError('You don’t have permission to edit this offer.', 'unauthorised');
 }
 
-/** Offers are archived, never destroyed. */
+/** Soft-disable: keeps the offer (and its history), just hides it from booking. */
 export async function archiveOffer(offerId: string): Promise<void> {
   await updateOffer(offerId, { active: false });
+}
+
+/**
+ * Permanently delete an offer. The database blocks deleting an offer that has
+ * bookings (FK from bookings.offer_id, no cascade), so history is preserved —
+ * only unused offers can be removed. Callers surface the mapped message.
+ */
+export async function deleteOffer(offerId: string): Promise<void> {
+  const { data, error } = await getSupabaseClient()
+    .from('conversation_offers')
+    .delete()
+    .eq('id', offerId)
+    .select('id');
+  if (error) {
+    if ((error as { code?: string }).code === '23503') {
+      throw new RepoError('This rate has bookings, so it can’t be deleted. Disable it instead.', 'validation');
+    }
+    throw mapError(error);
+  }
+  if ((data ?? []).length === 0) {
+    throw new RepoError('You don’t have permission to delete this offer.', 'unauthorised');
+  }
 }

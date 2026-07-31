@@ -14,6 +14,7 @@ import {
   Room,
   RoomEvent,
   Track,
+  VideoPresets,
   type LocalVideoTrack,
   type RemoteParticipant,
   type RemoteTrack,
@@ -77,6 +78,35 @@ function mapQuality(q: ConnectionQuality): VideoQuality {
   return 'unknown';
 }
 
+/**
+ * Choose a CAPTURE tier from the device's capability, so a weaker or mobile
+ * device encodes at a lower resolution (less CPU, heat and stutter) while a
+ * capable desktop still captures 1080p. This is about the DEVICE; the network
+ * side is handled separately by simulcast/congestion control. Best-effort — the
+ * signals aren't available in every browser, so we fall back to a safe middle.
+ */
+function pickVideoTier(): { resolution: typeof VideoPresets.h720.resolution; encoding: typeof VideoPresets.h720.encoding; layers: (typeof VideoPresets.h360)[] } {
+  const nav = typeof navigator !== 'undefined' ? navigator : undefined;
+  const mem = (nav as unknown as { deviceMemory?: number } | undefined)?.deviceMemory;
+  const cores = nav?.hardwareConcurrency ?? 4;
+  const coarsePointer = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
+  const shortEdge = typeof window !== 'undefined' && window.screen
+    ? Math.min(window.screen.width || 9999, window.screen.height || 9999)
+    : 9999;
+  const mobileish = coarsePointer && shortEdge <= 900;
+
+  // Low-power device → 540p, minimal extra layer.
+  if ((mem !== undefined && mem <= 2) || cores <= 2) {
+    return { resolution: VideoPresets.h540.resolution, encoding: VideoPresets.h540.encoding, layers: [VideoPresets.h180] };
+  }
+  // Modest laptop / any phone or tablet → 720p.
+  if ((mem !== undefined && mem <= 4) || cores <= 4 || mobileish) {
+    return { resolution: VideoPresets.h720.resolution, encoding: VideoPresets.h720.encoding, layers: [VideoPresets.h360] };
+  }
+  // Capable desktop → 1080p with a full simulcast ladder.
+  return { resolution: VideoPresets.h1080.resolution, encoding: VideoPresets.h1080.encoding, layers: [VideoPresets.h360, VideoPresets.h720] };
+}
+
 /** Connect the prepared session with optional camera. */
 export async function connectVideoCall(
   prepared: CallTokenResult,
@@ -86,13 +116,32 @@ export async function connectVideoCall(
   if (!prepared.ok || !prepared.serverUrl || !prepared.token) {
     throw new Error('This call isn’t ready to join.');
   }
-  // 1:1 call: adaptiveStream is deliberately OFF. With adaptiveStream ON,
-  // LiveKit pauses a remote video track whenever its attached element isn't
-  // visibly sized yet — a very common cause of a permanently BLACK canvas when
-  // the element is attached a frame before layout settles. For a two-person
-  // call the bandwidth saving is negligible, so we take the always-on behaviour.
-  // dynacast stays off too (no SFU simulcast fan-out needed for 1:1).
-  const room = new Room({ adaptiveStream: false, dynacast: false });
+  // Quality that adapts to each person's connection.
+  //
+  // We capture at up to 1080p and publish SIMULCAST layers (1080p / 720p / 360p).
+  // The server then sends each viewer the highest layer their DOWNLINK can take,
+  // while the sender's congestion control scales its UPLINK automatically — so a
+  // fast connection gets crisp 1080p and a weak one steps down gracefully to
+  // 720p/360p instead of freezing. dynacast pauses layers nobody is watching, to
+  // save the sender's upload.
+  //
+  // adaptiveStream stays OFF: that feature pauses a remote track when its <video>
+  // element isn't visibly sized yet, which was a cause of a permanently BLACK
+  // canvas. Network adaptation above does not depend on it.
+  const tier = pickVideoTier();
+  const room = new Room({
+    adaptiveStream: false,
+    dynacast: true,
+    videoCaptureDefaults: {
+      resolution: tier.resolution,
+    },
+    publishDefaults: {
+      simulcast: true,
+      videoCodec: 'vp8',
+      videoEncoding: tier.encoding,
+      videoSimulcastLayers: tier.layers,
+    },
+  });
   let state: VideoConnectionState = 'connecting';
   let cameraOn = false;
   const audioEls = new Set<HTMLAudioElement>();

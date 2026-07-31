@@ -67,6 +67,14 @@ Deno.serve(async (req) => {
   const user = userData?.user;
   if (!user) return json({ error: 'unauthorised' }, 401);
 
+  // Pilot access gate: only accounts with the 'payments' feature may set up a
+  // payment method or start a paid request. Waitlisted/blocked/suspended callers
+  // are refused with a stable code. Full and payments-enabled pilot accounts
+  // pass; fails closed on error. (Webhooks/service functions are unaffected.)
+  const { data: canPay, error: payFeatErr } = await authed.rpc('has_feature_access', { p_feature: 'payments' });
+  if (payFeatErr) return json({ error: 'unauthorised' }, 401);
+  if (canPay !== true) return json({ error: 'access_denied', state: 'pilot_access_inactive' }, 403);
+
   const admin = createClient(
     Deno.env.get('SUPABASE_URL')!,
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,

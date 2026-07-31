@@ -980,7 +980,9 @@ table.plain th { color: var(--color-text-secondary); font-weight: 600; }
 .brand-icon { width: 26px; height: 26px; flex-shrink: 0; }
 /* Logo-only shell brand: the mark alone, no wordmark. */
 .brand-mark { width: 34px; height: 34px; flex-shrink: 0; display: block; }
-.sidenav .brand { padding: 8px 12px 24px; }
+/* Sidebar logo: top-left, a touch larger than the inline/topbar mark. */
+.sidenav .brand { padding: 10px 12px 24px 10px; display: flex; justify-content: flex-start; }
+.sidenav .brand-mark { width: 46px; height: 46px; }
 
 /* ---------- Shared multi-step date/time picker (dtp2) ---------- */
 .dtp2 { max-width: 560px; }
@@ -1264,6 +1266,10 @@ table.plain th { color: var(--color-text-secondary); font-weight: 600; }
    only on the design-system tokens. No new libraries.
    ============================================================ */
 .landing { background: var(--color-background); color: var(--color-text-primary); }
+/* Landing runs ~2px smaller than the app: scale the em-based type down together. */
+.landing { font-size: 14px; }
+.landing .btn { font-size: 0.92rem; }
+.landing .btn-large { font-size: 0.98rem; }
 .landing-container { width: 100%; max-width: 1080px; margin: 0 auto; padding: 0 var(--space-5); }
 
 /* Header */
@@ -1275,26 +1281,33 @@ table.plain th { color: var(--color-text-secondary); font-weight: 600; }
 .landing-header-actions { display: flex; align-items: center; gap: var(--space-2); }
 
 /* Hero */
-.landing-hero { background: linear-gradient(180deg, var(--color-brand-subtle) 0%, var(--color-background) 100%); padding: var(--space-8) 0; }
+.landing-hero { background: linear-gradient(180deg, var(--color-brand-subtle) 0%, var(--color-background) 100%); padding: var(--space-6) 0; }
 .landing-hero-inner { max-width: 760px; text-align: center; margin: 0 auto; }
 .landing-eyebrow { text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.78em; font-weight: 700; color: var(--color-brand-strong); margin: 0 0 var(--space-3); }
 .landing-hero h1 { font-size: clamp(2em, 1.3em + 3vw, 3.1em); }
 .landing-lede { font-size: clamp(1.05em, 1em + 0.4vw, 1.2em); color: var(--color-text-secondary); max-width: 620px; margin: var(--space-4) auto var(--space-5); }
-.landing-cta-row { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.landing-cta-row { display: flex; flex-wrap: nowrap; gap: var(--space-3); align-items: stretch; }
+/* Two CTAs always on one row, each label always on one line. */
+.landing-cta-row .btn { white-space: nowrap; }
+@media (max-width: 480px) {
+  .landing-cta-row { gap: var(--space-2); }
+  .landing-cta-row .btn.btn-large { padding: 12px 14px; font-size: 0.9rem; }
+}
 .landing-hero-inner .landing-cta-row, .landing-cta-center { justify-content: center; }
+.landing-trust-tagline { margin: 0; text-align: center; font-weight: 700; font-size: clamp(1.05rem, 0.95rem + 0.8vw, 1.4rem); color: var(--color-brand-strong); }
 .landing-fineprint { margin-top: var(--space-4); color: var(--color-text-muted); font-size: 0.9em; }
 
 /* Trust strip */
-.landing-trust { border-top: 1px solid var(--color-border); border-bottom: 1px solid var(--color-border); background: var(--color-surface); }
-.landing-trust-row { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-4) var(--space-6); padding: var(--space-4) var(--space-5); }
+.landing-trust { background: var(--color-brand-subtle); }
+.landing-trust-row { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-4) var(--space-6); padding: var(--space-3) var(--space-5); }
 .landing-trust-item { display: inline-flex; align-items: center; gap: var(--space-2); font-weight: 600; font-size: 0.95em; color: var(--color-text-secondary); }
 .landing-trust-item svg { color: var(--color-brand-strong); }
 
 /* Generic section */
-.landing-section { padding: var(--space-8) 0; }
+.landing-section { padding: var(--space-6) 0; }
 .landing-section-muted { background: var(--color-surface-muted); }
 .landing-section-brand { background: var(--color-brand-soft); }
-.landing-section-head { text-align: center; max-width: 640px; margin: 0 auto var(--space-6); }
+.landing-section-head { text-align: center; max-width: 640px; margin: 0 auto var(--space-5); }
 .landing-section-head p { color: var(--color-text-secondary); margin: 0; }
 .landing-center { text-align: center; max-width: 680px; margin: 0 auto; }
 .landing-center-icon { color: var(--color-brand-strong); margin-bottom: var(--space-3); }
@@ -1330,8 +1343,8 @@ table.plain th { color: var(--color-text-secondary); font-weight: 600; }
 .landing-footer { background: var(--color-text-primary); color: var(--color-surface); padding: var(--space-6) 0; }
 .landing-footer-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); justify-content: space-between; }
 .landing-footer .landing-brand, .landing-footer .landing-brand-name { color: var(--color-surface); }
-.landing-footer-links { display: flex; gap: var(--space-5); }
-.landing-footer-links a { color: var(--color-surface); text-decoration: none; opacity: 0.85; }
+.landing-footer-links { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-5); }
+.landing-footer-links a { color: var(--color-surface); text-decoration: none; opacity: 0.85; white-space: nowrap; }
 .landing-footer-links a:hover { opacity: 1; text-decoration: underline; }
 .landing-footer-note { width: 100%; margin: 0; color: color-mix(in srgb, var(--color-surface) 65%, transparent); font-size: 0.85em; }
 
@@ -1344,10 +1357,12 @@ table.plain th { color: var(--color-text-secondary); font-weight: 600; }
 /* ── Landing closeout (Sections 9–10): hero grid, replaceable image slots,
    larger CTAs, alternating layout, reduced-motion. ─────────────────────── */
 .btn-large { padding: 14px 22px; font-size: 1.05rem; border-radius: var(--radius-m); }
-.landing-cta-row { flex-wrap: wrap; gap: var(--space-3); }
+/* CTAs stay side-by-side on one row (they shrink rather than wrap). */
+.landing-cta-row { flex-wrap: nowrap; gap: var(--space-3); }
+.landing-cta-row .btn { min-width: 0; }
 
 .landing-hero-grid { display: grid; grid-template-columns: 1fr; gap: var(--space-6); align-items: center; }
-.landing-hero-text h1 { font-size: clamp(2.1em, 1.3em + 3.2vw, 3.2em); line-height: 1.08; margin: 0 0 var(--space-3); }
+.landing-hero-text h1 { font-size: clamp(2.1em, 1.3em + 3.2vw, 3.2em); line-height: 1.08; margin: 0 0 var(--space-3); color: var(--color-brand-strong); }
 .landing-hero-text .landing-lede { max-width: 60ch; font-size: 1.12rem; }
 @media (min-width: 880px) {
   .landing-hero-grid { grid-template-columns: 1.05fr 0.95fr; gap: var(--space-8); }
@@ -1377,3 +1392,104 @@ table.plain th { color: var(--color-text-secondary); font-weight: 600; }
 @media (prefers-reduced-motion: reduce) {
   .landing * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+/* Guest (managed Member) video stage — mirrors the authenticated call layout. */
+.guest-stage { position: relative; width: 100%; aspect-ratio: 4 / 3; background: #201c19; border-radius: var(--radius-l); overflow: hidden; }
+.guest-remote { position: absolute; inset: 0; }
+.guest-remote video { width: 100%; height: 100%; object-fit: cover; }
+.guest-remote-placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 16px; color: #f6f3ef; background: #201c19; }
+.guest-local-inset { position: absolute; right: 12px; bottom: 12px; width: 30%; max-width: 160px; aspect-ratio: 3 / 4; border-radius: var(--radius-m); overflow: hidden; border: 2px solid rgba(255,255,255,0.5); background: #000; }
+.guest-local-inset[hidden] { display: none; }
+
+/* How it works: guarantee three steps in one row on desktop. */
+@media (min-width: 760px) { .landing-steps-3 { grid-template-columns: repeat(3, 1fr); } }
+
+/* Hero tagline: a warm subheading under the H1, smaller than section H2s. */
+.landing-hero-tagline { margin: var(--space-2) 0 0; font-size: clamp(1.15rem, 1rem + 1vw, 1.5rem); font-weight: 600; color: var(--color-brand-strong); }
+
+/* ===========================================================================
+   Pilot access — Companion Pilot Hub, account status, admin console.
+   =========================================================================== */
+.landing-launch-note {
+  margin: var(--space-3) 0; padding: 12px 14px; border-radius: 10px;
+  background: var(--color-brand-soft); color: var(--color-brand-strong);
+  border: 1px solid var(--color-brand-subtle); font-size: 0.95rem; line-height: 1.4;
+}
+
+.access-status-card { border-left: 4px solid var(--color-border-strong); }
+.access-tone-good { border-left-color: var(--color-success-text); }
+.access-tone-info { border-left-color: var(--color-info-text); }
+.access-tone-warn { border-left-color: var(--color-danger-text); }
+.access-inline-good { color: var(--color-success-text); margin: 0; }
+.access-inline-error { color: var(--color-danger-text); margin: 0; }
+
+.access-progress { height: 8px; border-radius: 999px; background: var(--color-brand-subtle); margin-top: 10px; overflow: hidden; }
+.access-progress-fill { height: 100%; background: var(--color-brand); transition: width .3s ease; }
+
+.access-checklist, .access-next, .access-mini-list { list-style: none; margin: 0; padding: 0; }
+.access-check-item { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--color-border); }
+.access-check-item:last-child { border-bottom: 0; }
+.access-check-done { color: var(--color-success-text); }
+.access-check-todo { color: var(--color-text-secondary); }
+.access-chip, .access-badge {
+  display: inline-block; margin-left: 8px; padding: 2px 8px; border-radius: 999px;
+  font-size: 0.72rem; background: var(--color-surface-muted, var(--color-brand-subtle)); color: var(--color-text-secondary);
+}
+.access-next { counter-reset: step; }
+.access-next li { position: relative; padding: 6px 0 6px 28px; }
+.access-next li::before {
+  counter-increment: step; content: counter(step);
+  position: absolute; left: 0; top: 6px; width: 20px; height: 20px; border-radius: 999px;
+  background: var(--color-brand-soft); color: var(--color-brand-strong);
+  display: grid; place-items: center; font-size: 0.75rem; font-weight: 600;
+}
+.access-support-row { display: flex; align-items: center; gap: 10px; }
+
+/* Admin console */
+.access-dash-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.access-dash-tile { display: flex; flex-direction: column; gap: 4px; }
+.access-dash-num { font-size: 1.6rem; font-weight: 700; color: var(--color-brand-strong); }
+.access-filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.access-table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+.access-table th, .access-table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--color-border); vertical-align: top; }
+.access-badge.a-full, .access-badge.s-approved { background: var(--color-success-bg); color: var(--color-success-text); }
+.access-badge.a-pilot { background: var(--color-info-bg); color: var(--color-info-text); }
+.access-badge.a-blocked, .access-badge.s-suspended, .access-badge.s-rejected { background: var(--color-danger-bg); color: var(--color-danger-text); }
+
+.access-drawer-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; justify-content: flex-end; z-index: 60; }
+.access-drawer { width: min(520px, 100%); height: 100%; overflow-y: auto; background: var(--color-surface); padding: 20px; box-shadow: -8px 0 24px rgba(0,0,0,.15); }
+.access-drawer-sec { margin-top: 18px; border-top: 1px solid var(--color-border); padding-top: 12px; }
+.access-drawer-sec h3 { margin: 0 0 8px; font-size: 0.95rem; }
+.access-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.access-mini-list li { padding: 6px 0; border-bottom: 1px solid var(--color-border); font-size: 0.88rem; }
+.access-mini-list li:last-child { border-bottom: 0; }
+
+/* Delete action on a conversation-rate row: subtle until hovered. */
+.offer-delete { color: var(--color-danger-text); }
+.offer-delete:hover:not(:disabled) { background: var(--color-danger-bg); }
+/* Pilot Hub checklist: the right-side "Incomplete →" link on unfinished steps. */
+.access-fix-link { color: var(--color-danger-text); font-weight: 600; }
+
+/* Text-only landing section (no image column). */
+.landing-solo-text { max-width: 640px; }
+
+/* Landing in-app contact form. */
+.landing-contact-form { display: flex; flex-direction: column; gap: 10px; max-width: 520px; margin: 0 auto; text-align: left; }
+.landing-contact-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.landing-contact-row .landing-contact-input { flex: 1 1 180px; }
+.landing-contact-input {
+  width: 100%; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid var(--color-border-strong); background: var(--color-surface);
+  color: var(--color-text-primary); font: inherit;
+}
+.landing-contact-input:focus { outline: 2px solid var(--color-brand); outline-offset: 1px; }
+.landing-contact-sent {
+  max-width: 520px; margin: 0 auto; padding: 14px 16px; border-radius: 12px;
+  background: var(--color-success-bg); color: var(--color-success-text); font-weight: 600;
+}
+
+/* Internal tools hub (/internal). */
+.internal-home-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+.internal-home-card { display: flex; gap: 12px; align-items: flex-start; text-decoration: none; color: inherit; }
+.internal-home-card:hover { border-color: var(--color-brand); }
+.internal-home-icon { color: var(--color-brand-strong); flex: none; margin-top: 2px; }

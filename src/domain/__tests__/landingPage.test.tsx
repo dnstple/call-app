@@ -28,29 +28,30 @@ describe('public landing page', () => {
     expect(screen.getByRole('heading', { level: 1 })).toBeTruthy();
     for (const heading of [
       /How it works/i,
-      /Arrange companionship for somebody you care about/i,
-      /Regular, friendly conversation on your terms/i,
-      /The value is in the routine/i,
-      /Try a 30-minute introductory conversation/i,
-      /Built to feel safe/i,
-      /Flexible, paid conversations that reward genuine interest/i,
+      /Stay involved, even when you cannot always be there/i,
+      /Talk to someone you choose, about the things you enjoy/i,
+      /A familiar conversation, arranged around the person/i,
+      /Clear roles\. Clear boundaries\./i,
+      /Earn flexibly through meaningful conversation/i,
       /Questions, answered/i,
-      /Ready to arrange a conversation/i,
     ]) {
       expect(screen.getByRole('heading', { name: heading })).toBeTruthy();
     }
+    // The hero headline, with a feature strip beneath it.
+    expect(screen.getByRole('heading', { level: 1, name: /Companionship for your loved ones/i })).toBeTruthy();
+    expect(document.body.textContent ?? '').toMatch(/Choose your own Companion/i);
   });
 
-  it('sources its copy from the approved product scope (value propositions + £5 trial)', () => {
+  it('uses the approved marketing copy (hero + section wording, verbatim)', () => {
     renderLanding();
     const text = document.body.textContent ?? '';
-    // Doc value propositions and the £5 trial recommendation, faithfully mapped.
-    expect(text).toMatch(/A simple, transparent way to arrange companionship for somebody you care about/i);
-    expect(text).toMatch(/Regular friendly contact, choice, continuity/i);
-    expect(text).toMatch(/Flexible, paid conversations that reward/i);
-    expect(text).toMatch(/from £5/i);
-    // Terminology preserved.
+    expect(text).toMatch(/Apricoti helps you arrange friendly video conversations for someone you care about/i);
+    expect(text).toMatch(/Start with one conversation\. Continue if it feels right/i);
+    expect(text).toMatch(/arrange regular conversations for someone you care about with a trusted Companion/i);
+    expect(text).toMatch(/Each Member can book one paid trial with each Companion/i);
+    // Terminology preserved; no alarmist / clinical claims.
     expect(text).toMatch(/Companion/);
+    expect(text).not.toMatch(/loneliness kills/i);
   });
 
   it('every call-to-action links to a real start or sign-in route', () => {
@@ -80,15 +81,15 @@ describe('public landing page', () => {
     const text = document.body.textContent ?? '';
     // No fabricated social proof / metrics language.
     expect(text).not.toMatch(/\d[\d,]*\s*(?:\+|k|m)?\s*(?:users|members|families|companions|conversations|reviews|calls)\b/i);
-    expect(text).not.toMatch(/testimonial|rated|stars?\b|out of 5|award|certified|accredited|trusted by|as seen|press/i);
+    expect(text).not.toMatch(/testimonial|\brated\b|stars?\b|out of 5|award|certified|accredited|trusted by|as seen|\bpress\b/i);
     expect(text).not.toMatch(/\b\d+%\s*(?:satisfaction|happy|success|response)/i);
   });
 
-  it('shows the sign-in and get-started actions in the header', () => {
+  it('shows the sign-in and find-a-companion actions in the header', () => {
     renderLanding();
     const header = document.querySelector('.landing-header') as HTMLElement;
     expect(header).toBeTruthy();
     expect(within(header).getByRole('link', { name: /Sign in/i })).toBeTruthy();
-    expect(within(header).getByRole('link', { name: /Get started/i })).toBeTruthy();
+    expect(within(header).getByRole('link', { name: /Find a Companion/i })).toBeTruthy();
   });
 });

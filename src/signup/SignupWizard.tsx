@@ -892,8 +892,10 @@ function PricingStep({
     >
       {isSupabaseMode() && (
         <div className="banner small">
-          Pricing goes live with the booking stage. Your answers here are kept as a draft on this
-          device — they are <strong>not</strong> saved to your profile yet.
+          <span>
+            Pricing goes live with the booking stage. Your answers here are kept as a draft on this
+            device — they are <strong>not</strong> saved to your profile yet.
+          </span>
         </div>
       )}
       <FormField

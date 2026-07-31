@@ -154,7 +154,9 @@ export default function InternalDisputeDetail() {
       <PageHeader title={`Dispute ${formatMinor(d.disputed_amount_minor ?? 0, currency)}`} subtitle={d.stripe_dispute_id} />
 
       <p className="banner banner-warning small mb-4">
-        Evidence submission to Stripe is a <strong>manual</strong> step done in the Stripe dashboard. This tool never submits evidence automatically.
+        <span>
+          Evidence submission to Stripe is a <strong>manual</strong> step done in the Stripe dashboard. This tool never submits evidence automatically.
+        </span>
       </p>
 
       {opError && <div className="banner banner-danger mb-4 row small"><AlertTriangle size={15} aria-hidden="true" /> {opError}</div>}

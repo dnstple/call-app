@@ -11,6 +11,7 @@ import { DEMO_IDENTITIES } from '../data/seed';
 import { getDataMode, isSupabaseMode } from '../config/dataMode';
 import { useAuth } from '../auth/AuthProvider';
 import { useAccountRole } from '../state/managedMember';
+import { useAccess } from '../state/access';
 import { useUnreadTotal } from '../messaging/hooks';
 import { useUnreadNotifications } from '../messaging/NotificationsSupabase';
 import { useIsSupport } from '../state/support';
@@ -56,7 +57,18 @@ const EXPLORE = { to: '/explore', label: 'Explore', Icon: Compass } as const;
 const MESSAGES = { to: '/messages', label: 'Messages', Icon: MessageCircle } as const;
 const CONVERSATIONS = { to: '/conversations', label: 'Conversations', Icon: CalendarHeart } as const;
 const PROFILE = { to: '/profile', label: 'Profile', Icon: UserRound } as const;
+const AVAILABILITY = { to: '/availability', label: 'Availability & rates', Icon: CalendarHeart } as const;
 const SETTINGS = { to: '/settings', label: 'Settings', Icon: SettingsIcon } as const;
+
+/**
+ * Waitlisted accounts get only setup surfaces — never a disabled full app.
+ * Companions also prepare Availability & rates; Coordinators and Members just
+ * set up their profile (Settings is always rendered separately).
+ */
+export function waitlistNavForRole(role: string): NavItem[] {
+  if (role === 'companion') return [HOME, PROFILE, AVAILABILITY];
+  return [HOME, PROFILE];
+}
 
 /**
  * Desktop sidebar primary destinations (Settings is rendered separately below
@@ -92,13 +104,18 @@ export function Shell({ children }: { children: ReactNode }) {
   const auth = useAuth();
   const supabase = isSupabaseMode();
   const accountRole = useAccountRole();
+  const accessMode = useAccess().mode;
+  // Waitlisted accounts have no messaging/conversation access — don't fire the
+  // gated unread hooks for them (avoids console pilot_access_inactive noise).
+  const appEnabled = !supabase || (auth.status === 'authenticated' && accessMode !== 'waitlist');
 
-  const unreadMessages = useUnreadTotal(!supabase || auth.status === 'authenticated');
-  const unreadNotifications = useUnreadNotifications(supabase && auth.status === 'authenticated');
+  const unreadMessages = useUnreadTotal(appEnabled);
+  const unreadNotifications = useUnreadNotifications(supabase && auth.status === 'authenticated' && accessMode !== 'waitlist');
   const bellCount = supabase ? unreadNotifications : unread;
 
   const role = supabase ? accountRole : me.role;
-  const nav = navForRole(role);
+  const waitlist = supabase && accessMode === 'waitlist';
+  const nav = waitlist ? waitlistNavForRole(role) : navForRole(role);
   // Discreet internal entry — shown ONLY when the server confirms support.
   const supportStatus = useIsSupport();
 
@@ -161,8 +178,8 @@ export function Shell({ children }: { children: ReactNode }) {
             <SettingsIcon size={20} aria-hidden="true" /> Settings
           </NavLink>
           {supportStatus === 'yes' && (
-            <NavLink to="/internal/issues">
-              <ShieldAlert size={20} aria-hidden="true" /> Issue queue
+            <NavLink to="/internal" end={false}>
+              <ShieldAlert size={20} aria-hidden="true" /> Internal
             </NavLink>
           )}
         </nav>
@@ -218,7 +235,7 @@ export function Shell({ children }: { children: ReactNode }) {
         </div>
       </div>
 
-      <BottomNav items={mobileNavForRole(role)} badgeFor={navBadge} />
+      <BottomNav items={waitlist ? [...waitlistNavForRole(role), SETTINGS] : mobileNavForRole(role)} badgeFor={navBadge} />
 
       <ToastStack />
     </div>

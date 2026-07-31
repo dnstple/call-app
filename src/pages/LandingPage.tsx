@@ -1,9 +1,30 @@
-import type { CSSProperties } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
-import { CheckCircle2, Heart, Shield, Sparkles, UserRound } from 'lucide-react';
+import { CheckCircle2, Shield, Sparkles, Tag, UserRound, Video } from 'lucide-react';
 import { APP_NAME } from '../config/branding';
 import { isSupabaseMode } from '../config/dataMode';
+import { publicLaunchMode, type LaunchMode } from '../repositories/accessRepository';
+import { ContactForm } from '../components/ContactForm';
 import { landingCopy, landingImages, type LandingImageSlot } from '../content/landingContent';
+
+/**
+ * The signed-out landing page adapts to the authoritative launch mode
+ * (public.public_launch_mode). During the companion_waitlist launch the primary
+ * action is "Apply to become a Companion" and Member/Coordinator access is shown
+ * as invitation-only — public booking is never implied. Invited sign-up links
+ * keep working throughout. index.html's noindex,nofollow is preserved.
+ */
+function useLaunchMode(): LaunchMode {
+  // Local preview (mock mode) has no pilot — show the open experience.
+  const [mode, setMode] = useState<LaunchMode>(isSupabaseMode() ? 'companion_waitlist' : 'public');
+  useEffect(() => {
+    if (!isSupabaseMode()) return;
+    let live = true;
+    publicLaunchMode().then((m) => live && m && setMode(m)).catch(() => {});
+    return () => { live = false; };
+  }, []);
+  return mode;
+}
 
 /**
  * Public landing page (Block 12 + closeout Sections 9–10).
@@ -58,6 +79,9 @@ export default function LandingPage() {
   // Account creation starts registration in hosted mode; the local preview
   // opens the sign-up wizard.
   const startTo = isSupabaseMode() ? '/register' : '/signup';
+  // The homepage looks and behaves normally (all roles can sign up); the only
+  // launch-mode effect is a single pilot flag shown while we're not fully public.
+  const inPilot = useLaunchMode() !== 'public';
 
   return (
     <div className="landing">
@@ -70,7 +94,7 @@ export default function LandingPage() {
           </Link>
           <nav className="landing-header-actions" aria-label="Account">
             <Link to="/login" className="btn btn-ghost">Sign in</Link>
-            <Link to={startTo} className="btn btn-primary">Get started</Link>
+            <Link to={startTo} className="btn btn-primary">Find a Companion</Link>
           </nav>
         </div>
       </header>
@@ -79,11 +103,18 @@ export default function LandingPage() {
       <section className="landing-hero">
         <div className="landing-container landing-hero-grid">
           <div className="landing-hero-text">
-            <p className="landing-eyebrow">{c.hero.eyebrow}</p>
             <h1>{c.hero.title}</h1>
             <p className="landing-lede">{c.hero.lede}</p>
+
+            {inPilot && (
+              <div className="landing-launch-note" role="note">
+                Apricoti is currently in a pilot. Please set up your profile while we roll out full
+                access gradually.
+              </div>
+            )}
+
             <div className="landing-cta-row">
-              <Link to={startTo} className="btn btn-primary btn-large">Get started</Link>
+              <Link to={startTo} className="btn btn-primary btn-large">Find a Companion</Link>
               <Link to={startTo} className="btn btn-secondary btn-large">Become a Companion</Link>
             </div>
             <p className="landing-fineprint">{c.hero.fineprint}</p>
@@ -92,47 +123,20 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Trust strip */}
-      <section className="landing-trust" aria-label="What guides us">
+      {/* Feature / USP strip */}
+      <section className="landing-trust" aria-label="What Apricoti offers">
         <div className="landing-container landing-trust-row">
           {c.trust.map((t, i) => (
             <span key={t} className="landing-trust-item">
-              {[<Shield key="s" size={18} aria-hidden="true" />, <Heart key="h" size={18} aria-hidden="true" />,
-                <UserRound key="u" size={18} aria-hidden="true" />, <CheckCircle2 key="c" size={18} aria-hidden="true" />][i]}
+              {[<Video key="v" size={18} aria-hidden="true" />, <UserRound key="u" size={18} aria-hidden="true" />,
+                <Sparkles key="s" size={18} aria-hidden="true" />, <Tag key="t" size={18} aria-hidden="true" />][i]}
               {' '}{t}
             </span>
           ))}
         </div>
       </section>
 
-      {/* How it works */}
-      <section className="landing-section">
-        <div className="landing-container">
-          <div className="landing-section-head">
-            <h2>How it works</h2>
-            <p>Three simple steps from first visit to first conversation.</p>
-          </div>
-          <ol className="landing-steps">
-            <li className="card">
-              <span className="landing-step-num" aria-hidden="true">1</span>
-              <h3>Browse Companions</h3>
-              <p>Read Companion profiles and choose someone whose warmth and interests feel right.</p>
-            </li>
-            <li className="card">
-              <span className="landing-step-num" aria-hidden="true">2</span>
-              <h3>Arrange a conversation</h3>
-              <p>Pick a time and length. Start with a trial, a single conversation, or a regular routine.</p>
-            </li>
-            <li className="card">
-              <span className="landing-step-num" aria-hidden="true">3</span>
-              <h3>Connect by phone or video</h3>
-              <p>Join with a simple link or a phone call. We send reminders so no one has to remember.</p>
-            </li>
-          </ol>
-        </div>
-      </section>
-
-      {/* For families / Coordinators — image left */}
+      {/* For families / Coordinators — moved above How it works */}
       <section className="landing-section landing-section-muted">
         <div className="landing-container landing-split">
           <LandingImage slot={landingImages.coordinator} />
@@ -147,6 +151,33 @@ export default function LandingPage() {
             </ul>
             <Link to={startTo} className="btn btn-primary btn-large">{c.coordinator.cta}</Link>
           </div>
+        </div>
+      </section>
+
+      {/* How it works — three steps, one row on desktop */}
+      <section className="landing-section">
+        <div className="landing-container">
+          <div className="landing-section-head">
+            <h2>How it works</h2>
+            <p>From first visit to a regular conversation.</p>
+          </div>
+          <ol className="landing-steps landing-steps-3">
+            <li className="card">
+              <span className="landing-step-num" aria-hidden="true">1</span>
+              <h3>Explore Companions</h3>
+              <p>Browse profiles and consider interests, conversation style, availability, languages and price.</p>
+            </li>
+            <li className="card">
+              <span className="landing-step-num" aria-hidden="true">2</span>
+              <h3>Start with a trial</h3>
+              <p>Book one paid video conversation at a time and see how the match feels.</p>
+            </li>
+            <li className="card">
+              <span className="landing-step-num" aria-hidden="true">3</span>
+              <h3>Make it regular</h3>
+              <p>When both people are happy, arrange future conversations around their availability.</p>
+            </li>
+          </ol>
         </div>
       </section>
 
@@ -211,11 +242,10 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Become a Companion — image right */}
+      {/* Become a Companion — text only */}
       <section className="landing-section">
-        <div className="landing-container landing-split landing-split-reverse">
-          <LandingImage slot={landingImages.companion} />
-          <div className="landing-split-text">
+        <div className="landing-container">
+          <div className="landing-split-text landing-solo-text">
             <span className="section-label">{c.companion.label}</span>
             <h2>{c.companion.title}</h2>
             <p>{c.companion.body}</p>
@@ -236,20 +266,28 @@ export default function LandingPage() {
             <h2>Questions, answered</h2>
           </div>
           <details className="landing-faq-item">
-            <summary>Who is {APP_NAME} for?</summary>
-            <p>Anyone who would value regular, friendly conversation — arranged by a family member or coordinator, or by the person themselves.</p>
+            <summary>What is a Companion?</summary>
+            <p>A Companion is someone who offers scheduled social conversations through Apricoti. They create a profile, set their availability and price, and talk with Members about everyday life and shared interests. They are not carers, therapists or medical professionals in this role.</p>
           </details>
           <details className="landing-faq-item">
-            <summary>Does the person I arrange for need an account?</summary>
-            <p>No. If you arrange conversations on someone else’s behalf, they can join with a simple link or a phone call — no app or account required.</p>
+            <summary>Who are the conversations for?</summary>
+            <p>Apricoti is designed for adults who would enjoy more regular, friendly conversation. A Member can arrange conversations themselves, or a family member, friend or trusted person can help with permission.</p>
           </details>
           <details className="landing-faq-item">
-            <summary>Phone or video?</summary>
-            <p>Both. You can hold conversations by phone or by video, whichever is more comfortable.</p>
+            <summary>Can I arrange conversations for somebody else?</summary>
+            <p>Yes. You can help create or manage a Member profile, explore Companions and arrange conversations for someone you care about. The Member should remain involved in the choice wherever possible.</p>
           </details>
           <details className="landing-faq-item">
-            <summary>How does payment work?</summary>
-            <p>Setting up an account is free. You pay for the conversations you arrange, and you can see the price before you confirm anything.</p>
+            <summary>How does a trial conversation work?</summary>
+            <p>Each Member can book one paid trial with each Companion. The length and price are shown before payment. A trial is a chance for both people to decide whether they would like to speak again.</p>
+          </details>
+          <details className="landing-faq-item">
+            <summary>Are Companions carers or therapists?</summary>
+            <p>No. Apricoti is for social companionship. Companions do not provide personal care, therapy, counselling, medical advice or emergency support.</p>
+          </details>
+          <details className="landing-faq-item">
+            <summary>How do payments work?</summary>
+            <p>The Companion’s price and any Apricoti service fee are shown before payment. Payments are taken through the platform. Companion payouts are handled separately after the completion checks are satisfied.</p>
           </details>
         </div>
       </section>
@@ -257,12 +295,25 @@ export default function LandingPage() {
       {/* Final CTA */}
       <section className="landing-section landing-final">
         <div className="landing-container landing-center">
-          <h2>Ready to arrange a conversation?</h2>
-          <p className="landing-center-lede">It takes a few minutes to set up, and you can change your mind at any point.</p>
+          <h2>Start with one conversation.</h2>
+          <p className="landing-center-lede">Explore Companions, choose who feels right, and arrange a friendly video conversation at a time that works. No pressure to continue — the first conversation is simply a chance to see how it feels.</p>
           <div className="landing-cta-row landing-cta-center">
-            <Link to={startTo} className="btn btn-primary btn-large">Get started</Link>
-            <Link to="/login" className="btn btn-secondary btn-large">Sign in</Link>
+            <Link to={startTo} className="btn btn-primary btn-large">Find a Companion</Link>
+            <Link to={startTo} className="btn btn-secondary btn-large">Become a Companion</Link>
           </div>
+        </div>
+      </section>
+
+      {/* Contact — opens the visitor's email client to our support address. */}
+      <section id="contact" className="landing-section landing-section-muted">
+        <div className="landing-container landing-center">
+          <span className="section-label">Contact</span>
+          <h2>Questions? Get in touch</h2>
+          <p className="landing-center-lede">
+            Have a question about {APP_NAME}, becoming a Companion, or arranging conversations for
+            someone you care about? Send us a message and we’ll get back to you.
+          </p>
+          <ContactForm />
         </div>
       </section>
 
@@ -274,10 +325,15 @@ export default function LandingPage() {
             <span className="landing-brand-name">{APP_NAME}</span>
           </div>
           <nav className="landing-footer-links" aria-label="Footer">
-            <Link to={startTo}>Get started</Link>
+            <Link to={startTo}>Find a Companion</Link>
+            <Link to={startTo}>Become a Companion</Link>
+            <a href="#contact">Contact</a>
             <Link to="/login">Sign in</Link>
           </nav>
-          <p className="landing-footer-note">© {new Date().getFullYear()} {APP_NAME}. Warm companionship, arranged with care.</p>
+          <p className="landing-footer-note">
+            Apricoti provides social companionship through scheduled conversations. It is not a
+            healthcare, counselling, care or emergency service. © {new Date().getFullYear()} {APP_NAME}.
+          </p>
         </div>
       </footer>
     </div>

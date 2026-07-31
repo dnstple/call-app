@@ -566,7 +566,7 @@ export default function Settings() {
           </ul>
           <button
             className="btn btn-secondary mt-4"
-            onClick={() => pushToast('The help centre opens here in a later stage', 'neutral')}
+            onClick={() => navigate('/contact')}
           >
             Contact support
           </button>

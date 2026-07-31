@@ -51,14 +51,19 @@ vi.mock('../../calls/livekit', () => ({
 }));
 
 // Stage 3A: the guest flow is audio-only and uses the shared audio adapter.
-vi.mock('../../calls/audioCall', () => ({
+vi.mock('../../calls/videoCall', () => ({
   listMicrophones: async () => [],
-  connectAudioCall: async () => {
+  listCameras: async () => [],
+  connectVideoCall: async () => {
     mock.connectCalls += 1;
     return {
       disconnect: async () => undefined,
       setMuted: async () => undefined,
+      setCameraEnabled: async () => undefined,
+      cameraEnabled: () => true,
       switchMic: async () => undefined,
+      switchCamera: async () => undefined,
+      switchSpeaker: async () => undefined,
       state: () => 'connected',
       remoteConnected: () => false,
       remoteName: () => null,
@@ -109,7 +114,7 @@ describe('guest page — link is the whole journey', () => {
   it('1+2. a valid link shows details and ONE dominant Join action — no code entry', async () => {
     renderJoin();
     expect(await screen.findByText(/Your conversation with Daniel/)).toBeTruthy();
-    expect(screen.getByText(/minutes · audio call/i)).toBeTruthy();
+    expect(screen.getByText(/minutes · video call/i)).toBeTruthy();
     expect(screen.getByRole('button', { name: /^Join conversation$/ })).toBeTruthy();
     // No code UI at all — not even collapsed (a mute-on-entry checkbox is allowed,
     // but there is no text/number field to type a code into).

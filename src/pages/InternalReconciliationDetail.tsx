@@ -112,7 +112,9 @@ export default function InternalReconciliationDetail() {
       <PageHeader title={f.finding_type} subtitle={`${f.severity} · ${f.status}`} />
 
       <p className="banner banner-warning small mb-4">
-        This is a read-only detection. Rechecking re-runs reconciliation and <strong>never moves money</strong>, issues refunds, or changes any financial amount.
+        <span>
+          This is a read-only detection. Rechecking re-runs reconciliation and <strong>never moves money</strong>, issues refunds, or changes any financial amount.
+        </span>
       </p>
 
       {opError && <div className="banner banner-danger mb-4 row small"><AlertTriangle size={15} aria-hidden="true" /> {opError}</div>}

@@ -300,9 +300,11 @@ export function PlanChangeWizard({
           </div>
 
           <div className="banner banner-info">
-            <strong>{companionName}’s approval is required.</strong> Your current plan continues
-            unchanged until they accept. Conversations starting within the next two hours are
-            never affected.
+            <span>
+              <strong>{companionName}’s approval is required.</strong> Your current plan continues
+              unchanged until they accept. Conversations starting within the next two hours are
+              never affected.
+            </span>
           </div>
         </section>
       )}

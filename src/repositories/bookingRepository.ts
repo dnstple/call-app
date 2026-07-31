@@ -209,6 +209,25 @@ export async function getBookingById(id: string): Promise<MyBookingRow | null> {
   return (data as MyBookingRow | null) ?? null;
 }
 
+export type MemberSeat = 'member' | 'coordinator';
+
+/** 0101 — read the designated Member-side seat for a booking (RLS-scoped). */
+export async function getBookingMemberSeat(id: string): Promise<MemberSeat> {
+  const { data } = await getSupabaseClient()
+    .from('bookings')
+    .select('member_seat')
+    .eq('id', id)
+    .maybeSingle();
+  return ((data as { member_seat?: string } | null)?.member_seat === 'coordinator') ? 'coordinator' : 'member';
+}
+
+/** 0101 — the arranging Coordinator chooses who takes the Member-side seat. */
+export async function setBookingMemberSeat(id: string, seat: MemberSeat): Promise<void> {
+  const { error } = await getSupabaseClient()
+    .rpc('set_booking_member_seat' as never, { p_booking: id, p_seat: seat } as never);
+  if (error) throw mapBookingError(error, 'We couldn’t update who joins this call.');
+}
+
 /** Every booking this account is authorised to see (RLS scopes the view). */
 export async function listMyBookings(): Promise<MyBookingRow[]> {
   const { data, error } = await getSupabaseClient()

@@ -59,6 +59,10 @@ const INELIGIBLE_COPY: Record<string, { title: string; body: string }> = {
     title: 'The Member joins this call',
     body: 'You arranged this conversation, and the person you arranged it for joins the call itself. You can follow the booking status here at any time.',
   },
+  seat_taken: {
+    title: 'Someone is already in this call',
+    body: 'Only one of you can join for the Member at a time. When the person currently in the call leaves, you’ll be able to join.',
+  },
   blocked: {
     title: 'This call isn’t available',
     body: 'This conversation can’t be joined because a block is in place. Contact support if you think this is a mistake.',

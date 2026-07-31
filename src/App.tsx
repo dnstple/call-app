@@ -35,6 +35,13 @@ import { EmptyState } from './components/ui';
 import PaymentResumeNotice from './components/PaymentResumeNotice';
 import { isSupabaseMode } from './config/dataMode';
 import { AuthProvider, useAuth } from './auth/AuthProvider';
+import { AccessProvider, useAccess, AccessLoading } from './state/access';
+const PilotHub = lazy(() => import('./pages/PilotHub'));
+const AccountStatus = lazy(() => import('./pages/AccountStatus'));
+const InternalAccess = lazy(() => import('./pages/InternalAccess'));
+const InternalContact = lazy(() => import('./pages/InternalContact'));
+const InternalHome = lazy(() => import('./pages/InternalHome'));
+const ContactPage = lazy(() => import('./pages/ContactPage'));
 import {
   AuthCallbackPage,
   ForgotPasswordPage,
@@ -65,6 +72,7 @@ function ScrollToTop() {
 function Protected({ children }: { children: ReactNode }) {
   const auth = useAuth();
   const location = useLocation();
+  const access = useAccess();
 
   if (!isSupabaseMode()) {
     if (!hasSeenSignup()) return <Navigate to="/signup" replace />;
@@ -110,6 +118,19 @@ function Protected({ children }: { children: ReactNode }) {
   if (auth.account && !auth.account.onboarding_complete) {
     return <Navigate to="/signup" replace />;
   }
+  // Pilot access gate: NO protected shell renders before the access state is
+  // known (prevents any flash of the full app for a waitlisted account). Blocked
+  // or suspended accounts get the account-status page with no navigation.
+  if (isSupabaseMode()) {
+    if (access.loading || access.mode === 'loading') return <AccessLoading />;
+    if (access.mode === 'blocked') {
+      return (
+        <Suspense fallback={<AccessLoading />}>
+          <AccountStatus />
+        </Suspense>
+      );
+    }
+  }
   return <>{children}</>;
 }
 
@@ -118,6 +139,24 @@ function CoordinatorOnly({ children }: { children: ReactNode }) {
   const role = useAccountRole();
   if (role === 'companion') return <Navigate to="/" replace />;
   return <>{children}</>;
+}
+
+/**
+ * Full-app feature guard. A waitlisted account may only use setup surfaces
+ * (Home→Pilot Hub, Profile, Availability & rates, Settings). Any gated product
+ * route is redirected to the Pilot Hub — never rendered as a disabled shell.
+ */
+function Gated({ children }: { children: ReactNode }) {
+  const { mode } = useAccess();
+  if (mode === 'waitlist') return <Navigate to="/pilot" replace />;
+  return <>{children}</>;
+}
+
+/** Home for full/pilot users; the Pilot Hub for waitlisted accounts. */
+function HomeOrHub() {
+  const { mode } = useAccess();
+  if (mode === 'waitlist') return <Navigate to="/pilot" replace />;
+  return <Home />;
 }
 
 /**
@@ -196,6 +235,17 @@ function AppRoutes() {
           itself renders at `/` for signed-out visitors (see Protected). */}
       <Route path="/welcome" element={<Navigate to="/" replace />} />
 
+      {/* Public contact page — reachable by anyone (anon, waitlisted, blocked).
+          Messages go to the support inbox at /internal/contact. */}
+      <Route
+        path="/contact"
+        element={
+          <Suspense fallback={<div className="row" style={{ justifyContent: 'center', padding: 48 }}><Loader2 size={22} aria-hidden="true" /><span className="visually-hidden">Loading</span></div>}>
+            <ContactPage />
+          </Suspense>
+        }
+      />
+
       {/* Sign-up wizard renders outside the main shell */}
       <Route path="/signup" element={<SignupWizard />} />
       <Route path="/onboarding" element={<Navigate to="/signup" replace />} />
@@ -219,20 +269,23 @@ function AppRoutes() {
                 }
               >
               <Routes>
-                <Route path="/" element={<Home />} />
+                <Route path="/" element={<HomeOrHub />} />
+                {/* Companion Pilot Hub (waitlist experience). */}
+                <Route path="/pilot" element={<PilotHub />} />
+                <Route path="/account-status" element={<AccountStatus />} />
                 {/* Explore is Coordinator-only: Companions get a neutral redirect. */}
-                <Route path="/explore" element={<CoordinatorOnly><Explore /></CoordinatorOnly>} />
-                <Route path="/people/:id" element={<ProfileDetail />} />
+                <Route path="/explore" element={<Gated><CoordinatorOnly><Explore /></CoordinatorOnly></Gated>} />
+                <Route path="/people/:id" element={<Gated><ProfileDetail /></Gated>} />
                 <Route path="/profile" element={<MyProfile />} />
-                <Route path="/members" element={<MembersPage />} />
-                <Route path="/conversations" element={<Conversations />} />
-                <Route path="/conversations/:bookingId" element={<BookingDetail />} />
+                <Route path="/members" element={<Gated><MembersPage /></Gated>} />
+                <Route path="/conversations" element={<Gated><Conversations /></Gated>} />
+                <Route path="/conversations/:bookingId" element={<Gated><BookingDetail /></Gated>} />
                 {/* Stage 3A — secure audio call for the two booked participants. */}
-                <Route path="/conversations/:bookingId/call" element={<CallPage />} />
+                <Route path="/conversations/:bookingId/call" element={<Gated><CallPage /></Gated>} />
                 {/* Legacy 2F1 call room retired — redirect to the Stage 3A flow. */}
                 <Route path="/calls/:bookingId" element={<CallRedirect />} />
-                <Route path="/messages" element={<MessagesPage />} />
-                <Route path="/messages/:conversationId" element={<MessagesPage />} />
+                <Route path="/messages" element={<Gated><MessagesPage /></Gated>} />
+                <Route path="/messages/:conversationId" element={<Gated><MessagesPage /></Gated>} />
                 {/* Plans are unified into Conversations; old links keep working. */}
                 <Route path="/plans" element={<Navigate to="/conversations" replace />} />
                 <Route path="/plans/:planId" element={<PlanRedirect />} />
@@ -253,6 +306,10 @@ function AppRoutes() {
                     DB-role protected, absent from normal navigation. */}
                 <Route path="/support/operations" element={<SupportOnly><InternalOperations /></SupportOnly>} />
                 <Route path="/internal/trust" element={<SupportOnly><InternalTrust /></SupportOnly>} />
+                {/* Pilot registration, cohorts & access management console. */}
+                <Route path="/internal" element={<SupportOnly><InternalHome /></SupportOnly>} />
+                <Route path="/internal/access" element={<SupportOnly><InternalAccess /></SupportOnly>} />
+                <Route path="/internal/contact" element={<SupportOnly><InternalContact /></SupportOnly>} />
                 <Route path="/internal/operations" element={<Navigate to="/support/operations" replace />} />
                 <Route path="/settings" element={<Settings />} />
                 {/* Stage 3D-C — durable payment authentication return/resume.
@@ -284,7 +341,9 @@ export default function App() {
     <HashRouter>
       <ScrollToTop />
       <AuthProvider>
-        <AppRoutes />
+        <AccessProvider>
+          <AppRoutes />
+        </AccessProvider>
       </AuthProvider>
     </HashRouter>
   );
