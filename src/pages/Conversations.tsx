@@ -130,7 +130,7 @@ export function AgendaRow({ booking, viewerRole, needsAction, highlight, softene
         <span className="agenda-duration">{booking.duration_minutes} min</span>
       </span>
       <ProfileAvatar name={counterpart} url={avatarOf(counterpartId)} size="sm" alt="" statusDot={joinable} />
-      <span className="col grow" style={{ gap: 2, minWidth: 0, textAlign: 'left' }}>
+      <span className="col grow" style={{ gap: 2, flex: '1 1 7rem', minWidth: '7rem', textAlign: 'left' }}>
         <span className="bold">{counterpart}</span>
         <span className="faint small">
           {viewerRole !== 'companion' && `For ${booking.member_first_name} · `}

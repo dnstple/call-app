@@ -21,8 +21,9 @@ import {
 } from '../repositories/billingRepository';
 import { clearPaymentSession, savePaymentSession } from '../payments/paymentSession';
 import { clearBookingDraft, saveBookingDraft } from '../payments/bookingDraft';
+import { getTrialState } from '../repositories/planRepository';
 import { ArrowLeft, CalendarDays, Loader2, Package, X } from 'lucide-react';
-import type { ConversationOfferRow } from '../supabase/database.types';
+import type { ConversationOfferRow, TrialState } from '../supabase/database.types';
 import type { User } from '../types';
 import {
   createBookingRequest,
@@ -219,6 +220,28 @@ export function SupabaseBookingWizard({
     setPackages(null);
     void loadPackages();
   }, [loadPackages]);
+
+  // Real trial state for THIS member↔Companion pair, so the trial option is
+  // disabled up front (not just rejected on submit) once it's used/pending.
+  const [trialState, setTrialState] = useState<TrialState | null>(null);
+  useEffect(() => {
+    if (!memberId) { setTrialState(null); return; }
+    let live = true;
+    getTrialState(memberId, companion.id)
+      .then((s) => { if (live) setTrialState(s); })
+      .catch(() => { if (live) setTrialState(null); });
+    return () => { live = false; };
+  }, [memberId, companion.id]);
+
+  // If a used/pending trial is currently selected, fall back to a standard offer.
+  useEffect(() => {
+    if (selection?.kind === 'offer' && selection.offer.offer_type === 'trial'
+        && trialState !== null && trialState !== 'available') {
+      const alt = offers.find((o) => o.offer_type !== 'trial');
+      setSelection(alt ? { kind: 'offer', offer: alt } : null);
+      setSlot(null);
+    }
+  }, [trialState, selection, offers]);
 
   useEffect(() => {
     getPublicCommissionSettings().then(setRates).catch(() => undefined);
@@ -459,26 +482,35 @@ export function SupabaseBookingWizard({
             <div className="bold mb-2">Pay per conversation</div>
             <div className="col" style={{ gap: 8 }}>
               {offers.length === 0 && <p className="muted" style={{ margin: 0 }}>No single conversations on offer.</p>}
-              {offers.map((o) => (
-                <label key={o.id} className="card card-tight row between" style={{ cursor: 'pointer' }}>
+              {offers.map((o) => {
+                const trialBlocked = o.offer_type === 'trial' && trialState !== null && trialState !== 'available';
+                return (
+                <label key={o.id} className="card card-tight row between"
+                  style={{ cursor: trialBlocked ? 'not-allowed' : 'pointer', opacity: trialBlocked ? 0.55 : 1 }}>
                   <span className="row" style={{ gap: 10 }}>
                     <input
                       type="radio"
                       name="booking-choice"
+                      disabled={trialBlocked}
                       checked={selection?.kind === 'offer' && selection.offer.id === o.id}
                       onChange={() => {
+                        if (trialBlocked) return;
                         setSelection({ kind: 'offer', offer: o });
                         setSlot(null);
                       }}
                     />
                     <span className="col" style={{ gap: 2 }}>
                       <span className="bold">{o.offer_type === 'trial' ? 'Trial conversation' : 'Standard conversation'}</span>
-                      <span className="faint">{o.duration_minutes} minutes</span>
+                      <span className="faint">
+                        {o.duration_minutes} minutes
+                        {trialBlocked && (trialState === 'pending' ? ' · trial already requested' : ' · trial already used')}
+                      </span>
                     </span>
                   </span>
                   <span className="bold">{formatMinor(o.price_minor)}</span>
                 </label>
-              ))}
+                );
+              })}
             </div>
           </div>
 
