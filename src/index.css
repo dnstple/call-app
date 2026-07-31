@@ -1343,8 +1343,8 @@ table.plain th { color: var(--color-text-secondary); font-weight: 600; }
 .landing-footer { background: var(--color-text-primary); color: var(--color-surface); padding: var(--space-6) 0; }
 .landing-footer-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); justify-content: space-between; }
 .landing-footer .landing-brand, .landing-footer .landing-brand-name { color: var(--color-surface); }
-.landing-footer-links { display: flex; gap: var(--space-5); }
-.landing-footer-links a { color: var(--color-surface); text-decoration: none; opacity: 0.85; }
+.landing-footer-links { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-5); }
+.landing-footer-links a { color: var(--color-surface); text-decoration: none; opacity: 0.85; white-space: nowrap; }
 .landing-footer-links a:hover { opacity: 1; text-decoration: underline; }
 .landing-footer-note { width: 100%; margin: 0; color: color-mix(in srgb, var(--color-surface) 65%, transparent); font-size: 0.85em; }
 
@@ -1469,3 +1469,6 @@ table.plain th { color: var(--color-text-secondary); font-weight: 600; }
 .offer-delete:hover:not(:disabled) { background: var(--color-danger-bg); }
 /* Pilot Hub checklist: the right-side "Incomplete →" link on unfinished steps. */
 .access-fix-link { color: var(--color-danger-text); font-weight: 600; }
+
+/* Text-only landing section (no image column). */
+.landing-solo-text { max-width: 640px; }

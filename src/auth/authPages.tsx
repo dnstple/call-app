@@ -17,8 +17,10 @@ function AuthLayout({ title, intro, children }: { title: string; intro?: string;
   return (
     <div className="signup-shell">
       <header className="signup-header">
-        <span className="bold brand-lockup"><img src="/icon.svg" alt="" className="brand-icon" />{APP_NAME}</span>
-        <Link to="/login" className="btn btn-ghost btn-small">Sign in</Link>
+        <Link to="/" className="bold brand-lockup" aria-label={`${APP_NAME} home`} style={{ textDecoration: 'none' }}>
+          <img src="/icon.svg" alt="" className="brand-icon" />{APP_NAME}
+        </Link>
+        <Link to="/" className="btn btn-ghost btn-small">← Back</Link>
       </header>
       <main className="signup-main" style={{ maxWidth: 480 }}>
         <div className="card card-feature col" style={{ gap: 4 }}>

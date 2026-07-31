@@ -21,7 +21,6 @@ import coordinatorImg from '../assets/landing/2.jpeg';
 import selfImg from '../assets/landing/3.jpeg';
 import regularImg from '../assets/landing/4.jpeg';
 import trialImg from '../assets/landing/5.jpeg';
-import companionImg from '../assets/landing/6.jpeg';
 
 export interface LandingImageSlot {
   /** Set to an imported asset to replace the placeholder. null = styled frame. */
@@ -79,7 +78,7 @@ export const landingImages = {
     tone: 'ivory',
   }),
   companion: slot({
-    src: companionImg,
+    src: null,
     alt: 'A companion offering their time for a warm conversation',
     tone: 'sage',
   }),

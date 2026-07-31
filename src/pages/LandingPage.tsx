@@ -241,11 +241,10 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Become a Companion — image right */}
+      {/* Become a Companion — text only */}
       <section className="landing-section">
-        <div className="landing-container landing-split landing-split-reverse">
-          <LandingImage slot={landingImages.companion} />
-          <div className="landing-split-text">
+        <div className="landing-container">
+          <div className="landing-split-text landing-solo-text">
             <span className="section-label">{c.companion.label}</span>
             <h2>{c.companion.title}</h2>
             <p>{c.companion.body}</p>
