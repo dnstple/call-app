@@ -242,9 +242,11 @@ export function BookingWizard({ companion, onClose }: { companion: User; onClose
             )}
           </div>
           <div className="banner small">
-            Cancelling more than 24 hours before the call: full simulated refund. Later cancellations are
-            reviewed under the (simulated) cancellation policy. Payment here is <strong>simulated</strong> —
-            no real money moves in this prototype.
+            <span>
+              Cancelling more than 24 hours before the call: full simulated refund. Later cancellations are
+              reviewed under the (simulated) cancellation policy. Payment here is <strong>simulated</strong> —
+              no real money moves in this prototype.
+            </span>
           </div>
           <WizardNav
             onBack={back}
