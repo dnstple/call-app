@@ -508,7 +508,7 @@ function FeeLine({ priceMinor, type, rates }: { priceMinor: number; type: 'trial
  * deletes the offer.
  */
 export function SingleOfferRow({
-  offer, rates, busy, editing, onStartEdit, onStopEdit, onSave, onToggle, durationTaken,
+  offer, rates, busy, editing, onStartEdit, onStopEdit, onSave, onToggle, onDelete, durationTaken,
 }: {
   offer: ConversationOfferRow;
   rates: { trialPct: number; standardPct: number };
@@ -518,6 +518,7 @@ export function SingleOfferRow({
   onStopEdit: () => void;
   onSave: (patch: { duration_minutes: number; price_minor: number }) => Promise<void>;
   onToggle: () => void;
+  onDelete: () => void;
   durationTaken: (duration: number, exceptId: string) => boolean;
 }) {
   const [dur, setDur] = useState(offer.duration_minutes);
@@ -587,6 +588,9 @@ export function SingleOfferRow({
         <button className="btn btn-secondary btn-small" disabled={busy} onClick={onStartEdit}>Edit</button>
         <button className="btn btn-ghost btn-small" disabled={busy} onClick={onToggle}>
           {offer.active ? 'Disable' : 'Enable'}
+        </button>
+        <button className="btn btn-ghost btn-small offer-delete" disabled={busy} onClick={onDelete}>
+          Delete
         </button>
       </div>
     </div>
@@ -716,6 +720,12 @@ function OffersEditor({
                     return;
                   }
                   void run(() => repo.updateOffer(o.id, { active: !o.active }), o.active ? 'Offer disabled' : 'Offer enabled');
+                }}
+                onDelete={() => {
+                  if (typeof window !== 'undefined'
+                    && !window.confirm(`Delete the ${o.duration_minutes}-minute rate? This can’t be undone.`)) return;
+                  if (editingId === o.id) setEditingId(null);
+                  void run(() => repo.deleteOffer(o.id), 'Rate deleted');
                 }}
                 durationTaken={activeDurationTaken}
               />

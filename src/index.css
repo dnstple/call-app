@@ -1463,3 +1463,9 @@ table.plain th { color: var(--color-text-secondary); font-weight: 600; }
 .access-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .access-mini-list li { padding: 6px 0; border-bottom: 1px solid var(--color-border); font-size: 0.88rem; }
 .access-mini-list li:last-child { border-bottom: 0; }
+
+/* Delete action on a conversation-rate row: subtle until hovered. */
+.offer-delete { color: var(--color-danger-text); }
+.offer-delete:hover:not(:disabled) { background: var(--color-danger-bg); }
+/* Pilot Hub checklist: the right-side "Incomplete →" link on unfinished steps. */
+.access-fix-link { color: var(--color-danger-text); font-weight: 600; }

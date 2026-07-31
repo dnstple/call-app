@@ -132,9 +132,9 @@ export default function PilotHub() {
                   {it.category === 'deferred' && <span className="access-chip">optional for now</span>}
                 </span>
                 {!it.done && SECTION_ROUTE[it.section] && (
-                  <button className="btn btn-ghost btn-small"
+                  <button className="btn btn-ghost btn-small access-fix-link"
                     onClick={() => navigate(SECTION_ROUTE[it.section])}>
-                    {it.category === 'deferred' ? 'Set up' : 'Complete'}
+                    {it.category === 'deferred' ? 'Set up' : 'Incomplete'} →
                   </button>
                 )}
               </li>

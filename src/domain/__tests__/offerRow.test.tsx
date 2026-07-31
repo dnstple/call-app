@@ -33,7 +33,7 @@ describe('SingleOfferRow', () => {
   it('shows the customer price, platform fee and estimated earnings', () => {
     render(
       <SingleOfferRow offer={makeOffer()} rates={rates} busy={false} editing={false}
-        onStartEdit={noop} onStopEdit={noop} onSave={async () => {}} onToggle={noop}
+        onStartEdit={noop} onStopEdit={noop} onSave={async () => {}} onToggle={noop} onDelete={noop}
         durationTaken={() => false} />,
     );
     expect(screen.getByText(/30 minutes/)).toBeTruthy();
@@ -46,21 +46,32 @@ describe('SingleOfferRow', () => {
   it('Disable/Enable label follows the active state', () => {
     const { rerender } = render(
       <SingleOfferRow offer={makeOffer({ active: true })} rates={rates} busy={false} editing={false}
-        onStartEdit={noop} onStopEdit={noop} onSave={async () => {}} onToggle={noop} durationTaken={() => false} />,
+        onStartEdit={noop} onStopEdit={noop} onSave={async () => {}} onToggle={noop} onDelete={noop} durationTaken={() => false} />,
     );
     expect(screen.getByRole('button', { name: 'Disable' })).toBeTruthy();
     rerender(
       <SingleOfferRow offer={makeOffer({ active: false })} rates={rates} busy={false} editing={false}
-        onStartEdit={noop} onStopEdit={noop} onSave={async () => {}} onToggle={noop} durationTaken={() => false} />,
+        onStartEdit={noop} onStopEdit={noop} onSave={async () => {}} onToggle={noop} onDelete={noop} durationTaken={() => false} />,
     );
     expect(screen.getByRole('button', { name: 'Enable' })).toBeTruthy();
+  });
+
+  it('offers a Delete action that calls onDelete', () => {
+    const onDelete = vi.fn();
+    render(
+      <SingleOfferRow offer={makeOffer()} rates={rates} busy={false} editing={false}
+        onStartEdit={noop} onStopEdit={noop} onSave={async () => {}} onToggle={noop}
+        onDelete={onDelete} durationTaken={() => false} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    expect(onDelete).toHaveBeenCalledTimes(1);
   });
 
   it('saves an edit with the new duration and price (in minor units)', async () => {
     const onSave = vi.fn().mockResolvedValue(undefined);
     render(
       <SingleOfferRow offer={makeOffer()} rates={rates} busy={false} editing={true}
-        onStartEdit={noop} onStopEdit={noop} onSave={onSave} onToggle={noop} durationTaken={() => false} />,
+        onStartEdit={noop} onStopEdit={noop} onSave={onSave} onToggle={noop} onDelete={noop} durationTaken={() => false} />,
     );
     fireEvent.change(screen.getByLabelText('Duration'), { target: { value: '45' } });
     fireEvent.change(screen.getByLabelText('Price (£)'), { target: { value: '12.50' } });
@@ -73,7 +84,7 @@ describe('SingleOfferRow', () => {
     const onSave = vi.fn().mockResolvedValue(undefined);
     render(
       <SingleOfferRow offer={makeOffer()} rates={rates} busy={false} editing={true}
-        onStartEdit={noop} onStopEdit={noop} onSave={onSave} onToggle={noop}
+        onStartEdit={noop} onStopEdit={noop} onSave={onSave} onToggle={noop} onDelete={noop}
         durationTaken={(d) => d === 45} />,
     );
     fireEvent.change(screen.getByLabelText('Duration'), { target: { value: '45' } });
