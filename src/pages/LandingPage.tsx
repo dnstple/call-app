@@ -78,11 +78,9 @@ export default function LandingPage() {
   // Account creation starts registration in hosted mode; the local preview
   // opens the sign-up wizard.
   const startTo = isSupabaseMode() ? '/register' : '/signup';
-  const launchMode = useLaunchMode();
-  const waitlistLaunch = launchMode === 'companion_waitlist' || launchMode === 'controlled_pilot';
-  const closedLaunch = launchMode === 'closed';
-  // Primary companion action label adapts to the launch stage.
-  const companionCta = waitlistLaunch ? 'Apply to become a Companion' : 'Become a Companion';
+  // The homepage looks and behaves normally (all roles can sign up); the only
+  // launch-mode effect is a single pilot flag shown while we're not fully public.
+  const inPilot = useLaunchMode() !== 'public';
 
   return (
     <div className="landing">
@@ -95,11 +93,7 @@ export default function LandingPage() {
           </Link>
           <nav className="landing-header-actions" aria-label="Account">
             <Link to="/login" className="btn btn-ghost">Sign in</Link>
-            {!closedLaunch && (
-              <Link to={startTo} className="btn btn-primary">
-                {waitlistLaunch ? 'Apply as a Companion' : 'Find a Companion'}
-              </Link>
-            )}
+            <Link to={startTo} className="btn btn-primary">Find a Companion</Link>
           </nav>
         </div>
       </header>
@@ -111,39 +105,18 @@ export default function LandingPage() {
             <h1>{c.hero.title}</h1>
             <p className="landing-lede">{c.hero.lede}</p>
 
-            {waitlistLaunch && (
+            {inPilot && (
               <div className="landing-launch-note" role="note">
-                Apricoti is currently in a private pilot. Create your Companion profile now and
-                we’ll be in touch when a pilot place is ready for you.
-              </div>
-            )}
-            {closedLaunch && (
-              <div className="landing-launch-note" role="note">
-                Registration is currently closed. Existing members can sign in below — we’ll reopen
-                applications soon.
+                Apricoti is currently in a private pilot. You’re welcome to sign up and set up your
+                profile while we roll out full access gradually.
               </div>
             )}
 
-            {closedLaunch ? (
-              <div className="landing-cta-row">
-                <Link to="/login" className="btn btn-primary btn-large">Sign in</Link>
-              </div>
-            ) : waitlistLaunch ? (
-              <>
-                <div className="landing-cta-row">
-                  <Link to={startTo} className="btn btn-primary btn-large">{companionCta}</Link>
-                </div>
-                <p className="landing-fineprint">{c.hero.fineprint}</p>
-              </>
-            ) : (
-              <>
-                <div className="landing-cta-row">
-                  <Link to={startTo} className="btn btn-primary btn-large">Find a Companion</Link>
-                  <Link to={startTo} className="btn btn-secondary btn-large">{companionCta}</Link>
-                </div>
-                <p className="landing-fineprint">{c.hero.fineprint}</p>
-              </>
-            )}
+            <div className="landing-cta-row">
+              <Link to={startTo} className="btn btn-primary btn-large">Find a Companion</Link>
+              <Link to={startTo} className="btn btn-secondary btn-large">Become a Companion</Link>
+            </div>
+            <p className="landing-fineprint">{c.hero.fineprint}</p>
           </div>
           <LandingImage slot={landingImages.hero} className="landing-hero-photo" />
         </div>
@@ -325,16 +298,8 @@ export default function LandingPage() {
           <h2>Start with one conversation.</h2>
           <p className="landing-center-lede">Explore Companions, choose who feels right, and arrange a friendly video conversation at a time that works. No pressure to continue — the first conversation is simply a chance to see how it feels.</p>
           <div className="landing-cta-row landing-cta-center">
-            {closedLaunch ? (
-              <Link to="/login" className="btn btn-primary btn-large">Sign in</Link>
-            ) : waitlistLaunch ? (
-              <Link to={startTo} className="btn btn-primary btn-large">{companionCta}</Link>
-            ) : (
-              <>
-                <Link to={startTo} className="btn btn-primary btn-large">Find a Companion</Link>
-                <Link to={startTo} className="btn btn-secondary btn-large">Become a Companion</Link>
-              </>
-            )}
+            <Link to={startTo} className="btn btn-primary btn-large">Find a Companion</Link>
+            <Link to={startTo} className="btn btn-secondary btn-large">Become a Companion</Link>
           </div>
         </div>
       </section>
