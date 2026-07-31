@@ -113,8 +113,8 @@ export default function LandingPage() {
 
             {waitlistLaunch && (
               <div className="landing-launch-note" role="note">
-                We’re forming our first Companion cohort. Create your profile now and we’ll contact
-                you when pilot places become available.
+                Apricoti is currently in a private pilot. Create your Companion profile now and
+                we’ll be in touch when a pilot place is ready for you.
               </div>
             )}
             {closedLaunch && (
@@ -133,10 +133,7 @@ export default function LandingPage() {
                 <div className="landing-cta-row">
                   <Link to={startTo} className="btn btn-primary btn-large">{companionCta}</Link>
                 </div>
-                <p className="landing-fineprint">
-                  Members and Coordinators join by invitation during the pilot. Have an invite?{' '}
-                  <Link to="/login">Sign in</Link>.
-                </p>
+                <p className="landing-fineprint">{c.hero.fineprint}</p>
               </>
             ) : (
               <>
