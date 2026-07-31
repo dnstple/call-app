@@ -41,6 +41,7 @@ const AccountStatus = lazy(() => import('./pages/AccountStatus'));
 const InternalAccess = lazy(() => import('./pages/InternalAccess'));
 const InternalContact = lazy(() => import('./pages/InternalContact'));
 const InternalHome = lazy(() => import('./pages/InternalHome'));
+const ContactPage = lazy(() => import('./pages/ContactPage'));
 import {
   AuthCallbackPage,
   ForgotPasswordPage,
@@ -233,6 +234,17 @@ function AppRoutes() {
       {/* Legacy marketing URL → the canonical public root. The landing page
           itself renders at `/` for signed-out visitors (see Protected). */}
       <Route path="/welcome" element={<Navigate to="/" replace />} />
+
+      {/* Public contact page — reachable by anyone (anon, waitlisted, blocked).
+          Messages go to the support inbox at /internal/contact. */}
+      <Route
+        path="/contact"
+        element={
+          <Suspense fallback={<div className="row" style={{ justifyContent: 'center', padding: 48 }}><Loader2 size={22} aria-hidden="true" /><span className="visually-hidden">Loading</span></div>}>
+            <ContactPage />
+          </Suspense>
+        }
+      />
 
       {/* Sign-up wizard renders outside the main shell */}
       <Route path="/signup" element={<SignupWizard />} />

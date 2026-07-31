@@ -81,7 +81,7 @@ function RoleWaitingHub({ role, navigate }: { role: string; navigate: NavigateFu
       <section className="card access-support-row">
         <LifeBuoy size={18} aria-hidden="true" />
         <span style={{ flex: 1 }}>Have a question while you wait?</span>
-        <Link to="/settings" className="btn btn-ghost btn-small">Contact &amp; help</Link>
+        <Link to="/contact" className="btn btn-ghost btn-small">Contact &amp; help</Link>
       </section>
     </div>
   );
@@ -249,7 +249,7 @@ export default function PilotHub() {
       <section className="card access-support-row">
         <LifeBuoy size={18} aria-hidden="true" />
         <span style={{ flex: 1 }}>Have a question while you wait?</span>
-        <Link to="/settings" className="btn btn-ghost btn-small">Contact &amp; help</Link>
+        <Link to="/contact" className="btn btn-ghost btn-small">Contact &amp; help</Link>
       </section>
 
       <p className="text-secondary" style={{ fontSize: '0.85rem' }}>

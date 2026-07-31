@@ -112,9 +112,12 @@ export function adminDashboard(): Promise<Record<string, unknown>> {
   return rpc('admin_access_dashboard');
 }
 export function adminListAccounts(p: AdminListParams): Promise<AdminListResult> {
+  // IMPORTANT: send null (not '') for unset filters. An empty string would match
+  // no rows for text filters, and '' can't cast to uuid for the cohort filter
+  // (which 400s the whole call). `|| null` turns '' into null.
   return rpc('admin_list_accounts', {
-    p_search: p.search ?? null, p_role: p.role ?? null, p_status: p.status ?? null,
-    p_access: p.access ?? null, p_cohort: p.cohort ?? null,
+    p_search: p.search || null, p_role: p.role || null, p_status: p.status || null,
+    p_access: p.access || null, p_cohort: p.cohort || null,
     p_sort: p.sort ?? 'registered', p_dir: p.dir ?? 'desc',
     p_limit: p.limit ?? 25, p_offset: p.offset ?? 0,
   });
