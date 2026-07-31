@@ -7,6 +7,7 @@
  */
 import { getSupabaseClient } from '../supabase/client';
 import { isSupabaseMode } from '../config/dataMode';
+import { RepoError } from './profileRepository';
 
 export interface SavedCardSummary {
   brand: string;
@@ -123,7 +124,22 @@ export async function createPaidRequest(input: {
     },
   });
   const r = (data as PaidRequestResult & { error?: string; detail?: string }) ?? { orderId: '', state: 'failed' };
-  if (error || r.error) throw new Error(String(r.detail ?? 'We couldn’t take your payment. Please try again.'));
+  if (error || r.error) {
+    const detail = String(r.detail ?? r.error ?? '');
+    // The "one trial per Companion" rule — a trial order already exists for this
+    // Member↔Companion pair (a started-but-abandoned trial also counts).
+    if (/one_trial_per_pair/i.test(detail)) {
+      throw new RepoError(
+        'You’ve already started or used your trial with this Companion. You can book a standard conversation instead.',
+        'conflict',
+      );
+    }
+    // Never surface raw database errors (constraints, duplicate keys) to users.
+    if (/duplicate key|violates|constraint|null value|invalid input/i.test(detail)) {
+      throw new RepoError('We couldn’t complete that booking. Please try again.', 'validation');
+    }
+    throw new RepoError(detail || 'We couldn’t take your payment. Please try again.', 'validation');
+  }
   return r;
 }
 
