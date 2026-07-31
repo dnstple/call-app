@@ -10,7 +10,9 @@ import { isSupabaseConfigured } from '../supabase/client';
 import { CompanionPlanRequests, ConversationPlans } from '../components/PlanCards';
 import { CompanionInterestedPanel } from '../components/CompanionInterestedPanel';
 import { useAppState } from '../state/store';
-import { useAccountRole } from '../state/managedMember';
+import { useAccountRole, useManagedMember } from '../state/managedMember';
+import { useAuth } from '../auth/AuthProvider';
+import { MemberHomeRecommendations, CompanionHomeSuggestions } from '../components/HomeRecommendations';
 import {
   activeMember,
   currentUser,
@@ -66,6 +68,16 @@ export default function Home() {
   const me = currentUser(state);
   // Authoritative role in Supabase mode (the mock `me` is not the real account).
   const accountRole = useAccountRole();
+  // Real profile ids for recommendations (never the mock `me.id`).
+  const managed = useManagedMember();
+  const authState = useAuth();
+  const targetMemberProfileId = managed.selected?.profileId ?? null;
+  const ownedCompanionProfileId = authState.profiles.find(
+    (p) => p.access.access_role === 'owner' && p.profile.role === 'companion')?.profile.id ?? null;
+  // Personalise for a Coordinator with the managed Member's FIRST name only.
+  const managedFirstName = accountRole === 'coordinator'
+    ? (managed.selected?.name ?? '').trim().split(/\s+/)[0] || undefined
+    : undefined;
   const navigate = useNavigate();
   const bookings = visibleBookings(state);
 
@@ -331,6 +343,16 @@ export default function Home() {
         )}
         {(hero || glance.length > 0) && glance.length === 0 && (
           <p className="muted small"><Link to="/conversations">See your full schedule in Conversations</Link></p>
+        )}
+
+        {/* Recommendations & gentle prompts — below urgent/upcoming content.
+            Member/Coordinator: continuation → matches → regular → discovery.
+            Companion: interest-based Member suggestions. */}
+        {isSupabaseConfigured() && accountRole !== 'companion' && targetMemberProfileId && (
+          <MemberHomeRecommendations memberProfileId={targetMemberProfileId} memberFirstName={managedFirstName} />
+        )}
+        {isSupabaseConfigured() && accountRole === 'companion' && ownedCompanionProfileId && (
+          <CompanionHomeSuggestions companionProfileId={ownedCompanionProfileId} />
         )}
 
         {/* Role-specific supporting info */}
