@@ -17,6 +17,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { CheckCircle2, Loader2, Star } from 'lucide-react';
 import { getSupabaseClient } from '../supabase/client';
 import { isSupabaseMode } from '../config/dataMode';
+import { submitCompletionOutcome } from '../repositories/bookingRepository';
 
 const STAR_LABELS = ['1 Poor', '2 Fair', '3 Good', '4 Very good', '5 Excellent'];
 
@@ -133,27 +134,41 @@ export function ReviewCard({ bookingId, memberName, companionName, onConfirmed }
     if (busy) return;
     setBusy(true);
     setError(null);
-    const { error: e } = await getSupabaseClient().rpc('submit_conversation_review', {
-      p_booking: bookingId,
-      p_rating: fine ? null : stars,
-      p_feedback: feedback.trim() === '' ? null : feedback.trim(),
-      // Initial submission only: carries the optional message text; the
-      // server sends it ONCE and never resends on edits.
-      p_message_idempotency: editing || message.trim() === '' ? null : message.trim(),
-    });
-    if (e) setError(friendlyReviewError(String(e.message ?? '')));
-    else onConfirmed?.(); // tell the page to refetch the booking → banner + list stay in sync
-    setEditing(false);
-    setMessage('');
-    load(); // authoritative refresh
-    setBusy(false);
+    try {
+      // Approving or rating the conversation IS the outcome decision. Confirm
+      // the conversation completed FIRST (this marks the booking completed and
+      // triggers the companion payout logic), THEN leave the review. This is why
+      // the review can be given first and the meeting is confirmed by it — no
+      // separate prior confirmation is needed. Skipped on edits (already done).
+      if (!editing) {
+        await submitCompletionOutcome(bookingId, 'completed');
+      }
+      const { error: e } = await getSupabaseClient().rpc('submit_conversation_review', {
+        p_booking: bookingId,
+        p_rating: fine ? null : stars,
+        p_feedback: feedback.trim() === '' ? null : feedback.trim(),
+        // Initial submission only: carries the optional message text; the
+        // server sends it ONCE and never resends on edits.
+        p_message_idempotency: editing || message.trim() === '' ? null : message.trim(),
+      });
+      if (e) setError(friendlyReviewError(String(e.message ?? '')));
+      else onConfirmed?.(); // tell the page to refetch the booking → banner + list stay in sync
+    } catch (err) {
+      // Completion errors come back already friendly (mapCompletionError); raw
+      // review codes go through friendlyReviewError. Friendly messages have spaces.
+      const m = String((err as { message?: string })?.message ?? '');
+      setError(m.includes(' ') ? m : friendlyReviewError(m));
+    } finally {
+      setEditing(false);
+      setMessage('');
+      load(); // authoritative refresh
+      setBusy(false);
+    }
   };
 
-  // A star RATING can only be saved once the conversation is confirmed complete
-  // (the Companion has confirmed attendance). Before then we NEVER call the
-  // rating RPC — the member can still APPROVE the conversation, which is a
-  // separate, always-available action.
-  const canRate = state.attendanceConfirmed || editing;
+  // Stars are always available: submitting confirms completion first (above), so
+  // a rating no longer needs the conversation to be pre-confirmed.
+  const canRate = true;
 
   return (
     <section className="card col" style={{ gap: 12 }} aria-label="Conversation review">
