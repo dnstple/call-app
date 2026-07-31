@@ -229,6 +229,14 @@ Deno.serve(async (req) => {
   if (userError || !userData?.user) return json({ error: 'unauthenticated' }, 401);
   const accountId = userData.user.id;
 
+  // Pilot access gate (defence in depth): the authenticated caller must hold the
+  // 'calls' feature. Waitlisted accounts are refused with a stable code; full
+  // and calls-enabled pilot accounts pass. The anonymous managed-Member guest
+  // branch above is unaffected. Fails closed on any error.
+  const { data: canCall, error: featErr } = await caller.rpc('has_feature_access', { p_feature: 'calls' });
+  if (featErr) return json({ error: 'not_found' }, 404);
+  if (canCall !== true) return json({ error: 'access_denied', state: 'pilot_access_inactive' }, 403);
+
   // 2. Accept ONLY bookingId. Room, identity, role, account, permissions, TTL,
   //    publish sources and LiveKit URL from the body are IGNORED by design.
   const bookingId = typeof parsedBody?.bookingId === 'string' ? parsedBody.bookingId : null;
