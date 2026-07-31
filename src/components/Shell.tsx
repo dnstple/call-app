@@ -97,13 +97,16 @@ export function Shell({ children }: { children: ReactNode }) {
   const auth = useAuth();
   const supabase = isSupabaseMode();
   const accountRole = useAccountRole();
+  const accessMode = useAccess().mode;
+  // Waitlisted accounts have no messaging/conversation access — don't fire the
+  // gated unread hooks for them (avoids console pilot_access_inactive noise).
+  const appEnabled = !supabase || (auth.status === 'authenticated' && accessMode !== 'waitlist');
 
-  const unreadMessages = useUnreadTotal(!supabase || auth.status === 'authenticated');
-  const unreadNotifications = useUnreadNotifications(supabase && auth.status === 'authenticated');
+  const unreadMessages = useUnreadTotal(appEnabled);
+  const unreadNotifications = useUnreadNotifications(supabase && auth.status === 'authenticated' && accessMode !== 'waitlist');
   const bellCount = supabase ? unreadNotifications : unread;
 
   const role = supabase ? accountRole : me.role;
-  const accessMode = useAccess().mode;
   const waitlist = supabase && accessMode === 'waitlist';
   const nav = waitlist ? WAITLIST_NAV : navForRole(role);
   // Discreet internal entry — shown ONLY when the server confirms support.
