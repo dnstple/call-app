@@ -8,6 +8,7 @@
 import { ShieldAlert } from 'lucide-react';
 import { useAuth } from '../auth/AuthProvider';
 import { useAccess } from '../state/access';
+import { CONTACT_EMAIL } from '../config/branding';
 
 export default function AccountStatus() {
   const auth = useAuth();
@@ -26,7 +27,7 @@ export default function AccountStatus() {
               : 'Access to Apricoti features isn’t available on your account right now. If you have questions, our support team is happy to help.'}
           </p>
           <div className="row" style={{ gap: 10, marginTop: 6 }}>
-            <a className="btn btn-primary" href="mailto:support@apricoti.com">Contact support</a>
+            <a className="btn btn-primary" href={`mailto:${CONTACT_EMAIL}`}>Contact support</a>
             <button className="btn btn-ghost" onClick={() => void auth.signOut()}>Sign out</button>
           </div>
         </div>

@@ -1,7 +1,7 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { CheckCircle2, Shield, Sparkles, Tag, UserRound, Video } from 'lucide-react';
-import { APP_NAME } from '../config/branding';
+import { APP_NAME, CONTACT_EMAIL } from '../config/branding';
 import { isSupabaseMode } from '../config/dataMode';
 import { publicLaunchMode, type LaunchMode } from '../repositories/accessRepository';
 import { landingCopy, landingImages, type LandingImageSlot } from '../content/landingContent';
@@ -303,16 +303,21 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Contact — placeholder feature (not wired up yet) */}
+      {/* Contact — opens the visitor's email client to our support address. */}
       <section id="contact" className="landing-section landing-section-muted">
         <div className="landing-container landing-center">
           <span className="section-label">Contact</span>
           <h2>Questions? Get in touch</h2>
           <p className="landing-center-lede">
-            Have a question about Apricoti, becoming a Companion, or arranging conversations for
+            Have a question about {APP_NAME}, becoming a Companion, or arranging conversations for
             someone you care about? We’d love to hear from you.
           </p>
-          <button type="button" className="btn btn-primary btn-large">Contact us</button>
+          <a
+            href={`mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(`${APP_NAME} enquiry`)}`}
+            className="btn btn-primary btn-large"
+          >
+            Email us
+          </a>
         </div>
       </section>
 
