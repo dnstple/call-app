@@ -178,17 +178,9 @@ export function Shell({ children }: { children: ReactNode }) {
             <SettingsIcon size={20} aria-hidden="true" /> Settings
           </NavLink>
           {supportStatus === 'yes' && (
-            <>
-              <NavLink to="/internal/issues">
-                <ShieldAlert size={20} aria-hidden="true" /> Issue queue
-              </NavLink>
-              <NavLink to="/internal/access">
-                <ShieldAlert size={20} aria-hidden="true" /> Pilot access
-              </NavLink>
-              <NavLink to="/internal/contact">
-                <MessageCircle size={20} aria-hidden="true" /> Contact messages
-              </NavLink>
-            </>
+            <NavLink to="/internal" end={false}>
+              <ShieldAlert size={20} aria-hidden="true" /> Internal
+            </NavLink>
           )}
         </nav>
 

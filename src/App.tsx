@@ -40,6 +40,7 @@ const PilotHub = lazy(() => import('./pages/PilotHub'));
 const AccountStatus = lazy(() => import('./pages/AccountStatus'));
 const InternalAccess = lazy(() => import('./pages/InternalAccess'));
 const InternalContact = lazy(() => import('./pages/InternalContact'));
+const InternalHome = lazy(() => import('./pages/InternalHome'));
 import {
   AuthCallbackPage,
   ForgotPasswordPage,
@@ -294,6 +295,7 @@ function AppRoutes() {
                 <Route path="/support/operations" element={<SupportOnly><InternalOperations /></SupportOnly>} />
                 <Route path="/internal/trust" element={<SupportOnly><InternalTrust /></SupportOnly>} />
                 {/* Pilot registration, cohorts & access management console. */}
+                <Route path="/internal" element={<SupportOnly><InternalHome /></SupportOnly>} />
                 <Route path="/internal/access" element={<SupportOnly><InternalAccess /></SupportOnly>} />
                 <Route path="/internal/contact" element={<SupportOnly><InternalContact /></SupportOnly>} />
                 <Route path="/internal/operations" element={<Navigate to="/support/operations" replace />} />

@@ -1487,3 +1487,9 @@ table.plain th { color: var(--color-text-secondary); font-weight: 600; }
   max-width: 520px; margin: 0 auto; padding: 14px 16px; border-radius: 12px;
   background: var(--color-success-bg); color: var(--color-success-text); font-weight: 600;
 }
+
+/* Internal tools hub (/internal). */
+.internal-home-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+.internal-home-card { display: flex; gap: 12px; align-items: flex-start; text-decoration: none; color: inherit; }
+.internal-home-card:hover { border-color: var(--color-brand); }
+.internal-home-icon { color: var(--color-brand-strong); flex: none; margin-top: 2px; }
