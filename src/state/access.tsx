@@ -34,7 +34,7 @@ export function useAccess(): AccessContextValue {
   return useContext(AccessContext);
 }
 
-function deriveMode(a: AccountAccess | null): AccessMode {
+export function deriveMode(a: AccountAccess | null): AccessMode {
   if (!a) return 'full';
   // Support admins retain full internal + product access regardless of level.
   if (a.isSupportAdmin) return 'full';

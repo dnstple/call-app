@@ -81,7 +81,7 @@ describe('public landing page', () => {
     const text = document.body.textContent ?? '';
     // No fabricated social proof / metrics language.
     expect(text).not.toMatch(/\d[\d,]*\s*(?:\+|k|m)?\s*(?:users|members|families|companions|conversations|reviews|calls)\b/i);
-    expect(text).not.toMatch(/testimonial|rated|stars?\b|out of 5|award|certified|accredited|trusted by|as seen|press/i);
+    expect(text).not.toMatch(/testimonial|\brated\b|stars?\b|out of 5|award|certified|accredited|trusted by|as seen|\bpress\b/i);
     expect(text).not.toMatch(/\b\d+%\s*(?:satisfaction|happy|success|response)/i);
   });
 
