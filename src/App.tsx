@@ -39,6 +39,7 @@ import { AccessProvider, useAccess, AccessLoading } from './state/access';
 const PilotHub = lazy(() => import('./pages/PilotHub'));
 const AccountStatus = lazy(() => import('./pages/AccountStatus'));
 const InternalAccess = lazy(() => import('./pages/InternalAccess'));
+const InternalContact = lazy(() => import('./pages/InternalContact'));
 import {
   AuthCallbackPage,
   ForgotPasswordPage,
@@ -294,6 +295,7 @@ function AppRoutes() {
                 <Route path="/internal/trust" element={<SupportOnly><InternalTrust /></SupportOnly>} />
                 {/* Pilot registration, cohorts & access management console. */}
                 <Route path="/internal/access" element={<SupportOnly><InternalAccess /></SupportOnly>} />
+                <Route path="/internal/contact" element={<SupportOnly><InternalContact /></SupportOnly>} />
                 <Route path="/internal/operations" element={<Navigate to="/support/operations" replace />} />
                 <Route path="/settings" element={<Settings />} />
                 {/* Stage 3D-C — durable payment authentication return/resume.

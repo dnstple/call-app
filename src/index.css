@@ -1472,3 +1472,18 @@ table.plain th { color: var(--color-text-secondary); font-weight: 600; }
 
 /* Text-only landing section (no image column). */
 .landing-solo-text { max-width: 640px; }
+
+/* Landing in-app contact form. */
+.landing-contact-form { display: flex; flex-direction: column; gap: 10px; max-width: 520px; margin: 0 auto; text-align: left; }
+.landing-contact-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.landing-contact-row .landing-contact-input { flex: 1 1 180px; }
+.landing-contact-input {
+  width: 100%; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid var(--color-border-strong); background: var(--color-surface);
+  color: var(--color-text-primary); font: inherit;
+}
+.landing-contact-input:focus { outline: 2px solid var(--color-brand); outline-offset: 1px; }
+.landing-contact-sent {
+  max-width: 520px; margin: 0 auto; padding: 14px 16px; border-radius: 12px;
+  background: var(--color-success-bg); color: var(--color-success-text); font-weight: 600;
+}

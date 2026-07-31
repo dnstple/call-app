@@ -1,9 +1,10 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useState, type CSSProperties, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { CheckCircle2, Shield, Sparkles, Tag, UserRound, Video } from 'lucide-react';
-import { APP_NAME, CONTACT_EMAIL } from '../config/branding';
+import { APP_NAME } from '../config/branding';
 import { isSupabaseMode } from '../config/dataMode';
 import { publicLaunchMode, type LaunchMode } from '../repositories/accessRepository';
+import { submitContactMessage } from '../repositories/contactRepository';
 import { landingCopy, landingImages, type LandingImageSlot } from '../content/landingContent';
 
 /**
@@ -310,14 +311,9 @@ export default function LandingPage() {
           <h2>Questions? Get in touch</h2>
           <p className="landing-center-lede">
             Have a question about {APP_NAME}, becoming a Companion, or arranging conversations for
-            someone you care about? We’d love to hear from you.
+            someone you care about? Send us a message and we’ll get back to you.
           </p>
-          <a
-            href={`mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(`${APP_NAME} enquiry`)}`}
-            className="btn btn-primary btn-large"
-          >
-            Email us
-          </a>
+          <ContactForm />
         </div>
       </section>
 
@@ -341,5 +337,63 @@ export default function LandingPage() {
         </div>
       </footer>
     </div>
+  );
+}
+
+/**
+ * In-app contact form. Sends the message straight to the database via
+ * submit_contact_message (no email); support reads it in the app. Anyone can
+ * send, signed in or not. In local preview (mock mode) there's no backend, so
+ * we show a short note instead.
+ */
+function ContactForm() {
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [message, setMessage] = useState('');
+  const [status, setStatus] = useState<'idle' | 'sending' | 'sent'>('idle');
+  const [error, setError] = useState<string | null>(null);
+
+  if (!isSupabaseMode()) {
+    return <p className="landing-fineprint">The contact form is available on the live site.</p>;
+  }
+  if (status === 'sent') {
+    return (
+      <div className="landing-contact-sent" role="status">
+        Thanks — we’ve got your message and we’ll be in touch.
+      </div>
+    );
+  }
+
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (message.trim() === '') { setError('Please write a message.'); return; }
+    setStatus('sending'); setError(null);
+    try {
+      await submitContactMessage(name, email, message);
+      setStatus('sent');
+    } catch (err) {
+      const m = String((err as { message?: string })?.message ?? '').toLowerCase();
+      setError(m.includes('too_long')
+        ? 'That message is a little long — please shorten it.'
+        : 'We couldn’t send that just now. Please try again.');
+      setStatus('idle');
+    }
+  }
+
+  return (
+    <form className="landing-contact-form" onSubmit={onSubmit}>
+      <div className="landing-contact-row">
+        <input className="landing-contact-input" placeholder="Your name (optional)"
+          value={name} onChange={(e) => setName(e.target.value)} maxLength={200} />
+        <input className="landing-contact-input" type="email" placeholder="Your email (optional)"
+          value={email} onChange={(e) => setEmail(e.target.value)} maxLength={320} />
+      </div>
+      <textarea className="landing-contact-input" placeholder="How can we help?" rows={4}
+        value={message} onChange={(e) => setMessage(e.target.value)} maxLength={4000} required />
+      {error && <p className="access-inline-error" style={{ marginTop: 0 }}>{error}</p>}
+      <button type="submit" className="btn btn-primary btn-large" disabled={status === 'sending'}>
+        {status === 'sending' ? 'Sending…' : 'Send message'}
+      </button>
+    </form>
   );
 }

@@ -185,6 +185,9 @@ export function Shell({ children }: { children: ReactNode }) {
               <NavLink to="/internal/access">
                 <ShieldAlert size={20} aria-hidden="true" /> Pilot access
               </NavLink>
+              <NavLink to="/internal/contact">
+                <MessageCircle size={20} aria-hidden="true" /> Contact messages
+              </NavLink>
             </>
           )}
         </nav>
