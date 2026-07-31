@@ -22,21 +22,30 @@ set search_path = '';
 -- 1. Enum-like reference: the gated product feature registry (no free text).
 -- ===========================================================================
 create table if not exists public.pilot_features (
-  feature_key text primary key,
-  label       text not null,
-  sort_order  integer not null default 0
+  feature_key      text primary key,
+  label            text not null,
+  -- Setup capabilities a WAITLISTED Companion may use while their application is
+  -- pending. Gated product features are false and require pilot/full access.
+  waitlist_allowed boolean not null default false,
+  sort_order       integer not null default 0
 );
-insert into public.pilot_features (feature_key, label, sort_order) values
-  ('explore',          'Explore Companions',      10),
-  ('favourites',       'Favourites',              20),
-  ('message_requests', 'Message requests',        30),
-  ('messaging',        'Messaging',               40),
-  ('conversations',    'Conversations',           50),
-  ('booking',          'Booking',                 60),
-  ('calls',            'Calls',                   70),
-  ('payments',         'Payments',                80),
-  ('payouts',          'Payouts',                 90),
-  ('reviews',          'Reviews',                100)
+insert into public.pilot_features (feature_key, label, waitlist_allowed, sort_order) values
+  -- Waitlist-safe setup capabilities:
+  ('profile_setup',           'Profile setup',            true,   0),
+  ('availability_and_rates',  'Availability & rates',     true,   1),
+  ('notification_preferences','Notification preferences', true,   2),
+  ('application_submission',  'Application submission',   true,   3),
+  -- Gated product features (pilot/full only):
+  ('explore',          'Explore Companions',      false,  10),
+  ('favourites',       'Favourites',              false,  20),
+  ('message_requests', 'Message requests',        false,  30),
+  ('messaging',        'Messaging',               false,  40),
+  ('conversations',    'Conversations',           false,  50),
+  ('booking',          'Booking',                 false,  60),
+  ('calls',            'Calls',                   false,  70),
+  ('payments',         'Payments',                false,  80),
+  ('payouts',          'Payouts',                 false,  90),
+  ('reviews',          'Reviews',                 false, 100)
 on conflict (feature_key) do nothing;
 
 -- ===========================================================================
@@ -195,30 +204,36 @@ revoke all on function public.current_account_access() from public, anon;
 grant execute on function public.current_account_access() to authenticated;
 
 -- Authoritative per-feature gate. Priority (explicit):
---   1. no session            → denied
---   2. blocked / suspended   → denied
---   3. per-account override  → its value
---   4. access_level = full   → allowed (all released features)
---   5. access_level = pilot  → cohort_feature_access for the feature
---   6. otherwise (waitlist)  → denied (setup features are NOT in this registry)
+--   1. no session                 → denied
+--   2. unknown feature key         → denied (fail closed)
+--   3. blocked / suspended         → denied (overrides EVERY grant below)
+--   4. per-account override        → its value (beats cohort + level)
+--   5. waitlist-safe setup feature → allowed for any non-blocked account
+--   6. access_level = full         → allowed (all released features)
+--   7. access_level = pilot        → cohort_feature_access for the feature
+--   8. otherwise (waitlist, gated) → denied
 -- Feature access NEVER bypasses moderation/consent/blocking/payment authority;
--- those remain enforced by their own functions and RLS.
+-- those remain enforced by their own functions and RLS. Support-admin status is
+-- NOT consulted here — being an admin never auto-grants a product feature.
 create or replace function app_private.account_has_feature(p_account uuid, p_feature text)
 returns boolean language plpgsql stable security definer set search_path = '' as $$
 declare
   v public.account_access;
+  v_waitlist_ok boolean;
   v_override boolean;
   v_enabled  boolean;
 begin
   if p_account is null then return false; end if;
-  if not exists (select 1 from public.pilot_features where feature_key = p_feature) then
+  select waitlist_allowed into v_waitlist_ok
+    from public.pilot_features where feature_key = p_feature;
+  if v_waitlist_ok is null then
     return false;  -- unknown feature key: fail closed
   end if;
 
   select * into v from public.account_access where account_id = p_account;
 
-  if v.access_level = 'blocked'
-     or v.application_status in ('suspended')
+  if coalesce(v.access_level, 'waitlist') = 'blocked'
+     or coalesce(v.application_status, 'incomplete') = 'suspended'
      or exists (select 1 from public.accounts a where a.id = p_account and a.status in ('suspended','deactivated')) then
     return false;
   end if;
@@ -227,6 +242,10 @@ begin
     from public.account_feature_overrides
    where account_id = p_account and feature_key = p_feature;
   if v_override is not null then return v_override; end if;
+
+  -- Waitlist-safe setup capabilities are available to any non-blocked account
+  -- (waitlist, pilot and full) so Companions can complete their application.
+  if v_waitlist_ok then return true; end if;
 
   if coalesce(v.access_level, 'waitlist') = 'full' then
     return true;
@@ -237,7 +256,7 @@ begin
     return coalesce(v_enabled, false);
   end if;
 
-  return false;  -- waitlist / unknown → denied for gated product features
+  return false;  -- waitlist + gated product feature → denied
 end;
 $$;
 revoke all on function app_private.account_has_feature(uuid, text) from public, anon;
