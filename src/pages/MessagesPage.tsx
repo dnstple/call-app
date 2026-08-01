@@ -580,11 +580,18 @@ export default function MessagesPage() {
     const apply = () => {
       const top = Math.max(el.getBoundingClientRect().top, 0);
       const bottomNav = window.innerWidth < 900 ? 62 : 0;
-      // visualViewport.height reflects the CURRENT visible height (tracks the
-      // iOS address bar collapsing and the on-screen keyboard); 100dvh does not,
-      // which left empty space below the composer. Fall back to innerHeight.
-      const vh = window.visualViewport?.height ?? window.innerHeight;
-      el.style.height = `${Math.round(vh - top - bottomNav)}px`;
+      if (narrow) {
+        // Mobile only: visualViewport.height reflects the CURRENT visible height
+        // (tracks the iOS address bar collapsing and the on-screen keyboard);
+        // 100dvh does not, which left empty space below the composer. Fall back
+        // to innerHeight where visualViewport is unavailable.
+        const vh = window.visualViewport?.height ?? window.innerHeight;
+        el.style.height = `${Math.round(vh - top - bottomNav)}px`;
+      } else {
+        // Desktop: no dynamic browser chrome, so dvh is stable. The measured
+        // offset keeps the page itself from scrolling below the shell banner.
+        el.style.height = `calc(100dvh - ${Math.round(top)}px - ${bottomNav}px)`;
+      }
     };
     apply();
     window.addEventListener('resize', apply);

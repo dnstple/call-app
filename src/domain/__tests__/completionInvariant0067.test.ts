@@ -93,7 +93,13 @@ describe('frontend renders no completion/payout card for a non-accepted booking'
     expect(DETAIL.toLowerCase()).toContain('was not accepted');
   });
   it('the review card never calls the rating RPC before completion, and hides raw errors', () => {
-    expect(REVIEW).toContain('const canRate = state.attendanceConfirmed');
+    // The invariant is now enforced by ORDER, not a pre-confirmation gate:
+    // completion is awaited FIRST, then the review RPC runs, so the rating RPC
+    // is never reached before completion (0071 review-confirms-completion model).
+    expect(REVIEW).toContain("await submitCompletionOutcome(bookingId, 'completed')");
+    expect(REVIEW.indexOf('submitCompletionOutcome')).toBeLessThan(
+      REVIEW.indexOf("rpc('submit_conversation_review'"),
+    );
     expect(REVIEW).toContain('friendlyReviewError');
     expect(REVIEW).not.toMatch(/setError\(String\(e\.message/); // raw error not shown
     expect(REVIEW).toMatch(/not_completed|not\.\*complete|completion/); // mapped

@@ -204,6 +204,6 @@ describe('route protection is server-derived', () => {
 
   it('the internal nav entry is shown ONLY to confirmed support users', () => {
     expect(SHELL).toContain("supportStatus === 'yes'");
-    expect(SHELL).toContain('/internal/issues');
+    expect(SHELL).toContain('to="/internal"'); // nav routes to the gated internal hub
   });
 });
