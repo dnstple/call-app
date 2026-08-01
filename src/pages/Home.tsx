@@ -11,7 +11,7 @@ import { CompanionPlanRequests, ConversationPlans } from '../components/PlanCard
 import { CompanionInterestedPanel } from '../components/CompanionInterestedPanel';
 import { useAppState } from '../state/store';
 import { useAccountRole, useManagedMember } from '../state/managedMember';
-import { useAuth } from '../auth/AuthProvider';
+import { useAuthSnapshot } from '../state/authBridge';
 import { MemberHomeRecommendations, CompanionHomeSuggestions } from '../components/HomeRecommendations';
 import {
   activeMember,
@@ -70,7 +70,7 @@ export default function Home() {
   const accountRole = useAccountRole();
   // Real profile ids for recommendations (never the mock `me.id`).
   const managed = useManagedMember();
-  const authState = useAuth();
+  const authState = useAuthSnapshot();
   const targetMemberProfileId = managed.selected?.profileId ?? null;
   const ownedCompanionProfileId = authState.profiles.find(
     (p) => p.access.access_role === 'owner' && p.profile.role === 'companion')?.profile.id ?? null;
