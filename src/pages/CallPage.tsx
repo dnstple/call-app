@@ -227,14 +227,20 @@ export default function CallPage() {
         setMuted(muteOnEntry); setCameraOn(wantCamera); setElapsed(0); setPhase('in_call');
         return;
       }
-      // Release the lobby preview camera FIRST. On iOS a second camera capture
-      // (the call's) returns a black track while the preview still holds the
-      // device, so the far side — and our own self-view — go black. Stopping it
-      // before the token round-trip below gives the OS time to free the camera.
+      // Mount the call stage BEFORE connecting. This does two things:
+      //  (a) unmounts the lobby preview, so iOS frees the single camera before
+      //      the call opens it (otherwise the call gets a black track);
+      //  (b) makes the remote/self <div> refs exist when the adapter's
+      //      onLocalVideo/onRemoteVideo callbacks fire — otherwise the very first
+      //      attach is a no-op and the self-view (and an already-present remote)
+      //      stay black. The awaits below give React time to commit the mount
+      //      before the camera is opened inside connectVideoCall.
+      setMuted(muteOnEntry); setCameraOn(wantCamera); setElapsed(0); setPhase('in_call');
       previewStreamRef.current?.getTracks().forEach((t) => t.stop());
       previewStreamRef.current = null;
       const prepared: CallTokenResult = await requestCallToken(bookingId);
       if (!prepared.ok) {
+        setPhase('prejoin'); setCameraOn(false);
         setJoinError(INELIGIBLE_COPY[prepared.error ?? 'not_found']?.body ?? 'This call isn’t available right now.');
         return;
       }
@@ -248,8 +254,8 @@ export default function CallPage() {
         },
         handlers,
       );
-      setMuted(muteOnEntry); setCameraOn(wantCamera); setElapsed(0); setPhase('in_call');
     } catch (e) {
+      setPhase('prejoin'); setCameraOn(false);
       setJoinError(e instanceof Error ? e.message : 'We couldn’t join the call. Please try again.');
     } finally {
       setJoining(false);
