@@ -14,10 +14,10 @@
  * never resends on edits.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { CheckCircle2, Loader2, Star } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Loader2, Star } from 'lucide-react';
 import { getSupabaseClient } from '../supabase/client';
 import { isSupabaseMode } from '../config/dataMode';
-import { submitCompletionOutcome } from '../repositories/bookingRepository';
+import { confirmConversationForReview, submitCompletionOutcome } from '../repositories/bookingRepository';
 
 const STAR_LABELS = ['1 Poor', '2 Fair', '3 Good', '4 Very good', '5 Excellent'];
 
@@ -135,13 +135,12 @@ export function ReviewCard({ bookingId, memberName, companionName, onConfirmed }
     setBusy(true);
     setError(null);
     try {
-      // Approving or rating the conversation IS the outcome decision. Confirm
-      // the conversation completed FIRST (this marks the booking completed and
-      // triggers the companion payout logic), THEN leave the review. This is why
-      // the review can be given first and the meeting is confirmed by it — no
-      // separate prior confirmation is needed. Skipped on edits (already done).
+      // The review IS the confirmation: the Member/Coordinator finalises the
+      // conversation authoritatively (0120) BEFORE the review is written, so the
+      // rating — gated on a completed booking — can save. No separate Companion
+      // confirmation is required. Skipped on edits (already completed).
       if (!editing) {
-        await submitCompletionOutcome(bookingId, 'completed');
+        await confirmConversationForReview(bookingId);
       }
       const { error: e } = await getSupabaseClient().rpc('submit_conversation_review', {
         p_booking: bookingId,
@@ -162,6 +161,23 @@ export function ReviewCard({ bookingId, memberName, companionName, onConfirmed }
       setEditing(false);
       setMessage('');
       load(); // authoritative refresh
+      setBusy(false);
+    }
+  };
+
+  // Report a problem instead of confirming: the existing report_concern outcome
+  // moves the booking to needs_review and holds any payout for our team to review.
+  const reportProblem = async () => {
+    if (busy) return;
+    setBusy(true); setError(null);
+    try {
+      await submitCompletionOutcome(bookingId, 'report_concern', feedback.trim() === '' ? undefined : feedback.trim());
+      onConfirmed?.();
+    } catch (err) {
+      const m = String((err as { message?: string })?.message ?? '');
+      setError(m.includes(' ') ? m : 'We couldn’t report this just now. Please try again.');
+    } finally {
+      load();
       setBusy(false);
     }
   };
@@ -258,10 +274,16 @@ export function ReviewCard({ bookingId, memberName, companionName, onConfirmed }
             Cancel
           </button>
         )}
+        {!editing && (
+          <button className="btn btn-ghost btn-small call-report-problem" disabled={busy} onClick={() => void reportProblem()}>
+            <AlertTriangle size={15} aria-hidden="true" /> Report a problem
+          </button>
+        )}
       </div>
       <p className="faint small" style={{ margin: 0 }}>
         Stars are optional. “Everything was fine” simply approves the
-        conversation without a rating.
+        conversation without a rating. If something went wrong, “Report a problem”
+        puts it under review and holds any payment until our team has looked into it.
       </p>
     </section>
   );

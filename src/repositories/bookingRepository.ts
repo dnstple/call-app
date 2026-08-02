@@ -519,6 +519,21 @@ export async function submitCompletionOutcome(
   return payloadToState(data as CompletionStatePayload);
 }
 
+/**
+ * The paying side's review IS the confirmation (0120): a Member/Coordinator
+ * finalises a finished conversation without a separate Companion confirmation,
+ * so the rating can save. Idempotent server-side. (RPC not yet in generated
+ * types — loose-cast the client, like other post-0115 repositories.)
+ */
+export async function confirmConversationForReview(bookingId: string): Promise<CompletionState> {
+  const client = getSupabaseClient() as unknown as {
+    rpc: (fn: string, params?: Record<string, unknown>) => Promise<{ data: unknown; error: unknown }>;
+  };
+  const { data, error } = await client.rpc('confirm_conversation_for_review', { p_booking: bookingId });
+  if (error) throw mapCompletionError(error);
+  return payloadToState(data as CompletionStatePayload);
+}
+
 /** Ended, still-confirmed conversations involving this profile. */
 export async function listBookingsNeedingConfirmation(profileId: string): Promise<MyBookingRow[]> {
   const rows = await listBookingsForProfile(profileId);
