@@ -187,6 +187,11 @@ export async function connectVideoCall(
       // frame (or tries to go fullscreen) instead of the live remote video.
       el.autoplay = true;
       el.playsInline = true;
+      // This element carries ONLY video — the remote audio plays through a
+      // separate hidden <audio>. Muting the video element is therefore silent,
+      // and it lets iOS Safari autoplay it inline (it blocks unmuted autoplay
+      // outside a user gesture, which is why the remote showed black on iPhone).
+      el.muted = true;
       handlers.onRemoteVideo(el);
     }
   };

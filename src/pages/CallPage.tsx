@@ -195,6 +195,10 @@ export default function CallPage() {
       el.style.height = '100%';
       el.style.objectFit = 'cover';
       host.appendChild(el);
+      // iOS Safari drops autoplay once the join gesture's async chain unwinds,
+      // leaving the element paused/black. Kick playback explicitly after attach.
+      // Guarded: some environments (jsdom) return undefined rather than a Promise.
+      try { const p = el.play(); if (p && typeof p.catch === 'function') p.catch(() => {}); } catch { /* autoplay/jsdom */ }
     }
   };
 
