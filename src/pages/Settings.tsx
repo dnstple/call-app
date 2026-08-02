@@ -29,6 +29,7 @@ import { formatPence } from '../domain/commission';
 import { usageLabel } from '../domain/packages';
 import { ConfirmDialog, Modal, PageHeader, ProfilePhoto, SettingsRow, Switch } from '../components/ui';
 import { ConsentPanel, NotificationPreferencesPanel, SafetyNotice } from '../components/TrustSafety';
+import { InviteOthersCard } from '../components/Referral';
 import { MessagingPermissionSettings } from '../messaging/MessagingPermissionSettings';
 import { clearDraft, completedSignups, hasDraft, resetSignupDemo } from '../signup/storage';
 import { DataModePanel } from '../components/DataModePanel';
@@ -99,6 +100,7 @@ export default function Settings() {
         {/* Block 2: versioned consent + safety copy. Block 3: email preferences. */}
         {isSupabaseMode() && <ConsentPanel />}
         {isSupabaseMode() && <NotificationPreferencesPanel />}
+        {isSupabaseMode() && <InviteOthersCard />}
         <SafetyNotice />
 
         <section>

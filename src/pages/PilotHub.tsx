@@ -19,13 +19,14 @@ import {
   fetchChecklist, submitApplication, type ApplicationChecklist, type ApplicationStatus,
 } from '../repositories/accessRepository';
 import { EmptyState } from '../components/ui';
+import { RedeemInviteCard } from '../components/Referral';
 
 const SECTION_ROUTE: Record<string, string> = {
   profile: '/profile', availability: '/availability', settings: '/settings',
 };
 
 /** Waiting portal for non-Companion roles (Coordinator / Member). */
-function RoleWaitingHub({ role, navigate }: { role: string; navigate: NavigateFunction }) {
+function RoleWaitingHub({ role, navigate, onRedeemed }: { role: string; navigate: NavigateFunction; onRedeemed: () => void }) {
   const isCoordinator = role === 'coordinator';
   const label = roleLabel(role);
   const intro = isCoordinator
@@ -53,6 +54,8 @@ function RoleWaitingHub({ role, navigate }: { role: string; navigate: NavigateFu
           is ready — there’s nothing you need to submit.
         </p>
       </section>
+
+      <RedeemInviteCard onRedeemed={onRedeemed} />
 
       <section className="card">
         <h2 style={{ margin: 0, fontSize: '1.05rem' }}>While you wait</h2>
@@ -133,7 +136,7 @@ export default function PilotHub() {
   // Coordinators and Members get a role-appropriate waiting portal (no Companion
   // application). Companions continue to the checklist + Submit for review below.
   if (isSupabaseMode() && !isCompanion) {
-    return <RoleWaitingHub role={role} navigate={navigate} />;
+    return <RoleWaitingHub role={role} navigate={navigate} onRedeemed={reload} />;
   }
 
   const status = access?.applicationStatus ?? 'incomplete';
@@ -178,6 +181,8 @@ export default function PilotHub() {
         <p className="text-secondary" style={{ margin: '8px 0 0' }}>{copy.body}</p>
         {message && <p className="access-inline-good" style={{ marginTop: 10 }}>{message}</p>}
       </section>
+
+      <RedeemInviteCard onRedeemed={reload} />
 
       {/* Profile completion + checklist */}
       <section className="card">
