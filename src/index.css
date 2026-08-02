@@ -1525,13 +1525,20 @@ table.plain th { color: var(--color-text-secondary); font-weight: 600; }
   .home-match-rail { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; gap: 12px; padding-bottom: 4px; -webkit-overflow-scrolling: touch; }
   .home-match-rail > * { flex: 0 0 78%; scroll-snap-align: start; }
 }
-.home-match-card { display: flex; gap: 12px; align-items: flex-start; }
-.home-match-photo { flex: none; width: 64px; height: 64px; border-radius: 14px; overflow: hidden; background: var(--color-brand-subtle); display: grid; place-items: center; text-decoration: none; color: var(--color-brand-strong); }
+.home-match-card { display: flex; flex-direction: column; gap: 10px; padding: 16px; }
+.home-match-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.home-match-photo { flex: none; width: 56px; height: 56px; border-radius: 14px; overflow: hidden; background: var(--color-brand-subtle); display: grid; place-items: center; text-decoration: none; color: var(--color-brand-strong); }
 .home-match-photo img { width: 100%; height: 100%; object-fit: cover; }
-.home-match-bio { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.home-match-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.home-match-title strong { font-size: 1.02rem; line-height: 1.25; }
+.home-match-overlap { font-size: 0.82rem; color: var(--color-text-secondary); }
+.home-match-bio { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.45; }
+.home-match-price { font-size: 0.85rem; color: var(--color-text-secondary); }
+.home-match-actions { display: flex; gap: 8px; margin-top: 2px; }
+.home-match-actions .btn { flex: 1; justify-content: center; }
 .home-chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.home-chip { font-size: 0.75rem; padding: 3px 9px; border-radius: 999px; background: var(--color-brand-subtle); color: var(--color-brand-strong); white-space: nowrap; }
-.home-badge { font-size: 0.7rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--color-success-bg); color: var(--color-success-text); }
+.home-chip { font-size: 0.75rem; padding: 3px 10px; border-radius: 999px; background: var(--color-brand-subtle); color: var(--color-brand-strong); white-space: nowrap; }
+.home-badge { align-self: flex-start; font-size: 0.7rem; font-weight: 600; padding: 3px 10px; border-radius: 999px; background: var(--color-success-bg); color: var(--color-success-text); white-space: nowrap; }
 
 .home-continuation { position: relative; border-left: 4px solid var(--color-brand); }
 .home-dismiss { position: absolute; top: 10px; right: 10px; background: transparent; border: 0; color: var(--color-text-secondary); cursor: pointer; padding: 4px; border-radius: 8px; }

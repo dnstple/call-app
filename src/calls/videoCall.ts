@@ -49,6 +49,13 @@ export interface VideoCallHandlers {
   onNeedsAudioStart(resume: () => Promise<void>): void;
   /** Remote camera track arrived/left — the UI attaches/detaches the element. */
   onRemoteVideo(el: HTMLVideoElement | null): void;
+  /**
+   * The remote has a camera track PUBLISHED (whether or not its frames have
+   * arrived yet). Lets the UI tell "their camera is off" apart from "their video
+   * isn't coming through" (a one-way media/relay problem) instead of failing
+   * silently.
+   */
+  onRemoteVideoExpected?(expected: boolean): void;
   /** Local camera enabled/disabled reflected back for the mirror preview. */
   onLocalVideo(el: HTMLVideoElement | null): void;
   /** A local device (camera/mic) was lost mid-call. */
@@ -107,6 +114,22 @@ function pickVideoTier(): { resolution: typeof VideoPresets.h720.resolution; enc
   return { resolution: VideoPresets.h1080.resolution, encoding: VideoPresets.h1080.encoding, layers: [VideoPresets.h360, VideoPresets.h720] };
 }
 
+/**
+ * All iOS browsers (and desktop Safari) run on Apple WebKit, which cannot
+ * reliably ENCODE VP8 simulcast — the camera publishes a track that produces no
+ * frames, so the far side sees black with no error while our side still decodes
+ * their VP8 fine (one-way video). WebKit hardware-encodes H.264, so those
+ * senders publish a single H.264 layer instead. Receiving is unaffected.
+ */
+function isAppleWebkit(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  const nav = navigator as Navigator & { maxTouchPoints?: number };
+  const iOS = /iPad|iPhone|iPod/.test(ua) || (nav.platform === 'MacIntel' && (nav.maxTouchPoints ?? 0) > 1);
+  const desktopSafari = /^((?!chrome|crios|chromium|android|fxios|edg).)*safari/i.test(ua);
+  return iOS || desktopSafari;
+}
+
 /** Connect the prepared session with optional camera. */
 export async function connectVideoCall(
   prepared: CallTokenResult,
@@ -129,6 +152,9 @@ export async function connectVideoCall(
   // element isn't visibly sized yet, which was a cause of a permanently BLACK
   // canvas. Network adaptation above does not depend on it.
   const tier = pickVideoTier();
+  // Apple WebKit senders must publish H.264 (single layer) — see isAppleWebkit.
+  // Everyone else publishes a VP8 simulcast ladder for graceful downlink scaling.
+  const appleWebkit = isAppleWebkit();
   const room = new Room({
     adaptiveStream: false,
     dynacast: true,
@@ -136,10 +162,10 @@ export async function connectVideoCall(
       resolution: tier.resolution,
     },
     publishDefaults: {
-      simulcast: true,
-      videoCodec: 'vp8',
+      simulcast: !appleWebkit,
+      videoCodec: appleWebkit ? 'h264' : 'vp8',
       videoEncoding: tier.encoding,
-      videoSimulcastLayers: tier.layers,
+      videoSimulcastLayers: appleWebkit ? [] : tier.layers,
     },
   });
   let state: VideoConnectionState = 'connecting';
@@ -181,6 +207,26 @@ export async function connectVideoCall(
     .on(RoomEvent.AudioPlaybackStatusChanged, () => {
       if (!room.canPlaybackAudio) handlers.onNeedsAudioStart(() => room.startAudio());
     });
+
+  // Whether any remote participant is currently publishing a camera track. The
+  // UI uses this to distinguish a deliberate camera-off from video that has been
+  // published but isn't arriving (a one-way media problem).
+  const remoteHasCameraPub = () => {
+    for (const p of room.remoteParticipants.values()) {
+      for (const pub of p.trackPublications.values()) {
+        if (pub.source === Track.Source.Camera) return true;
+      }
+    }
+    return false;
+  };
+  const emitExpected = () => handlers.onRemoteVideoExpected?.(remoteHasCameraPub());
+  // Only NEW events here — the existing chain already handles subscribe/presence,
+  // and re-registering those would replace their handlers under a single-listener
+  // emitter. TrackPublished/TrackUnpublished tell us a camera exists before (or
+  // without) its frames arriving; the connect loop below emits the initial state.
+  room
+    .on(RoomEvent.TrackPublished, emitExpected)
+    .on(RoomEvent.TrackUnpublished, emitExpected);
 
   setState('connecting');
   try {
@@ -228,6 +274,7 @@ export async function connectVideoCall(
       if (rp.track) attachRemote(rp.track);
     }
   }
+  emitExpected();
 
   return {
     state: () => state,

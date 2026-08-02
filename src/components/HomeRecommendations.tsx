@@ -50,38 +50,39 @@ function MatchCard({ m, strongest }: { m: CompanionMatch; strongest: boolean }) 
   const to = `/people/${m.companion_profile_id}`;
   return (
     <div className="card home-match-card">
-      <Link to={to} className="home-match-photo" aria-hidden="true" tabIndex={-1}
-        onClick={() => track('home_match_profile_opened', { companion: m.companion_profile_id })}>
-        {m.photo_url ? <img src={m.photo_url} alt="" loading="lazy" /> : <span className="home-match-photo-fallback"><Sparkles size={22} aria-hidden="true" /></span>}
-      </Link>
-      <div className="col" style={{ gap: 6, flex: 1, minWidth: 0 }}>
-        <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+      <div className="home-match-head">
+        <Link to={to} className="home-match-photo" aria-hidden="true" tabIndex={-1}
+          onClick={() => track('home_match_profile_opened', { companion: m.companion_profile_id })}>
+          {m.photo_url ? <img src={m.photo_url} alt="" loading="lazy" /> : <span className="home-match-photo-fallback"><Sparkles size={22} aria-hidden="true" /></span>}
+        </Link>
+        <div className="home-match-title">
           <strong>{m.display_name}</strong>
-          {strongest && m.overlap > 0 && <span className="home-badge">{homeCopy.matching.strongestBadge}</span>}
+          {m.overlap > 0 && <span className="home-match-overlap">{sharedInterestLabel(m.overlap)}</span>}
         </div>
-        {m.overlap > 0 && <span className="faint small">{sharedInterestLabel(m.overlap)}</span>}
-        <InterestChips labels={m.shared_interests} />
-        {m.bio_excerpt && <p className="muted small home-match-bio" style={{ margin: 0 }}>{m.bio_excerpt}</p>}
-        <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginTop: 2 }}>
-          {m.offers_trial && m.trial_price_minor != null && (
-            <span className="faint small">Trial from {formatPence(m.trial_price_minor)}</span>
-          )}
-          {!m.offers_trial && m.from_price_minor != null && (
-            <span className="faint small">From {formatPence(m.from_price_minor)}</span>
-          )}
-        </div>
-        <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
-          <Link to={to} className="btn btn-secondary btn-small"
-            onClick={() => track('home_match_profile_opened', { companion: m.companion_profile_id })}>
-            View profile
+      </div>
+
+      {strongest && m.overlap > 0 && <span className="home-badge">{homeCopy.matching.strongestBadge}</span>}
+      <InterestChips labels={m.shared_interests} />
+      {m.bio_excerpt && <p className="muted small home-match-bio" style={{ margin: 0 }}>{m.bio_excerpt}</p>}
+
+      {m.offers_trial && m.trial_price_minor != null && (
+        <span className="home-match-price">Trial from {formatPence(m.trial_price_minor)}</span>
+      )}
+      {!m.offers_trial && m.from_price_minor != null && (
+        <span className="home-match-price">From {formatPence(m.from_price_minor)}</span>
+      )}
+
+      <div className="home-match-actions">
+        <Link to={to} className="btn btn-secondary btn-small"
+          onClick={() => track('home_match_profile_opened', { companion: m.companion_profile_id })}>
+          View profile
+        </Link>
+        {m.offers_trial && (
+          <Link to={to} className="btn btn-primary btn-small"
+            onClick={() => track('home_trial_cta_selected', { companion: m.companion_profile_id })}>
+            Book a trial
           </Link>
-          {m.offers_trial && (
-            <Link to={to} className="btn btn-primary btn-small"
-              onClick={() => track('home_trial_cta_selected', { companion: m.companion_profile_id })}>
-              Book a trial
-            </Link>
-          )}
-        </div>
+        )}
       </div>
     </div>
   );
