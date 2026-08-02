@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
-  ArrowLeft, Calendar, Loader2, Mic, MicOff, PhoneOff, Settings, ShieldCheck,
+  ArrowLeft, Calendar, Loader2, Mic, MicOff, Phone, PhoneOff, Settings, ShieldCheck,
   Video, VideoOff, Volume2, X,
 } from 'lucide-react';
 import { EmptyState, PageHeader } from '../components/ui';
@@ -339,7 +339,7 @@ export default function CallPage() {
 
         {/* Call info */}
         <div className="call-meta">
-          <h1>Get ready for your call</h1>
+          <h1>Ready when you are</h1>
           {elig?.scheduled_start
             ? <span className="call-meta-when"><Calendar size={15} aria-hidden="true" /> {fmtDateTime(elig.scheduled_start)}</span>
             : <span className="muted small">This is a video call — you choose whether your camera is on.</span>}
@@ -445,6 +445,7 @@ export default function CallPage() {
             disabled={joining || (!mock && micPermission !== 'granted')}
             onClick={() => void join()}
           >
+            {joining ? <Loader2 size={18} aria-hidden="true" /> : <Phone size={18} aria-hidden="true" />}
             {joining ? 'Connecting…' : joinWithCamera ? 'Join call' : 'Join call (audio only)'}
           </button>
           {joinWithCamera && (
