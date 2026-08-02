@@ -118,6 +118,9 @@ export default function CallPage() {
   // Containers the adapter attaches the <video> elements into.
   const remoteStageRef = useRef<HTMLDivElement | null>(null);
   const localInsetRef = useRef<HTMLDivElement | null>(null);
+  // The lobby camera-preview stream, so join() can release it before the call
+  // opens the camera (iOS allows only one camera capture at a time).
+  const previewStreamRef = useRef<MediaStream | null>(null);
 
   /* ---------------- eligibility ---------------- */
   useEffect(() => {
@@ -224,6 +227,12 @@ export default function CallPage() {
         setMuted(muteOnEntry); setCameraOn(wantCamera); setElapsed(0); setPhase('in_call');
         return;
       }
+      // Release the lobby preview camera FIRST. On iOS a second camera capture
+      // (the call's) returns a black track while the preview still holds the
+      // device, so the far side — and our own self-view — go black. Stopping it
+      // before the token round-trip below gives the OS time to free the camera.
+      previewStreamRef.current?.getTracks().forEach((t) => t.stop());
+      previewStreamRef.current = null;
       const prepared: CallTokenResult = await requestCallToken(bookingId);
       if (!prepared.ok) {
         setJoinError(INELIGIBLE_COPY[prepared.error ?? 'not_found']?.body ?? 'This call isn’t available right now.');
@@ -339,7 +348,7 @@ export default function CallPage() {
         {/* Large camera preview */}
         <div className="call-preview">
           {showPreview
-            ? <CameraPreview deviceId={selectedCamera} />
+            ? <CameraPreview deviceId={selectedCamera} streamRef={previewStreamRef} />
             : (
               <div className="call-preview-off">
                 <div className="call-avatar call-avatar-lg" aria-hidden="true"><VideoOff size={40} /></div>
@@ -670,21 +679,23 @@ function MockBanner({ controls }: { controls?: (ev: 'remote_mute' | 'remote_unmu
 }
 
 /** Local self-preview for the pre-join screen. Never connects to a room. */
-function CameraPreview({ deviceId }: { deviceId: string }) {
+function CameraPreview({ deviceId, streamRef }: { deviceId: string; streamRef?: React.MutableRefObject<MediaStream | null> }) {
   const ref = useRef<HTMLVideoElement | null>(null);
   useEffect(() => {
     let stream: MediaStream | null = null; let live = true;
+    const clearShared = () => { if (streamRef && streamRef.current === stream) streamRef.current = null; };
     (async () => {
       try {
         const md = navigator?.mediaDevices;
         if (!md?.getUserMedia) return;
         stream = await md.getUserMedia({ video: deviceId ? { deviceId } : true });
         if (!live) { stream.getTracks().forEach((t) => t.stop()); return; }
+        if (streamRef) streamRef.current = stream;   // let join() release it before the call opens the camera
         if (ref.current) { ref.current.srcObject = stream; ref.current.muted = true; void ref.current.play().catch(() => {}); }
       } catch { /* preview is best-effort */ }
     })();
-    return () => { live = false; stream?.getTracks().forEach((t) => t.stop()); };
-  }, [deviceId]);
+    return () => { live = false; stream?.getTracks().forEach((t) => t.stop()); clearShared(); };
+  }, [deviceId, streamRef]);
   return <video ref={ref} playsInline muted aria-label="Your camera preview" />;
 }
 
