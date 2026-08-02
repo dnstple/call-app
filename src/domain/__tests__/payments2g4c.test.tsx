@@ -91,7 +91,9 @@ describe('ReviewCard UI contract', () => {
   it('Everything was fine approves without stars and never implies five stars', () => {
     expect(CARD).toContain('Everything was fine');
     expect(CARD).toContain('p_rating: fine ? null : stars');
-    expect(CARD).toContain('simply approves the\n        conversation without a rating');
+    // Line-ending agnostic: the copy wraps across two source lines, and the file
+    // may be checked out CRLF or LF depending on the platform's git autocrlf.
+    expect(CARD).toMatch(/simply approves the\s+conversation without a rating/);
     expect(CARD).toContain('You confirmed everything was fine.');
   });
 
