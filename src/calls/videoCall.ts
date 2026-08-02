@@ -49,6 +49,13 @@ export interface VideoCallHandlers {
   onNeedsAudioStart(resume: () => Promise<void>): void;
   /** Remote camera track arrived/left — the UI attaches/detaches the element. */
   onRemoteVideo(el: HTMLVideoElement | null): void;
+  /**
+   * The remote has a camera track PUBLISHED (whether or not its frames have
+   * arrived yet). Lets the UI tell "their camera is off" apart from "their video
+   * isn't coming through" (a one-way media/relay problem) instead of failing
+   * silently.
+   */
+  onRemoteVideoExpected?(expected: boolean): void;
   /** Local camera enabled/disabled reflected back for the mirror preview. */
   onLocalVideo(el: HTMLVideoElement | null): void;
   /** A local device (camera/mic) was lost mid-call. */
@@ -182,6 +189,26 @@ export async function connectVideoCall(
       if (!room.canPlaybackAudio) handlers.onNeedsAudioStart(() => room.startAudio());
     });
 
+  // Whether any remote participant is currently publishing a camera track. The
+  // UI uses this to distinguish a deliberate camera-off from video that has been
+  // published but isn't arriving (a one-way media problem).
+  const remoteHasCameraPub = () => {
+    for (const p of room.remoteParticipants.values()) {
+      for (const pub of p.trackPublications.values()) {
+        if (pub.source === Track.Source.Camera) return true;
+      }
+    }
+    return false;
+  };
+  const emitExpected = () => handlers.onRemoteVideoExpected?.(remoteHasCameraPub());
+  // Only NEW events here — the existing chain already handles subscribe/presence,
+  // and re-registering those would replace their handlers under a single-listener
+  // emitter. TrackPublished/TrackUnpublished tell us a camera exists before (or
+  // without) its frames arriving; the connect loop below emits the initial state.
+  room
+    .on(RoomEvent.TrackPublished, emitExpected)
+    .on(RoomEvent.TrackUnpublished, emitExpected);
+
   setState('connecting');
   try {
     await room.connect(prepared.serverUrl, prepared.token, { autoSubscribe: true });
@@ -228,6 +255,7 @@ export async function connectVideoCall(
       if (rp.track) attachRemote(rp.track);
     }
   }
+  emitExpected();
 
   return {
     state: () => state,

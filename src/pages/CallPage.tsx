@@ -106,6 +106,8 @@ export default function CallPage() {
   const [remoteName, setRemoteName] = useState<string | null>(null);
   const [remoteMuted, setRemoteMuted] = useState(false);
   const [remoteHasVideo, setRemoteHasVideo] = useState(false);
+  const [remoteVideoExpected, setRemoteVideoExpected] = useState(false);
+  const [remoteVideoStalled, setRemoteVideoStalled] = useState(false);
   const [muted, setMuted] = useState(false);
   const [cameraOn, setCameraOn] = useState(true);
   const [quality, setQuality] = useState<VideoQuality>('unknown');
@@ -197,13 +199,14 @@ export default function CallPage() {
     onState: setConnState,
     onRemotePresence: (connected: boolean, name: string | null) => {
       setRemotePresent(connected); setRemoteName(name);
-      if (!connected) { setRemoteMuted(false); setRemoteHasVideo(false); attachTo(remoteStageRef, null); }
+      if (!connected) { setRemoteMuted(false); setRemoteHasVideo(false); setRemoteVideoExpected(false); attachTo(remoteStageRef, null); }
     },
     onRemoteMuted: setRemoteMuted,
     onQuality: setQuality,
     onError: (m: string) => setCallError(m),
     onNeedsAudioStart: (resume: () => Promise<void>) => setResumeAudio(() => resume),
     onRemoteVideo: (el: HTMLVideoElement | null) => { setRemoteHasVideo(!!el); attachTo(remoteStageRef, el); },
+    onRemoteVideoExpected: (expected: boolean) => setRemoteVideoExpected(expected),
     onLocalVideo: (el: HTMLVideoElement | null) => attachTo(localInsetRef, el),
     onLocalDeviceLost: (kind: 'camera' | 'microphone') => {
       if (kind === 'camera') { setCameraOn(false); setCallError('Your camera was disconnected. You can continue with audio.'); }
@@ -258,6 +261,17 @@ export default function CallPage() {
 
   // Clean up on unmount / route change so a stale room + token never linger.
   useEffect(() => () => { void callRef.current?.disconnect().catch(() => {}); callRef.current = null; }, []);
+
+  // One-way video guard: the remote is publishing a camera but its frames aren't
+  // arriving after a few seconds. Surface it instead of a silent black frame.
+  useEffect(() => {
+    if (!(connState === 'connected' && remotePresent && remoteVideoExpected && !remoteHasVideo)) {
+      setRemoteVideoStalled(false);
+      return;
+    }
+    const t = setTimeout(() => setRemoteVideoStalled(true), 6000);
+    return () => clearTimeout(t);
+  }, [connState, remotePresent, remoteVideoExpected, remoteHasVideo]);
 
   const toggleMute = useCallback(async () => {
     const next = !muted; setMuted(next);
@@ -486,9 +500,11 @@ export default function CallPage() {
               <p className="call-peer-sub" aria-live="polite">
                 {waiting
                   ? 'Waiting for them to join…'
-                  : remoteMuted
-                    ? 'Connected · their microphone is muted · camera off'
-                    : 'Connected · their camera is off'}
+                  : remoteVideoExpected
+                    ? 'Connected · their video isn’t coming through yet…'
+                    : remoteMuted
+                      ? 'Connected · their microphone is muted · camera off'
+                      : 'Connected · their camera is off'}
               </p>
             </div>
           </div>
@@ -528,6 +544,12 @@ export default function CallPage() {
             </button>
           )}
           {callError && <div className="call-toast call-toast-danger" role="alert">{callError}</div>}
+          {remoteVideoStalled && !remoteHasVideo && (
+            <div className="call-toast call-toast-warn" role="status">
+              You’re connected, but their video isn’t coming through. They may need to check their camera
+              permission or connection — you can keep talking on audio.
+            </div>
+          )}
           {!waiting && connState === 'connected' && quality === 'poor' && (
             <div className="call-toast" role="status">Weak connection — video may pause briefly.</div>
           )}
