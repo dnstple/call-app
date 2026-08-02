@@ -114,6 +114,22 @@ function pickVideoTier(): { resolution: typeof VideoPresets.h720.resolution; enc
   return { resolution: VideoPresets.h1080.resolution, encoding: VideoPresets.h1080.encoding, layers: [VideoPresets.h360, VideoPresets.h720] };
 }
 
+/**
+ * All iOS browsers (and desktop Safari) run on Apple WebKit, which cannot
+ * reliably ENCODE VP8 simulcast — the camera publishes a track that produces no
+ * frames, so the far side sees black with no error while our side still decodes
+ * their VP8 fine (one-way video). WebKit hardware-encodes H.264, so those
+ * senders publish a single H.264 layer instead. Receiving is unaffected.
+ */
+function isAppleWebkit(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  const nav = navigator as Navigator & { maxTouchPoints?: number };
+  const iOS = /iPad|iPhone|iPod/.test(ua) || (nav.platform === 'MacIntel' && (nav.maxTouchPoints ?? 0) > 1);
+  const desktopSafari = /^((?!chrome|crios|chromium|android|fxios|edg).)*safari/i.test(ua);
+  return iOS || desktopSafari;
+}
+
 /** Connect the prepared session with optional camera. */
 export async function connectVideoCall(
   prepared: CallTokenResult,
@@ -136,6 +152,9 @@ export async function connectVideoCall(
   // element isn't visibly sized yet, which was a cause of a permanently BLACK
   // canvas. Network adaptation above does not depend on it.
   const tier = pickVideoTier();
+  // Apple WebKit senders must publish H.264 (single layer) — see isAppleWebkit.
+  // Everyone else publishes a VP8 simulcast ladder for graceful downlink scaling.
+  const appleWebkit = isAppleWebkit();
   const room = new Room({
     adaptiveStream: false,
     dynacast: true,
@@ -143,10 +162,10 @@ export async function connectVideoCall(
       resolution: tier.resolution,
     },
     publishDefaults: {
-      simulcast: true,
-      videoCodec: 'vp8',
+      simulcast: !appleWebkit,
+      videoCodec: appleWebkit ? 'h264' : 'vp8',
       videoEncoding: tier.encoding,
-      videoSimulcastLayers: tier.layers,
+      videoSimulcastLayers: appleWebkit ? [] : tier.layers,
     },
   });
   let state: VideoConnectionState = 'connecting';
