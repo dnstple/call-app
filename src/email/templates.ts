@@ -17,6 +17,7 @@ const CATEGORY_FOOTER: Record<string, string> = {
   bookings: 'You’re receiving this about a conversation you have booked.',
   billing: 'You’re receiving this about a payment on your account.',
   safety: 'You’re receiving this because it concerns safety on the app.',
+  matches: 'You’re receiving this digest because match suggestions are turned on. You can turn them off any time in Settings.',
   system: 'You’re receiving this because of activity on your account.',
 };
 
@@ -39,7 +40,11 @@ export function renderEmail(row: OutboxEmail): RenderedEmail {
   return { ...row, text };
 }
 
-/** The set of template keys the enqueue trigger can produce (notification:<type>). */
+/**
+ * Template keys the pipeline can produce: per-notification mirrors
+ * (notification:<type>) and assembled digests (digest:<kind>, e.g. the match
+ * digest from 0117). Both render through the same deterministic wrapper.
+ */
 export function isKnownTemplate(templateKey: string): boolean {
-  return templateKey.startsWith('notification:');
+  return templateKey.startsWith('notification:') || templateKey.startsWith('digest:');
 }

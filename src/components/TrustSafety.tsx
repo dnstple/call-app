@@ -8,7 +8,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Flag, Shield, ShieldOff } from 'lucide-react';
 import {
   acknowledgeConsent, getMyConsentStatus, reportConcern, createBlock, removeBlock,
-  getMyNotificationPreferences, setMyNotificationPreferences,
+  getMyNotificationPreferences, setMyNotificationPreferences, setMyCommunicationPreferences,
   type ConsentItem, type ConcernCategory, type NotificationPreferences,
 } from '../repositories/trustRepository';
 
@@ -219,6 +219,7 @@ export function NotificationPreferencesPanel() {
   const [loadError, setLoadError] = useState<string | null>(null);
   // Remember the last change so an error can be retried without losing intent.
   const lastPatch = useRef<Partial<NotificationPreferences> | null>(null);
+  const redo = useRef<null | (() => void)>(null);   // retry works for either setter
   const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = async () => {
@@ -230,25 +231,52 @@ export function NotificationPreferencesPanel() {
   useEffect(() => { void load(); }, []);
   useEffect(() => () => { if (savedTimer.current) clearTimeout(savedTimer.current); }, []);
 
+  const onSaved = () => {
+    setStatus('saved');
+    if (savedTimer.current) clearTimeout(savedTimer.current);
+    savedTimer.current = setTimeout(() => setStatus('idle'), 2000);
+  };
+  const onErr = (e: unknown) => {
+    setStatus('error');
+    setError(e instanceof Error ? e.message : 'Could not save your change.');
+  };
+
   const update = async (patch: Partial<NotificationPreferences>) => {
     if (!prefs) return;
     lastPatch.current = patch;
+    redo.current = () => void update(patch);
+    const next = { ...prefs, ...patch };
+    setPrefs(next);
+    setStatus('saving');
+    setError(null);
+    try { await setMyNotificationPreferences(next); onSaved(); } catch (e) { onErr(e); }
+  };
+
+  // Digest opt-in + quiet hours travel through their own RPC (0116), so the
+  // 5-boolean email setter above is never disturbed.
+  const updateComm = async (
+    patch: Partial<Pick<NotificationPreferences, 'email_matches' | 'quiet_hours_start' | 'quiet_hours_end' | 'time_zone'>>,
+  ) => {
+    if (!prefs) return;
+    redo.current = () => void updateComm(patch);
     const next = { ...prefs, ...patch };
     setPrefs(next);
     setStatus('saving');
     setError(null);
     try {
-      await setMyNotificationPreferences(next);
-      setStatus('saved');
-      if (savedTimer.current) clearTimeout(savedTimer.current);
-      savedTimer.current = setTimeout(() => setStatus('idle'), 2000);
-    } catch (e) {
-      setStatus('error');
-      setError(e instanceof Error ? e.message : 'Could not save your change.');
-    }
+      await setMyCommunicationPreferences({
+        email_matches: next.email_matches ?? true,
+        quiet_hours_start: next.quiet_hours_start ?? null,
+        quiet_hours_end: next.quiet_hours_end ?? null,
+        time_zone: next.time_zone
+          || (typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : '')
+          || 'Europe/London',
+      });
+      onSaved();
+    } catch (e) { onErr(e); }
   };
 
-  const retry = () => { if (lastPatch.current) void update(lastPatch.current); };
+  const retry = () => { redo.current?.(); };
 
   const busy = status === 'saving';
 
@@ -325,6 +353,61 @@ export function NotificationPreferencesPanel() {
             {row('Bookings & reminders', 'Requests, confirmations, changes and upcoming-conversation reminders.', 'email_bookings', !prefs.email_enabled)}
             {row('Billing & payments', 'Receipts, upcoming charges and payment issues.', 'email_billing', !prefs.email_enabled)}
             {row('Safety & support', 'Updates on concerns you raise and important account-safety notices.', 'email_safety', !prefs.email_enabled)}
+            <label className="switch-row" style={{ alignItems: 'flex-start', gap: 'var(--space-4)' }}>
+              <span className="col" style={{ gap: 2 }}>
+                <span className="bold">Suggestions &amp; introductions</span>
+                <span className="faint small">
+                  An occasional digest — at most one a week — when new companions share your interests, or members
+                  who follow you do. Never one email per suggestion.
+                </span>
+              </span>
+              <span className="switch" style={{ flexShrink: 0, marginTop: 2 }}>
+                <input
+                  type="checkbox"
+                  checked={prefs.email_matches !== false}
+                  disabled={busy || !prefs.email_enabled}
+                  aria-label="Suggestions and introductions digest"
+                  onChange={(e) => void updateComm({ email_matches: e.target.checked })}
+                />
+                <span className="track" />
+              </span>
+            </label>
+          </div>
+
+          <div className="field mt-4">
+            <label className="bold" htmlFor="quiet-start">Quiet hours</label>
+            <p className="faint small" style={{ marginTop: 2 }}>
+              We won’t send the suggestions digest during these hours, in your local time.
+            </p>
+            <div className="row" style={{ gap: 'var(--space-3)', alignItems: 'center' }}>
+              <select
+                id="quiet-start"
+                aria-label="Quiet hours start"
+                disabled={busy || !prefs.email_enabled}
+                value={prefs.quiet_hours_start ?? ''}
+                onChange={(e) => void updateComm({
+                  quiet_hours_start: e.target.value === '' ? null : Number(e.target.value),
+                  quiet_hours_end: e.target.value === '' ? null : (prefs.quiet_hours_end ?? 7),
+                })}
+              >
+                <option value="">Off</option>
+                {Array.from({ length: 24 }, (_, h) => (
+                  <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>
+                ))}
+              </select>
+              <span className="faint small">to</span>
+              <select
+                aria-label="Quiet hours end"
+                disabled={busy || !prefs.email_enabled || prefs.quiet_hours_start == null}
+                value={prefs.quiet_hours_end ?? ''}
+                onChange={(e) => void updateComm({ quiet_hours_end: e.target.value === '' ? null : Number(e.target.value) })}
+              >
+                <option value="">—</option>
+                {Array.from({ length: 24 }, (_, h) => (
+                  <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
       </div>

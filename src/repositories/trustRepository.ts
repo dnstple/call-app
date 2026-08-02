@@ -113,6 +113,12 @@ export async function supportBlockConflicts(): Promise<BlockConflictRow[]> {
 export interface NotificationPreferences {
   email_enabled: boolean; email_messages: boolean; email_bookings: boolean;
   email_billing: boolean; email_safety: boolean;
+  // Communications: the quiet match/introduction digest (0116). Optional so the
+  // type stays compatible with any older reader; the getter always returns them.
+  email_matches?: boolean;
+  quiet_hours_start?: number | null;
+  quiet_hours_end?: number | null;
+  time_zone?: string;
 }
 export async function getMyNotificationPreferences(): Promise<NotificationPreferences> {
   const { data, error } = await db().rpc('get_my_notification_preferences');
@@ -123,6 +129,18 @@ export async function setMyNotificationPreferences(p: NotificationPreferences): 
   const { error } = await db().rpc('set_my_notification_preferences', {
     p_email_enabled: p.email_enabled, p_messages: p.email_messages, p_bookings: p.email_bookings,
     p_billing: p.email_billing, p_safety: p.email_safety,
+  });
+  if (error) throw fail(error);
+}
+/** Digest opt-in + quiet hours. Separate RPC so the email-category setter above is untouched. */
+export async function setMyCommunicationPreferences(p: {
+  email_matches: boolean; quiet_hours_start: number | null; quiet_hours_end: number | null; time_zone: string;
+}): Promise<void> {
+  const { error } = await db().rpc('set_my_communication_preferences', {
+    p_email_matches: p.email_matches,
+    p_quiet_start: p.quiet_hours_start,
+    p_quiet_end: p.quiet_hours_end,
+    p_time_zone: p.time_zone,
   });
   if (error) throw fail(error);
 }
