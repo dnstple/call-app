@@ -92,6 +92,8 @@ export function NotificationsSupabase() {
     if (n.conversationId) navigate(`/messages/${n.conversationId}`);
     else if (n.planId) navigate(`/plans/${n.planId}`);
     else if (n.bookingId) navigate(`/conversations/${n.bookingId}`);
+    // Match / introduction suggestions live on the home page.
+    else if (n.kind === 'match_available' || n.kind === 'companion_introduction_suggested') navigate('/');
   };
 
   const markAll = async () => {
