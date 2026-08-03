@@ -205,21 +205,17 @@ export default function LandingPage() {
           <Sparkles size={28} aria-hidden="true" className="landing-center-icon" />
           <h2>{c.regular.title}</h2>
           <p className="landing-center-lede">{c.regular.body}</p>
-          <LandingImage slot={landingImages.regular} className="landing-band-photo" />
           <Link to={startTo} className="btn btn-primary btn-large">{c.regular.cta}</Link>
         </div>
       </section>
 
-      {/* Trial — image left */}
+      {/* Trial — centred */}
       <section className="landing-section">
-        <div className="landing-container landing-split">
-          <LandingImage slot={landingImages.trial} />
-          <div className="landing-split-text">
-            <span className="section-label">{c.trial.label}</span>
-            <h2>{c.trial.title}</h2>
-            <p>{c.trial.body}</p>
-            <Link to={startTo} className="btn btn-secondary btn-large">{c.trial.cta}</Link>
-          </div>
+        <div className="landing-container landing-center">
+          <span className="section-label">{c.trial.label}</span>
+          <h2>{c.trial.title}</h2>
+          <p className="landing-center-lede">{c.trial.body}</p>
+          <Link to={startTo} className="btn btn-secondary btn-large">{c.trial.cta}</Link>
         </div>
       </section>
 
