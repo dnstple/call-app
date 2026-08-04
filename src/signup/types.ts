@@ -127,7 +127,10 @@ export const NOTIF_CHANNEL_OPTIONS = ['In-app notification', 'Email', 'Text mess
 /** Steps per role. 'role' is always first; 'success' is always last. */
 export const STEP_SEQUENCES: Record<Role, string[]> = {
   member: ['role', 'details', 'interests', 'prefs', 'availability', 'comfort', 'notifications', 'review', 'success'],
-  companion: ['role', 'details', 'intro', 'interests', 'languages', 'availability', 'pricing', 'packages', 'trust', 'review', 'success'],
+  // Pricing and packages are set in the Companion dashboard AFTER approval —
+  // they are deliberately NOT part of signup (motivation, style and verification
+  // matter more during onboarding than asking an unapproved Companion to price).
+  companion: ['role', 'details', 'intro', 'interests', 'languages', 'availability', 'trust', 'review', 'success'],
   coordinator: ['role', 'about', 'memberDetails', 'permission', 'interests', 'prefs', 'availability', 'matching', 'notifRouting', 'review', 'success'],
 };
 

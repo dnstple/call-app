@@ -417,7 +417,7 @@ export default function SignupWizard() {
                 {AGE_RANGE_OPTIONS.map((a) => <option key={a} value={a}>{a}</option>)}
               </select>
             </div>
-            <FormField id="su-town" label="Town or city" value={data.town} onChange={(v) => patch({ town: v })} placeholder="e.g. Harrogate" />
+            <FormField id="su-town" label="Town or city" value={data.town} onChange={(v) => patch({ town: v })} placeholder="e.g. Harrogate" hint="Your approximate location helps people connect over local knowledge. Your exact address is never shown." />
           </SignupStep>
         )}
 
@@ -442,9 +442,9 @@ export default function SignupWizard() {
               hint="Companions must be at least 18."
               error={fieldError(!isAdult(data.dob), !data.dob ? 'Needed' : 'You must be at least 18')}
             />
-            <FormField id="su-town" label="Town or city" value={data.town} onChange={(v) => patch({ town: v })} />
+            <FormField id="su-town" label="Town or city" value={data.town} onChange={(v) => patch({ town: v })} hint="Your approximate location helps people connect over local knowledge. Your exact address is never shown." />
             <div className="field" style={{ marginBottom: 0 }}>
-              <label htmlFor="su-photo">Profile photo</label>
+              <label htmlFor="su-photo">Profile photo (optional)</label>
               <div className="row" style={{ gap: 16 }}>
                 {data.photoDataUrl ? (
                   <img src={data.photoDataUrl} alt="Your chosen profile photo" width={72} height={72} style={{ borderRadius: '50%', objectFit: 'cover' }} />
@@ -467,7 +467,7 @@ export default function SignupWizard() {
                       reader.readAsDataURL(file);
                     }}
                   />
-                  <span className="hint">Kept on this device until you finish signing up.</span>
+                  <span className="hint">Optional now — a profile photo is required before your profile can be approved. Kept on this device until you finish signing up.</span>
                   {data.photoDataUrl && (
                     <button className="btn btn-ghost btn-small" style={{ alignSelf: 'flex-start' }} onClick={() => patch({ photoDataUrl: '' })}>
                       Remove photo
@@ -1162,14 +1162,8 @@ function ReviewStep({
             </ReviewSection>
           )}
           {role === 'companion' && (
-            <ReviewSection
-              title={isSupabaseMode() ? 'Pricing & packages (draft — goes live with booking)' : 'Pricing & packages'}
-              onEdit={() => jumpTo('pricing')}
-            >
-              <ReviewRow label="Trial call" value={`£${data.trialPrice} (no platform fee)`} />
-              <ReviewRow label="30 minutes" value={`£${data.standardPrice}`} />
-              {fee && <ReviewRow label="You receive" value={`${formatPence(fee.netPence)} after the ${fee.commissionPct}% fee`} />}
-              <ReviewRow label="Packages" value={data.packages.length > 0 ? data.packages.map((p) => p.title).join('; ') : 'None yet'} />
+            <ReviewSection title="After approval" onEdit={undefined}>
+              <ReviewRow label="Pricing & packages" value="You’ll set these in your dashboard once your profile is approved." />
             </ReviewSection>
           )}
         </>
