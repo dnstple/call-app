@@ -136,11 +136,10 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* For families / Coordinators — moved above How it works */}
+      {/* For families / Coordinators — text only (image moved to the Companion section) */}
       <section className="landing-section landing-section-muted">
-        <div className="landing-container landing-split">
-          <LandingImage slot={landingImages.coordinator} />
-          <div className="landing-split-text">
+        <div className="landing-container">
+          <div className="landing-split-text landing-solo-text">
             <span className="section-label">{c.coordinator.label}</span>
             <h2>{c.coordinator.title}</h2>
             <p>{c.coordinator.body}</p>
@@ -237,10 +236,11 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Become a Companion — text only */}
+      {/* Become a Companion — centred split, image left on desktop / above on mobile */}
       <section className="landing-section">
-        <div className="landing-container">
-          <div className="landing-split-text landing-solo-text">
+        <div className="landing-container landing-split">
+          <LandingImage slot={landingImages.coordinator} />
+          <div className="landing-split-text">
             <span className="section-label">{c.companion.label}</span>
             <h2>{c.companion.title}</h2>
             <p>{c.companion.body}</p>
