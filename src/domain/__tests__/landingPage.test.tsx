@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 /**
- * Public landing page (Block 12).
+ * Public homepage.
  *
- * Proves the 13-section marketing page renders, links to the real auth/start
- * routes, and — importantly — makes NO invented claims (no testimonials, user
- * counts, outcome statistics, certifications, response-time promises, review
- * scores, or press logos).
+ * Proves the redesigned, typography-led page renders its sections, links to the
+ * real auth/start routes, uses an accessible button accordion, and — importantly
+ * — makes NO invented claims (no testimonials, user counts, outcome statistics,
+ * certifications, response-time promises, review scores, or press logos).
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, render, screen, within } from '@testing-library/react';
@@ -23,45 +23,49 @@ function renderLanding() {
 afterEach(() => cleanup());
 
 describe('public landing page', () => {
-  it('renders the hero headline and all major sections', () => {
+  it('renders one h1 and all major section headings', () => {
     renderLanding();
-    expect(screen.getByRole('heading', { level: 1 })).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 1, name: /A conversation to look forward to\./i })).toBeTruthy();
     for (const heading of [
-      /How it works/i,
-      /Stay involved, even when you cannot always be there/i,
-      /Talk to someone you choose, about the things you enjoy/i,
-      /A familiar conversation, arranged around the person/i,
-      /Clear roles\. Clear boundaries\./i,
-      /Earn flexibly through meaningful conversation/i,
+      /Start with one conversation/i,
+      /For yourself, or for someone you care about/i,
+      /Designed around choice, comfort and clear boundaries/i,
+      /A social service with clear boundaries/i,
+      /Bring curiosity, warmth and consistency to the conversation/i,
       /Questions, answered/i,
+      /Questions\? Get in touch/i,
     ]) {
       expect(screen.getByRole('heading', { name: heading })).toBeTruthy();
     }
-    // The hero headline, with a feature strip beneath it.
-    expect(screen.getByRole('heading', { level: 1, name: /Companionship for your loved ones/i })).toBeTruthy();
-    expect(document.body.textContent ?? '').toMatch(/Choose your own Companion/i);
   });
 
-  it('uses the approved marketing copy (hero + section wording, verbatim)', () => {
+  it('uses the approved hero + reassurance copy', () => {
     renderLanding();
     const text = document.body.textContent ?? '';
-    expect(text).toMatch(/Apricoti helps you arrange friendly video conversations for someone you care about/i);
-    expect(text).toMatch(/Start with one conversation\. Continue if it feels right/i);
-    expect(text).toMatch(/arrange regular conversations for someone you care about with a trusted Companion/i);
-    expect(text).toMatch(/Each Member can book one paid trial with each Companion/i);
-    // Terminology preserved; no alarmist / clinical claims.
+    expect(text).toMatch(/Apricoti helps people find a Companion for friendly, scheduled video conversations/i);
+    expect(text).toMatch(/Start with one paid trial\. Continue only if it feels right/i);
+    expect(text).toMatch(/Choose your own Companion/i);
     expect(text).toMatch(/Companion/);
     expect(text).not.toMatch(/loneliness kills/i);
+    expect(text).not.toMatch(/\bthe elderly\b/i);
   });
 
-  it('every call-to-action links to a real start or sign-in route', () => {
+  it('shows the support email as a mailto link in contact and footer', () => {
+    renderLanding();
+    const mailtos = screen.getAllByRole('link', { name: /info@apricoti\.co\.uk/i });
+    expect(mailtos.length).toBeGreaterThanOrEqual(1);
+    for (const l of mailtos) expect(l.getAttribute('href')).toBe('mailto:info@apricoti.co.uk');
+    // Present in the footer specifically.
+    const footer = document.querySelector('.landing-footer') as HTMLElement;
+    expect(within(footer).getByRole('link', { name: /info@apricoti\.co\.uk/i })).toBeTruthy();
+  });
+
+  it('every link points somewhere real (start/sign-in routes, anchors or mailto)', () => {
     renderLanding();
     const links = screen.getAllByRole('link');
     const targets = new Set(links.map((l) => l.getAttribute('href')));
-    // Start route is /signup in the test (mock) data mode.
     expect([...targets].some((t) => t === '/signup' || t === '/register')).toBe(true);
     expect(targets.has('/login')).toBe(true);
-    // No dead/placeholder links.
     for (const l of links) {
       const href = l.getAttribute('href') ?? '';
       expect(href).not.toBe('');
@@ -69,17 +73,19 @@ describe('public landing page', () => {
     }
   });
 
-  it('the FAQ entries are accessible native disclosures', () => {
+  it('uses an accessible button accordion for the FAQ', () => {
     renderLanding();
-    // Native <summary> disclosure toggles (keyboard-accessible by default).
-    const summaries = document.querySelectorAll('.landing-faq-item summary');
-    expect(summaries.length).toBeGreaterThanOrEqual(4);
+    const buttons = document.querySelectorAll('.landing-faq-btn');
+    expect(buttons.length).toBeGreaterThanOrEqual(4);
+    for (const b of buttons) expect(b.getAttribute('aria-expanded')).toMatch(/true|false/);
+    // Exactly one open by default → one region is not hidden.
+    const open = [...buttons].filter((b) => b.getAttribute('aria-expanded') === 'true');
+    expect(open.length).toBe(1);
   });
 
   it('makes no invented testimonials, counts, or credentials', () => {
     renderLanding();
     const text = document.body.textContent ?? '';
-    // No fabricated social proof / metrics language.
     expect(text).not.toMatch(/\d[\d,]*\s*(?:\+|k|m)?\s*(?:users|members|families|companions|conversations|reviews|calls)\b/i);
     expect(text).not.toMatch(/testimonial|\brated\b|stars?\b|out of 5|award|certified|accredited|trusted by|as seen|\bpress\b/i);
     expect(text).not.toMatch(/\b\d+%\s*(?:satisfaction|happy|success|response)/i);
@@ -89,7 +95,7 @@ describe('public landing page', () => {
     renderLanding();
     const header = document.querySelector('.landing-header') as HTMLElement;
     expect(header).toBeTruthy();
-    expect(within(header).getByRole('link', { name: /Sign in/i })).toBeTruthy();
+    expect(within(header).getAllByRole('link', { name: /Sign in/i }).length).toBeGreaterThanOrEqual(1);
     expect(within(header).getByRole('link', { name: /Find a Companion/i })).toBeTruthy();
   });
 });
