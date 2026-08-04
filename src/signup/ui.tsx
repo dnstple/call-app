@@ -181,6 +181,7 @@ export function FormField({
   error,
   maxLength,
   placeholder,
+  listId,
 }: {
   id: string;
   label: string;
@@ -191,6 +192,7 @@ export function FormField({
   error?: string;
   maxLength?: number;
   placeholder?: string;
+  listId?: string;
 }) {
   return (
     <div className="field" style={{ marginBottom: 0 }}>
@@ -201,6 +203,7 @@ export function FormField({
         value={value}
         maxLength={maxLength}
         placeholder={placeholder}
+        list={listId}
         onChange={(e) => onChange(e.target.value)}
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? `${id}-error` : hint ? `${id}-hint` : undefined}

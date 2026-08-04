@@ -40,6 +40,7 @@ import {
   type PackageDraft,
   type SignupData,
 } from './types';
+import { COUNTRIES } from '../domain/countries';
 import { clearDraft, demoData, loadDraft, markSignupSeen, saveDraft } from './storage';
 import { createAccountsFromSignup, type CreatedAccounts } from './complete';
 import { completeSupabaseSignup } from './completeSupabase';
@@ -419,7 +420,10 @@ export default function SignupWizard() {
             </div>
             <FormField id="su-preferred" label="Preferred name (optional)" value={data.preferredName} onChange={(v) => patch({ preferredName: v })} hint="What you’d like to be called, if different from your first name." />
             <FormField id="su-town" label="Town or city" value={data.town} onChange={(v) => patch({ town: v })} placeholder="e.g. Harrogate" hint="Your approximate location helps people connect over local knowledge. Your exact address is never shown." />
-            <FormField id="su-country" label="Country of residence" value={data.countryOfResidence} onChange={(v) => patch({ countryOfResidence: v })} placeholder="e.g. United Kingdom" hint="Helps with time zones, payment and eligibility. Not shown publicly." />
+            <FormField id="su-country" label="Country of residence" value={data.countryOfResidence} onChange={(v) => patch({ countryOfResidence: v })} placeholder="Start typing a country…" hint="Helps with time zones, payment and eligibility. Not shown publicly." listId="country-list" />
+            <datalist id="country-list">
+              {COUNTRIES.map((ctry) => <option key={ctry} value={ctry} />)}
+            </datalist>
             <div className="field" style={{ marginBottom: 0 }}>
               <label htmlFor="su-places">Places and cultures you feel connected to (optional)</label>
               <input id="su-places" value={data.connectedPlaces} onChange={(e) => patch({ connectedPlaces: e.target.value })} placeholder="e.g. Jamaica, Yorkshire, Italy" />
@@ -451,7 +455,10 @@ export default function SignupWizard() {
             />
             <FormField id="su-preferred" label="Preferred name (optional)" value={data.preferredName} onChange={(v) => patch({ preferredName: v })} hint="What you’d like to be called, if different from your first name." />
             <FormField id="su-town" label="Town or city" value={data.town} onChange={(v) => patch({ town: v })} hint="Your approximate location helps people connect over local knowledge. Your exact address is never shown." />
-            <FormField id="su-country" label="Country of residence" value={data.countryOfResidence} onChange={(v) => patch({ countryOfResidence: v })} placeholder="e.g. United Kingdom" hint="Helps with time zones, payment and eligibility. Not shown publicly." />
+            <FormField id="su-country" label="Country of residence" value={data.countryOfResidence} onChange={(v) => patch({ countryOfResidence: v })} placeholder="Start typing a country…" hint="Helps with time zones, payment and eligibility. Not shown publicly." listId="country-list" />
+            <datalist id="country-list">
+              {COUNTRIES.map((ctry) => <option key={ctry} value={ctry} />)}
+            </datalist>
             <div className="field">
               <label htmlFor="su-places">Places and cultures you feel connected to (optional)</label>
               <input id="su-places" value={data.connectedPlaces} onChange={(e) => patch({ connectedPlaces: e.target.value })} placeholder="e.g. Jamaica, Yorkshire, Italy" />
