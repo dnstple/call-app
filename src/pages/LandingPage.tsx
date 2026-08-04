@@ -1,23 +1,21 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
-import {
-  ArrowRight, CalendarClock, ChevronDown, Compass, CreditCard, HeartHandshake, Leaf, Lock,
-  Mail, Menu, Sparkles, Tag, UserRound, Video, X,
-} from 'lucide-react';
+import { CheckCircle2, Mail, Shield, Sparkles, Tag, UserRound, Video } from 'lucide-react';
 import { APP_NAME } from '../config/branding';
 import { isSupabaseMode } from '../config/dataMode';
 import { publicLaunchMode, type LaunchMode } from '../repositories/accessRepository';
 import { ContactForm } from '../components/ContactForm';
-import { landingCopy, landingMeta, SUPPORT_EMAIL } from '../content/landingContent';
+import { landingCopy, landingImages, SUPPORT_EMAIL, type LandingImageSlot } from '../content/landingContent';
 
 /**
- * Public homepage (signed-out). Typography-led, no photography: warm neutral
- * canvas, charcoal headings, apricot reserved for the logo, primary buttons and
- * small accents. The hero visual is a small, decorative, code-native product
- * composition (aria-hidden). All CTAs use the real application routes; index.html's
- * noindex,nofollow is preserved during the controlled pilot.
+ * The signed-out landing page adapts to the authoritative launch mode
+ * (public.public_launch_mode). During the companion_waitlist launch the primary
+ * action is "Apply to become a Companion" and Member/Coordinator access is shown
+ * as invitation-only — public booking is never implied. Invited sign-up links
+ * keep working throughout. index.html's noindex,nofollow is preserved.
  */
 function useLaunchMode(): LaunchMode {
+  // Local preview (mock mode) has no pilot — show the open experience.
   const [mode, setMode] = useState<LaunchMode>(isSupabaseMode() ? 'companion_waitlist' : 'public');
   useEffect(() => {
     if (!isSupabaseMode()) return;
@@ -28,79 +26,62 @@ function useLaunchMode(): LaunchMode {
   return mode;
 }
 
-/** Sets the document title + meta description for the public homepage. */
-function usePageMeta() {
-  useEffect(() => {
-    const prevTitle = document.title;
-    document.title = landingMeta.title;
-    let meta = document.querySelector('meta[name="description"]');
-    const created = !meta;
-    if (!meta) { meta = document.createElement('meta'); meta.setAttribute('name', 'description'); document.head.appendChild(meta); }
-    const prevDesc = meta.getAttribute('content');
-    meta.setAttribute('content', landingMeta.description);
-    return () => {
-      document.title = prevTitle;
-      if (created) meta?.remove();
-      else if (prevDesc !== null) meta?.setAttribute('content', prevDesc);
-    };
-  }, []);
-}
+/**
+ * Public landing page (Block 12 + closeout Sections 9–10).
+ *
+ * Copy is sourced from the approved product-scope document via
+ * src/content/landingContent.ts (vision, per-audience value propositions, the
+ * £5 trial, and the safety framing). Terminology (Member/Companion/Coordinator)
+ * is preserved; no testimonials, statistics, ratings, certifications or press
+ * are invented. Photography lives in replaceable image slots — set a slot's
+ * `src` in landingContent.ts to drop in real art; until then a neutral
+ * photo-frame placeholder renders (never developer text in the public UI).
+ *
+ * The page keeps index.html's noindex,nofollow during the controlled pilot.
+ */
 
-/** Small, decorative product motif — interface cards, no people or fake data. */
-function HeroVisual() {
+/** One replaceable image area. Real art → set slot.src in landingContent.ts. */
+function LandingImage({ slot, className }: { slot: LandingImageSlot; className?: string }) {
+  const style = {
+    aspectRatio: slot.aspectRatio,
+    ['--landing-object-position' as string]: slot.objectPosition,
+  } as CSSProperties;
+  if (slot.src) {
+    return (
+      <img
+        src={slot.src}
+        alt={slot.alt}
+        loading="lazy"
+        className={`landing-photo landing-photo-${slot.mobileTreatment} ${className ?? ''}`}
+        style={style}
+      />
+    );
+  }
+  // Neutral placeholder: a calm gradient frame, labelled for assistive tech,
+  // with an internal-only note that never shows to normal users.
   return (
-    <div className="landing-hero-visual" aria-hidden="true">
-      <div className="lv-card lv-interests">
-        <span className="lv-eyebrow"><Sparkles size={14} /> Shared interests</span>
-        <div className="lv-chips">
-          <span className="lv-chip">Gardening</span>
-          <span className="lv-chip">History</span>
-          <span className="lv-chip">Music</span>
-        </div>
-      </div>
-      <div className="lv-card lv-trial">
-        <span className="lv-icon"><Video size={18} /></span>
-        <div>
-          <span className="lv-title">Trial conversation</span>
-          <span className="lv-sub"><CalendarClock size={13} /> Thursday · 2:00 pm · 30 min</span>
-        </div>
-      </div>
-      <div className="lv-card lv-availability">
-        <span className="lv-eyebrow">Availability</span>
-        <div className="lv-week">
-          {['M', 'T', 'W', 'T', 'F'].map((d, i) => (
-            <span key={i} className={`lv-day${i === 1 || i === 3 ? ' is-on' : ''}`}>{d}</span>
-          ))}
-        </div>
-      </div>
-      <div className="lv-card lv-privacy">
-        <span className="lv-icon lv-icon-soft"><Lock size={16} /></span>
-        <span className="lv-title">Private by default</span>
-      </div>
+    <div
+      className={`landing-photo landing-photo-placeholder landing-tone-${slot.tone} ${className ?? ''}`}
+      style={style}
+      role="img"
+      aria-label={slot.alt}
+    >
+      <Sparkles size={26} aria-hidden="true" />
+      <span className="landing-photo-devnote" aria-hidden="true" data-dev-only>
+        Image: {slot.alt}
+      </span>
     </div>
   );
 }
 
-const REASSURE_ICONS = [UserRound, CreditCard, Tag, Video];
-const STEP_ICONS = [Compass, CalendarClock, HeartHandshake];
-const PRINCIPLE_ICONS = [Sparkles, Leaf, Lock];
-
 export default function LandingPage() {
   const c = landingCopy;
+  // Account creation starts registration in hosted mode; the local preview
+  // opens the sign-up wizard.
   const startTo = isSupabaseMode() ? '/register' : '/signup';
+  // The homepage looks and behaves normally (all roles can sign up); the only
+  // launch-mode effect is a single pilot flag shown while we're not fully public.
   const inPilot = useLaunchMode() !== 'public';
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [openFaq, setOpenFaq] = useState<number | null>(0);
-  usePageMeta();
-
-  const navLinks = (
-    <>
-      <a href="#how-it-works" onClick={() => setMenuOpen(false)}>How it works</a>
-      <a href="#safety" onClick={() => setMenuOpen(false)}>Safety</a>
-      <a href="#companions" onClick={() => setMenuOpen(false)}>For Companions</a>
-      <Link to="/login" onClick={() => setMenuOpen(false)}>Sign in</Link>
-    </>
-  );
 
   return (
     <div className="landing">
@@ -111,223 +92,229 @@ export default function LandingPage() {
             <img src="/icon.svg" alt="" className="landing-brand-mark" />
             <span className="landing-brand-name">{APP_NAME}</span>
           </Link>
-
-          <nav className="landing-nav" aria-label="Primary">{navLinks}</nav>
-
-          <div className="landing-header-actions">
-            <Link to="/login" className="btn btn-ghost landing-signin-desktop">Sign in</Link>
+          <nav className="landing-header-actions" aria-label="Account">
+            <Link to="/login" className="btn btn-ghost">Sign in</Link>
             <Link to={startTo} className="btn btn-primary">Find a Companion</Link>
-            <button
-              type="button"
-              className="landing-menu-toggle"
-              aria-expanded={menuOpen}
-              aria-controls="landing-mobile-nav"
-              aria-label={menuOpen ? 'Close menu' : 'Open menu'}
-              onClick={() => setMenuOpen((o) => !o)}
-            >
-              {menuOpen ? <X size={22} /> : <Menu size={22} />}
-            </button>
-          </div>
+          </nav>
         </div>
-        {menuOpen && (
-          <nav id="landing-mobile-nav" className="landing-mobile-nav" aria-label="Menu">{navLinks}</nav>
-        )}
       </header>
 
-      <main>
-        {/* Hero */}
-        <section className="landing-hero">
-          <div className="landing-container landing-hero-grid">
-            <div className="landing-hero-text">
-              <span className="landing-eyebrow">{c.hero.eyebrow}</span>
-              <h1>{c.hero.title}</h1>
-              <p className="landing-lede">{c.hero.lede}</p>
-              <div className="landing-cta-row">
-                <Link to={startTo} className="btn btn-primary btn-large">{c.hero.primary}</Link>
-                <Link to={startTo} className="btn btn-secondary btn-large">{c.hero.secondary}</Link>
+      {/* Hero — text + image, larger type and CTAs */}
+      <section className="landing-hero">
+        <div className="landing-container landing-hero-grid">
+          <div className="landing-hero-text">
+            <h1>{c.hero.title}</h1>
+            <p className="landing-lede">{c.hero.lede}</p>
+
+            {inPilot && (
+              <div className="landing-launch-note" role="note">
+                Apricoti is currently in a pilot. Please set up your profile while we roll out full
+                access gradually.
               </div>
-              <p className="landing-fineprint">{c.hero.supporting}</p>
-              {inPilot && (
-                <p className="landing-pilot-chip">
-                  <span className="landing-pilot-dot" aria-hidden="true" /> {c.hero.pilot}
-                </p>
-              )}
-            </div>
-            <HeroVisual />
-          </div>
-        </section>
+            )}
 
-        {/* Reassurance row */}
-        <section className="landing-reassure" aria-label="What Apricoti offers">
-          <div className="landing-container landing-reassure-row">
-            {c.reassurance.map((t, i) => {
-              const Icon = REASSURE_ICONS[i] ?? Sparkles;
-              return (
-                <span key={t} className="landing-reassure-item">
-                  <Icon size={18} aria-hidden="true" /> {t}
-                </span>
-              );
-            })}
+            <div className="landing-cta-row">
+              <Link to={startTo} className="btn btn-primary btn-large">Find a Companion</Link>
+              <Link to={startTo} className="btn btn-secondary btn-large">Become a Companion</Link>
+            </div>
+            <p className="landing-fineprint">{c.hero.fineprint}</p>
           </div>
-        </section>
+          <LandingImage slot={landingImages.hero} className="landing-hero-photo" />
+        </div>
+      </section>
 
-        {/* How it works */}
-        <section id="how-it-works" className="landing-section">
-          <div className="landing-container">
-            <div className="landing-section-head">
-              <h2>{c.how.title}</h2>
-              <p>{c.how.lede}</p>
-            </div>
-            <ol className="landing-steps">
-              {c.how.steps.map((s, i) => {
-                const Icon = STEP_ICONS[i] ?? Compass;
-                return (
-                  <li key={s.title} className="landing-step">
-                    <span className="landing-step-num" aria-hidden="true">{i + 1}</span>
-                    <span className="landing-step-icon" aria-hidden="true"><Icon size={20} /></span>
-                    <h3>{s.title}</h3>
-                    <p>{s.body}</p>
-                  </li>
-                );
-              })}
-            </ol>
-          </div>
-        </section>
+      {/* Feature / USP strip */}
+      <section className="landing-trust" aria-label="What Apricoti offers">
+        <div className="landing-container landing-trust-row">
+          {c.trust.map((t, i) => (
+            <span key={t} className="landing-trust-item">
+              {[<Video key="v" size={18} aria-hidden="true" />, <UserRound key="u" size={18} aria-hidden="true" />,
+                <Sparkles key="s" size={18} aria-hidden="true" />, <Tag key="t" size={18} aria-hidden="true" />][i]}
+              {' '}{t}
+            </span>
+          ))}
+        </div>
+      </section>
 
-        {/* Two audience pathways */}
-        <section className="landing-section landing-section-muted">
-          <div className="landing-container">
-            <div className="landing-section-head">
-              <h2>{c.audiences.title}</h2>
-            </div>
-            <div className="landing-pathways">
-              <div className="landing-panel">
-                <h3>{c.audiences.members.title}</h3>
-                <p>{c.audiences.members.body}</p>
-                <Link to={startTo} className="landing-textlink">
-                  {c.audiences.members.cta} <ArrowRight size={16} aria-hidden="true" />
-                </Link>
-              </div>
-              <div className="landing-panel">
-                <h3>{c.audiences.coordinators.title}</h3>
-                <p>{c.audiences.coordinators.body}</p>
-                <a href="#how-it-works" className="landing-textlink">
-                  {c.audiences.coordinators.cta} <ArrowRight size={16} aria-hidden="true" />
-                </a>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* What makes Apricoti different */}
-        <section className="landing-section">
-          <div className="landing-container">
-            <div className="landing-section-head">
-              <h2>{c.principles.title}</h2>
-            </div>
-            <div className="landing-principles">
-              {c.principles.items.map((p, i) => {
-                const Icon = PRINCIPLE_ICONS[i] ?? Sparkles;
-                return (
-                  <div key={p.title} className="landing-principle">
-                    <span className="landing-principle-icon" aria-hidden="true"><Icon size={20} /></span>
-                    <h3>{p.title}</h3>
-                    <p>{p.body}</p>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </section>
-
-        {/* Safety and boundaries */}
-        <section id="safety" className="landing-section landing-section-muted">
-          <div className="landing-container landing-safety">
-            <div className="landing-safety-text">
-              <span className="landing-eyebrow">Safety</span>
-              <h2>{c.safety.title}</h2>
-              <p>{c.safety.body}</p>
-            </div>
-            <ul className="landing-safety-list">
-              {c.safety.points.map((point) => (
-                <li key={point}><HeartHandshake size={18} aria-hidden="true" /> {point}</li>
+      {/* For families / Coordinators — moved above How it works */}
+      <section className="landing-section landing-section-muted">
+        <div className="landing-container landing-split">
+          <LandingImage slot={landingImages.coordinator} />
+          <div className="landing-split-text">
+            <span className="section-label">{c.coordinator.label}</span>
+            <h2>{c.coordinator.title}</h2>
+            <p>{c.coordinator.body}</p>
+            <ul className="landing-ticks">
+              {c.coordinator.ticks.map((t) => (
+                <li key={t}><CheckCircle2 size={18} aria-hidden="true" /> {t}</li>
               ))}
             </ul>
+            <Link to={startTo} className="btn btn-primary btn-large">{c.coordinator.cta}</Link>
           </div>
-        </section>
+        </div>
+      </section>
 
-        {/* Become a Companion */}
-        <section id="companions" className="landing-section">
-          <div className="landing-container landing-companion">
-            <div className="landing-companion-text">
-              <span className="landing-eyebrow">{c.companion.eyebrow}</span>
-              <h2>{c.companion.title}</h2>
-              <p>{c.companion.body}</p>
-              <Link to={startTo} className="btn btn-primary btn-large">{c.companion.cta}</Link>
-            </div>
-            <ul className="landing-benefits">
-              {c.companion.benefits.map((b) => (
-                <li key={b}><Sparkles size={16} aria-hidden="true" /> {b}</li>
+      {/* How it works — three steps, one row on desktop */}
+      <section className="landing-section">
+        <div className="landing-container">
+          <div className="landing-section-head">
+            <h2>How it works</h2>
+            <p>From first visit to a regular conversation.</p>
+          </div>
+          <ol className="landing-steps landing-steps-3">
+            <li className="card">
+              <span className="landing-step-num" aria-hidden="true">1</span>
+              <h3>Explore Companions</h3>
+              <p>Browse profiles and consider interests, conversation style, availability, languages and price.</p>
+            </li>
+            <li className="card">
+              <span className="landing-step-num" aria-hidden="true">2</span>
+              <h3>Start with a trial</h3>
+              <p>Book one paid video conversation at a time and see how the match feels.</p>
+            </li>
+            <li className="card">
+              <span className="landing-step-num" aria-hidden="true">3</span>
+              <h3>Make it regular</h3>
+              <p>When both people are happy, arrange future conversations around their availability.</p>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      {/* For self — text only (image removed) */}
+      <section className="landing-section">
+        <div className="landing-container">
+          <div className="landing-split-text landing-solo-text">
+            <span className="section-label">{c.self.label}</span>
+            <h2>{c.self.title}</h2>
+            <p>{c.self.body}</p>
+            <ul className="landing-ticks">
+              {c.self.ticks.map((t) => (
+                <li key={t}><CheckCircle2 size={18} aria-hidden="true" /> {t}</li>
               ))}
             </ul>
+            <Link to={startTo} className="btn btn-primary btn-large">{c.self.cta}</Link>
           </div>
-        </section>
+        </div>
+      </section>
 
-        {/* FAQ */}
-        <section className="landing-section landing-section-muted">
-          <div className="landing-container landing-faq">
-            <div className="landing-section-head">
-              <h2>Questions, answered</h2>
-            </div>
-            <div className="landing-accordion">
-              {c.faq.map((item, i) => {
-                const open = openFaq === i;
-                return (
-                  <div key={item.q} className="landing-faq-item">
-                    <h3 className="landing-faq-q">
-                      <button
-                        type="button"
-                        className="landing-faq-btn"
-                        aria-expanded={open}
-                        aria-controls={`faq-panel-${i}`}
-                        id={`faq-btn-${i}`}
-                        onClick={() => setOpenFaq(open ? null : i)}
-                      >
-                        <span>{item.q}</span>
-                        <ChevronDown size={18} aria-hidden="true" className={`landing-faq-chev${open ? ' is-open' : ''}`} />
-                      </button>
-                    </h3>
-                    <div
-                      id={`faq-panel-${i}`}
-                      role="region"
-                      aria-labelledby={`faq-btn-${i}`}
-                      className="landing-faq-panel"
-                      hidden={!open}
-                    >
-                      <p>{item.a}</p>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </section>
+      {/* Regular companionship — full-width image band */}
+      <section className="landing-section landing-section-brand">
+        <div className="landing-container landing-center">
+          <Sparkles size={28} aria-hidden="true" className="landing-center-icon" />
+          <h2>{c.regular.title}</h2>
+          <p className="landing-center-lede">{c.regular.body}</p>
+          <Link to={startTo} className="btn btn-primary btn-large">{c.regular.cta}</Link>
+        </div>
+      </section>
 
-        {/* Contact */}
-        <section id="contact" className="landing-section">
-          <div className="landing-container landing-contact">
-            <div className="landing-section-head">
-              <span className="landing-eyebrow">Contact</span>
-              <h2>{c.contact.title}</h2>
-              <p>{c.contact.body}</p>
-              <a href={`mailto:${SUPPORT_EMAIL}`} className="btn btn-secondary btn-large landing-email-btn">
-                <Mail size={18} aria-hidden="true" /> {SUPPORT_EMAIL}
-              </a>
-            </div>
-            <ContactForm />
+      {/* Trial — centred */}
+      <section className="landing-section">
+        <div className="landing-container landing-center">
+          <span className="section-label">{c.trial.label}</span>
+          <h2>{c.trial.title}</h2>
+          <p className="landing-center-lede">{c.trial.body}</p>
+          <Link to={startTo} className="btn btn-secondary btn-large">{c.trial.cta}</Link>
+        </div>
+      </section>
+
+      {/* Safety */}
+      <section className="landing-section landing-section-muted">
+        <div className="landing-container">
+          <div className="landing-section-head">
+            <Shield size={28} aria-hidden="true" className="landing-center-icon" />
+            <h2>{c.safety.title}</h2>
+            <p>{c.safety.body}</p>
           </div>
-        </section>
-      </main>
+          <div className="grid-cards landing-safety-grid">
+            {c.safety.cards.map((card) => (
+              <div key={card.title} className="card">
+                <h3>{card.title}</h3>
+                <p>{card.body}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Become a Companion — text only */}
+      <section className="landing-section">
+        <div className="landing-container">
+          <div className="landing-split-text landing-solo-text">
+            <span className="section-label">{c.companion.label}</span>
+            <h2>{c.companion.title}</h2>
+            <p>{c.companion.body}</p>
+            <ul className="landing-ticks">
+              {c.companion.ticks.map((t) => (
+                <li key={t}><CheckCircle2 size={18} aria-hidden="true" /> {t}</li>
+              ))}
+            </ul>
+            <Link to={startTo} className="btn btn-primary btn-large">{c.companion.cta}</Link>
+          </div>
+        </div>
+      </section>
+
+      {/* FAQ */}
+      <section className="landing-section landing-section-muted">
+        <div className="landing-container landing-faq">
+          <div className="landing-section-head">
+            <h2>Questions, answered</h2>
+          </div>
+          <details className="landing-faq-item">
+            <summary>What is a Companion?</summary>
+            <p>A Companion is someone who offers scheduled social conversations through Apricoti. They create a profile, set their availability and price, and talk with Members about everyday life and shared interests. They are not carers, therapists or medical professionals in this role.</p>
+          </details>
+          <details className="landing-faq-item">
+            <summary>Who are the conversations for?</summary>
+            <p>Apricoti is designed for adults who would enjoy more regular, friendly conversation. A Member can arrange conversations themselves, or a family member, friend or trusted person can help with permission.</p>
+          </details>
+          <details className="landing-faq-item">
+            <summary>Can I arrange conversations for somebody else?</summary>
+            <p>Yes. You can help create or manage a Member profile, explore Companions and arrange conversations for someone you care about. The Member should remain involved in the choice wherever possible.</p>
+          </details>
+          <details className="landing-faq-item">
+            <summary>How does a trial conversation work?</summary>
+            <p>Each Member can book one paid trial with each Companion. The length and price are shown before payment. A trial is a chance for both people to decide whether they would like to speak again.</p>
+          </details>
+          <details className="landing-faq-item">
+            <summary>Are Companions carers or therapists?</summary>
+            <p>No. Apricoti is for social companionship. Companions do not provide personal care, therapy, counselling, medical advice or emergency support.</p>
+          </details>
+          <details className="landing-faq-item">
+            <summary>How do payments work?</summary>
+            <p>The Companion’s price and any Apricoti service fee are shown before payment. Payments are taken through the platform. Companion payouts are handled separately after the completion checks are satisfied.</p>
+          </details>
+        </div>
+      </section>
+
+      {/* Final CTA */}
+      <section className="landing-section landing-final">
+        <div className="landing-container landing-center">
+          <h2>Start with one conversation.</h2>
+          <p className="landing-center-lede">Explore Companions, choose who feels right, and arrange a friendly video conversation at a time that works. No pressure to continue — the first conversation is simply a chance to see how it feels.</p>
+          <div className="landing-cta-row landing-cta-center">
+            <Link to={startTo} className="btn btn-primary btn-large">Find a Companion</Link>
+            <Link to={startTo} className="btn btn-secondary btn-large">Become a Companion</Link>
+          </div>
+        </div>
+      </section>
+
+      {/* Contact — the support email, prominently, plus the working message form. */}
+      <section id="contact" className="landing-section landing-section-muted">
+        <div className="landing-container landing-center">
+          <span className="section-label">Contact</span>
+          <h2>Questions? Get in touch</h2>
+          <p className="landing-center-lede">
+            Have a question about {APP_NAME}, becoming a Companion, or arranging conversations for
+            someone you care about? Email us at{' '}
+            <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a> and we’ll be happy to help.
+          </p>
+          <a href={`mailto:${SUPPORT_EMAIL}`} className="btn btn-secondary btn-large landing-email-btn">
+            <Mail size={18} aria-hidden="true" /> {SUPPORT_EMAIL}
+          </a>
+          <ContactForm />
+        </div>
+      </section>
 
       {/* Footer */}
       <footer className="landing-footer">
@@ -340,14 +327,15 @@ export default function LandingPage() {
             <nav className="landing-footer-links" aria-label="Footer">
               <Link to={startTo}>Find a Companion</Link>
               <Link to={startTo}>Become a Companion</Link>
-              <a href="#how-it-works">How it works</a>
-              <a href="#safety">Safety</a>
-              <a href="#contact">FAQ</a>
+              <a href="#contact">Contact</a>
               <Link to="/login">Sign in</Link>
               <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>
             </nav>
           </div>
-          <p className="landing-footer-note">{c.footer.boundary}</p>
+          <p className="landing-footer-note">
+            Apricoti provides social companionship through scheduled conversations. It is not a
+            healthcare, counselling, care or emergency service.
+          </p>
           <p className="landing-footer-copy">© {new Date().getFullYear()} {APP_NAME}</p>
         </div>
       </footer>
