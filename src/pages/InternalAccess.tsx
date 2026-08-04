@@ -201,6 +201,15 @@ function DetailDrawer({ accountId, cohorts, onClose, onChanged }: {
 
   const d = detail ?? {};
   const profile = (d.profile as Record<string, unknown>) ?? {};
+  const profileId = profile.id ? String(profile.id) : null;
+  const draftName = `${profile.first_name ?? ''} ${profile.last_name ?? ''}`.trim();
+  const draftInterests = Array.isArray(profile.interests) ? (profile.interests as string[]) : [];
+  const draftLanguages = Array.isArray(profile.languages) ? (profile.languages as string[]) : [];
+  const draftPlaces = Array.isArray(profile.connected_places) ? (profile.connected_places as string[]) : [];
+  const draftFluency = (profile.language_fluency as Record<string, string>) ?? {};
+  const hasDraft =
+    !!(draftName || profile.headline || profile.bio || profile.photo_url) ||
+    draftInterests.length > 0 || draftLanguages.length > 0 || draftPlaces.length > 0;
   const checklist = d.checklist as { completion_pct?: number; items?: Array<Record<string, unknown>> } | null;
   const audit = (d.audit as Array<Record<string, unknown>>) ?? [];
   const notes = (d.notes as Array<Record<string, unknown>>) ?? [];
@@ -224,13 +233,51 @@ function DetailDrawer({ accountId, cohorts, onClose, onChanged }: {
           {checklist && <span className="access-badge">{checklist.completion_pct ?? 0}% complete</span>}
         </div>
 
-        {profile.headline || profile.bio ? (
-          <section className="access-drawer-sec">
-            <h3>Profile preview</h3>
-            {profile.headline ? <p style={{ margin: '2px 0' }}><strong>{String(profile.headline)}</strong></p> : null}
-            {profile.bio ? <p className="text-secondary" style={{ margin: 0 }}>{String(profile.bio)}</p> : null}
-          </section>
-        ) : null}
+        <section className="access-drawer-sec">
+          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+            <h3 style={{ margin: 0 }}>Account draft</h3>
+            {profileId && (d.role as string) === 'companion' && (
+              <a className="btn btn-ghost btn-small" href={`#/people/${profileId}`} target="_blank" rel="noopener noreferrer">
+                View public profile ↗
+              </a>
+            )}
+          </div>
+          <p className="text-secondary" style={{ fontSize: '0.85rem', margin: '2px 0 12px' }}>
+            What this person entered — how their account will appear once approved.
+          </p>
+
+          {hasDraft ? (
+            <>
+              <div className="row" style={{ gap: 12, alignItems: 'flex-start' }}>
+                {profile.photo_url ? (
+                  <img src={String(profile.photo_url)} alt="" style={{ width: 64, height: 64, borderRadius: 12, objectFit: 'cover', flex: 'none' }} />
+                ) : (
+                  <div className="text-secondary" style={{ width: 64, height: 64, borderRadius: 12, background: 'var(--surface-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none', fontSize: '0.75rem', textAlign: 'center' }}>No photo</div>
+                )}
+                <div className="col" style={{ gap: 2 }}>
+                  <strong>{draftName || '—'}</strong>
+                  {profile.preferred_name ? <span className="text-secondary">Prefers “{String(profile.preferred_name)}”</span> : null}
+                  {profile.headline ? <span>{String(profile.headline)}</span> : null}
+                </div>
+              </div>
+
+              {profile.bio ? <p style={{ margin: '10px 0 0' }}>{String(profile.bio)}</p> : null}
+
+              <div className="col" style={{ gap: 0, marginTop: 10 }}>
+                {draftInterests.length > 0 && <DraftRow label="Interests" value={draftInterests.join(', ')} />}
+                {draftLanguages.length > 0 && (
+                  <DraftRow label="Languages" value={draftLanguages.map((l) => (draftFluency[l] ? `${l} (${draftFluency[l]})` : l)).join(', ')} />
+                )}
+                {profile.age_band ? <DraftRow label="Age band" value={String(profile.age_band)} /> : null}
+                {profile.region ? <DraftRow label="Town or city" value={String(profile.region)} /> : null}
+                {profile.country_of_residence ? <DraftRow label="Country of residence" value={String(profile.country_of_residence)} /> : null}
+                {draftPlaces.length > 0 && <DraftRow label="Places & cultures" value={draftPlaces.join(', ')} />}
+              </div>
+            </>
+          ) : (
+            <p className="text-secondary" style={{ margin: 0 }}>This person hasn’t entered profile details yet.</p>
+          )}
+        </section>
 
         <section className="access-drawer-sec">
           <h3>Application</h3>
@@ -316,6 +363,16 @@ function DetailDrawer({ accountId, cohorts, onClose, onChanged }: {
           </button>
         </section>
       </aside>
+    </div>
+  );
+}
+
+// --------------------------------------------------------------------------
+function DraftRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="row between" style={{ gap: 16, alignItems: 'flex-start', padding: '3px 0' }}>
+      <span className="text-secondary" style={{ flex: 'none' }}>{label}</span>
+      <span style={{ textAlign: 'right' }}>{value}</span>
     </div>
   );
 }
