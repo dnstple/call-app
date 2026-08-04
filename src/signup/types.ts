@@ -18,7 +18,10 @@ export interface SignupData {
   lastName: string;
   dob: string;          // yyyy-mm-dd, optional for Members
   ageRange: string;     // alternative to exact dob for Members
+  preferredName: string;      // optional display name
   town: string;
+  countryOfResidence: string; // for time zone, payment and eligibility
+  connectedPlaces: string;    // comma-separated places/cultures felt connected to
   email: string;
   phone: string;
   photoDataUrl: string; // Companion mock upload preview
@@ -36,9 +39,9 @@ export interface SignupData {
   dayparts: string[];
   flexible: boolean;
   specificTimes: string;
-  // Languages
+  // Languages — fluency is recorded per selected language.
   languages: string[];
-  fluency: string;
+  languageFluency: Record<string, string>;
   // Matching / comfort (Member + Coordinator flows)
   prefAgeRange: string;
   prefLanguages: string;
@@ -72,13 +75,14 @@ export interface SignupData {
 
 export const EMPTY_SIGNUP: SignupData = {
   role: undefined,
-  firstName: '', lastName: '', dob: '', ageRange: '', town: '', email: '', phone: '',
+  firstName: '', lastName: '', dob: '', ageRange: '', preferredName: '',
+  town: '', countryOfResidence: '', connectedPlaces: '', email: '', phone: '',
   photoDataUrl: '',
   headline: '', bio: '',
   interests: [], customInterest: '',
   mediums: ['In-app conversation'], durationMins: 30,
   days: [], dayparts: [], flexible: false, specificTimes: '',
-  languages: ['English'], fluency: 'Fluent',
+  languages: ['English'], languageFluency: { English: 'Fluent' },
   prefAgeRange: '', prefLanguages: '', sameCompanion: '', topicsAvoid: '', comfortNotes: '', personality: '',
   notifChannels: ['In-app notification'], notifTiming: 'both',
   trialPrice: '5.00', standardPrice: '10.00',
@@ -110,7 +114,7 @@ export const AGE_RANGE_OPTIONS = [
 
 export const LANGUAGE_OPTIONS = ['English', 'Welsh', 'Punjabi', 'Urdu', 'Hindi', 'Gujarati', 'Italian', 'Polish', 'Yoruba', 'French'];
 
-export const FLUENCY_OPTIONS = ['Native', 'Fluent', 'Conversational'];
+export const FLUENCY_OPTIONS = ['Native or bilingual', 'Fluent', 'Conversational', 'Basic'];
 
 export const RELATIONSHIP_OPTIONS = [
   'Child', 'Grandchild', 'Sibling', 'Other relative', 'Friend', 'Carer', 'Another trusted person',

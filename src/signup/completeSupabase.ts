@@ -9,8 +9,6 @@ import type { SignupData } from './types';
 import type { CreatedAccounts } from './complete';
 import { uploadAvatar } from '../repositories/profileRepository';
 import {
-  createOffer,
-  poundsToMinor,
   replaceAvailabilityRules,
   updateCompanionSchedulingSettings,
 } from '../repositories/availabilityRepository';
@@ -113,6 +111,7 @@ export async function completeSupabaseSignup(data: SignupData): Promise<CreatedA
     const { data: profile, error } = await client.rpc('complete_member_signup', buildMemberPayload(data));
     if (error) throw friendly(error);
     await applySignupPhoto(profile.id, data);
+    await applyProfileExtras(data);
     return { primaryId: profile.id };
   }
 
@@ -129,6 +128,7 @@ export async function completeSupabaseSignup(data: SignupData): Promise<CreatedA
       markSetupIncomplete(profile.id);
     }
     await applySignupPhoto(profile.id, data);
+    await applyProfileExtras(data);
     return { primaryId: profile.id };
   }
 
@@ -163,6 +163,31 @@ export function dataUrlToFile(dataUrl: string, name = 'signup-avatar'): File | n
  * blocks signup — it is swallowed rather than surfaced or left as a broken
  * pointer (uploadAvatar itself cleans up on partial failure).
  */
+/**
+ * Persist the optional profile extras (preferred name, country of residence,
+ * places/cultures, per-language fluency) onto the caller's new profile via the
+ * additive set_profile_extras RPC (0121). Non-critical and editable later, so a
+ * failure never blocks signup.
+ */
+async function applyProfileExtras(data: SignupData): Promise<void> {
+  const places = (data.connectedPlaces ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  const fluency: Record<string, string> = {};
+  for (const lang of (data.languages ?? [])) fluency[lang] = (data.languageFluency ?? {})[lang] ?? 'Fluent';
+  const client = getSupabaseClient() as unknown as {
+    rpc: (fn: string, params?: Record<string, unknown>) => Promise<{ error: unknown }>;
+  };
+  try {
+    await client.rpc('set_profile_extras', {
+      p_preferred_name: (data.preferredName ?? '').trim() || null,
+      p_country: (data.countryOfResidence ?? '').trim() || null,
+      p_connected_places: places,
+      p_language_fluency: fluency,
+    });
+  } catch {
+    // Extras are optional and fully editable later in the profile.
+  }
+}
+
 async function applySignupPhoto(profileId: string, data: SignupData): Promise<void> {
   if (!data.photoDataUrl) return;
   const file = dataUrlToFile(data.photoDataUrl);
@@ -217,23 +242,8 @@ async function persistCompanionSetup(profileId: string, data: SignupData): Promi
     bookingHorizonDays: 60,
     acceptingNewMembers: true,
   });
-  const methods = methodsToDb(data.mediums);
-  const trialMinor = poundsToMinor(data.trialPrice);
-  if (Number.isFinite(trialMinor) && trialMinor >= 100) {
-    await createOffer(profileId, 'trial', {
-      durationMinutes: 30,
-      priceMinor: trialMinor,
-      supportedMethods: methods,
-    });
-  }
-  const singleMinor = poundsToMinor(data.standardPrice);
-  if (Number.isFinite(singleMinor) && singleMinor >= 100) {
-    await createOffer(profileId, 'single', {
-      durationMinutes: 30,
-      priceMinor: singleMinor,
-      supportedMethods: methods,
-    });
-  }
+  // Pricing & packages are NOT created here — the Companion sets them in the
+  // dashboard (Availability & rates) after approval.
 }
 
 /** Recoverable "finish setting up availability and rates" state. */

@@ -417,7 +417,14 @@ export default function SignupWizard() {
                 {AGE_RANGE_OPTIONS.map((a) => <option key={a} value={a}>{a}</option>)}
               </select>
             </div>
+            <FormField id="su-preferred" label="Preferred name (optional)" value={data.preferredName} onChange={(v) => patch({ preferredName: v })} hint="What you’d like to be called, if different from your first name." />
             <FormField id="su-town" label="Town or city" value={data.town} onChange={(v) => patch({ town: v })} placeholder="e.g. Harrogate" hint="Your approximate location helps people connect over local knowledge. Your exact address is never shown." />
+            <FormField id="su-country" label="Country of residence" value={data.countryOfResidence} onChange={(v) => patch({ countryOfResidence: v })} placeholder="e.g. United Kingdom" hint="Helps with time zones, payment and eligibility. Not shown publicly." />
+            <div className="field" style={{ marginBottom: 0 }}>
+              <label htmlFor="su-places">Places and cultures you feel connected to (optional)</label>
+              <input id="su-places" value={data.connectedPlaces} onChange={(e) => patch({ connectedPlaces: e.target.value })} placeholder="e.g. Jamaica, Yorkshire, Italy" />
+              <span className="hint">Add countries, regions or cultures that have been part of your life. Separate with commas.</span>
+            </div>
           </SignupStep>
         )}
 
@@ -442,7 +449,14 @@ export default function SignupWizard() {
               hint="Companions must be at least 18."
               error={fieldError(!isAdult(data.dob), !data.dob ? 'Needed' : 'You must be at least 18')}
             />
+            <FormField id="su-preferred" label="Preferred name (optional)" value={data.preferredName} onChange={(v) => patch({ preferredName: v })} hint="What you’d like to be called, if different from your first name." />
             <FormField id="su-town" label="Town or city" value={data.town} onChange={(v) => patch({ town: v })} hint="Your approximate location helps people connect over local knowledge. Your exact address is never shown." />
+            <FormField id="su-country" label="Country of residence" value={data.countryOfResidence} onChange={(v) => patch({ countryOfResidence: v })} placeholder="e.g. United Kingdom" hint="Helps with time zones, payment and eligibility. Not shown publicly." />
+            <div className="field">
+              <label htmlFor="su-places">Places and cultures you feel connected to (optional)</label>
+              <input id="su-places" value={data.connectedPlaces} onChange={(e) => patch({ connectedPlaces: e.target.value })} placeholder="e.g. Jamaica, Yorkshire, Italy" />
+              <span className="hint">Add countries, regions or cultures that have been part of your life. Separate with commas.</span>
+            </div>
             <div className="field" style={{ marginBottom: 0 }}>
               <label htmlFor="su-photo">Profile photo (optional)</label>
               <div className="row" style={{ gap: 16 }}>
@@ -628,12 +642,26 @@ export default function SignupWizard() {
               <h4>Languages you speak</h4>
               <ChipGroup ariaLabel="Languages" options={LANGUAGE_OPTIONS} selected={data.languages} onToggle={(v) => toggle('languages', v)} />
             </div>
-            <div className="field" style={{ marginBottom: 0, maxWidth: 320 }}>
-              <label htmlFor="su-fluency">Fluency</label>
-              <select id="su-fluency" value={data.fluency} onChange={(e) => patch({ fluency: e.target.value })}>
-                {FLUENCY_OPTIONS.map((f) => <option key={f} value={f}>{f}</option>)}
-              </select>
-            </div>
+            {data.languages.length > 0 && (
+              <div className="field" style={{ marginBottom: 0 }}>
+                <label>Fluency in each language</label>
+                <div className="col" style={{ gap: 8 }}>
+                  {data.languages.map((lang) => (
+                    <div key={lang} className="row between" style={{ gap: 12, alignItems: 'center' }}>
+                      <span>{lang}</span>
+                      <select
+                        aria-label={`Fluency in ${lang}`}
+                        value={data.languageFluency[lang] ?? 'Fluent'}
+                        onChange={(e) => patch({ languageFluency: { ...data.languageFluency, [lang]: e.target.value } })}
+                        style={{ maxWidth: 220 }}
+                      >
+                        {FLUENCY_OPTIONS.map((f) => <option key={f} value={f}>{f}</option>)}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <p className="muted small" style={{ margin: 0 }}>
               All conversations take place through the app — there is nothing else to set up.
             </p>
@@ -1149,7 +1177,7 @@ function ReviewStep({
           <ReviewSection title="Conversations" onEdit={() => jumpTo(role === 'companion' ? 'languages' : 'prefs')}>
             <ReviewRow label="Conversations" value="In-app conversation" />
             {role === 'member' && <ReviewRow label="Length" value={`${data.durationMins} minutes`} />}
-            {role === 'companion' && <ReviewRow label="Languages" value={`${data.languages.join(', ')} (${data.fluency})`} />}
+            {role === 'companion' && <ReviewRow label="Languages" value={data.languages.map((l) => `${l} (${data.languageFluency[l] ?? 'Fluent'})`).join(', ')} />}
           </ReviewSection>
           <ReviewSection title="Availability" onEdit={() => jumpTo('availability')}>
             <ReviewRow label="Usually" value={availability} />

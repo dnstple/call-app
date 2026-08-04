@@ -128,7 +128,7 @@ export function demoData(role: Role): SignupData {
       headline: 'Cricket fan who loves a good yarn',
       bio: 'I work in a library and spend weekends watching cricket or walking the Peaks. I love hearing how places used to be — the shops, the music, the matches. Happy to chat about almost anything, and I make a decent cup of tea (though you can’t taste it through the app).',
       interests: ['Sport', 'Books', 'History', 'Travel'],
-      languages: ['English'], fluency: 'Native',
+      languages: ['English'], languageFluency: { English: 'Native or bilingual' },
       mediums: ['In-app conversation'],
       days: ['Monday', 'Wednesday', 'Saturday'], dayparts: ['Evening'], flexible: false,
       trialPrice: '5.00', standardPrice: '12.00',
