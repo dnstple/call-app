@@ -1262,6 +1262,15 @@ table.plain th { color: var(--color-text-secondary); font-weight: 600; }
 .call-waiting-pulse { animation: callPulse 2s ease-in-out infinite; }
 @keyframes callPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
 
+/* Loading spinners keep swirling so the page reads as active while the next
+   step loads. Loader2 renders lucide's loader-circle; cover both class names.
+   (prefers-reduced-motion is honoured by the global animation reset above.) */
+@keyframes lucide-spin { to { transform: rotate(360deg); } }
+svg.lucide-loader-circle, svg.lucide-loader-2, svg.lucide-loader {
+  animation: lucide-spin 0.9s linear infinite;
+  transform-origin: center;
+}
+
 /* desktop: constrain the immersive stage from edge-to-edge harshness */
 @media (min-width: 1024px) {
   .call-local { width: 220px; aspect-ratio: 16 / 10; right: 24px; bottom: 24px; }
