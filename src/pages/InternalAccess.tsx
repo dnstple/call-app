@@ -38,6 +38,7 @@ function errText(e: unknown): string {
   if (/cohort_closed/i.test(m)) return 'That cohort is not accepting assignments.';
   if (/cannot_delete_self/i.test(m)) return 'You can’t delete your own account.';
   if (/cannot_delete_admin/i.test(m)) return 'Remove support-admin status before deleting this account.';
+  if (/cannot_delete_has_activity/i.test(m)) return 'This account has activity (bookings, payments or calls) that can’t be removed. Suspend or block it instead.';
   return 'That action could not be completed.';
 }
 
