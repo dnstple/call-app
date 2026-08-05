@@ -1500,6 +1500,20 @@ svg.lucide-loader-circle, svg.lucide-loader-2, svg.lucide-loader {
 /* Text-only landing section (no image column). */
 .landing-solo-text { max-width: 640px; }
 
+/* Centre the text-only audience blocks on desktop (heading, body, ticks, CTA). */
+@media (min-width: 720px) {
+  .landing-solo-center {
+    max-width: 720px;
+    margin-inline: auto;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .landing-solo-center .landing-ticks { justify-items: center; }
+  .landing-solo-center .landing-ticks li { justify-content: center; text-align: left; }
+}
+
 /* Landing in-app contact form. */
 .landing-contact-form { display: flex; flex-direction: column; gap: 10px; max-width: 520px; margin: 0 auto; text-align: left; }
 .landing-contact-row { display: flex; gap: 10px; flex-wrap: wrap; }

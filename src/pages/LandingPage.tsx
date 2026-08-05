@@ -139,7 +139,7 @@ export default function LandingPage() {
       {/* For families / Coordinators — text only (image moved to the Companion section) */}
       <section className="landing-section landing-section-muted">
         <div className="landing-container">
-          <div className="landing-split-text landing-solo-text">
+          <div className="landing-split-text landing-solo-text landing-solo-center">
             <span className="section-label">{c.coordinator.label}</span>
             <h2>{c.coordinator.title}</h2>
             <p>{c.coordinator.body}</p>
@@ -183,7 +183,7 @@ export default function LandingPage() {
       {/* For self — text only (image removed) */}
       <section className="landing-section">
         <div className="landing-container">
-          <div className="landing-split-text landing-solo-text">
+          <div className="landing-split-text landing-solo-text landing-solo-center">
             <span className="section-label">{c.self.label}</span>
             <h2>{c.self.title}</h2>
             <p>{c.self.body}</p>
