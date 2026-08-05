@@ -125,6 +125,10 @@ export function adminListAccounts(p: AdminListParams): Promise<AdminListResult> 
 export function adminAccountDetail(accountId: string): Promise<Record<string, unknown>> {
   return rpc('admin_account_detail', { p_account: accountId });
 }
+/** Support-only full preview of a profile, regardless of authorisation state. */
+export function adminProfilePreview(accountId: string): Promise<Record<string, unknown>> {
+  return rpc('admin_profile_preview', { p_account: accountId });
+}
 export function adminListCohorts(): Promise<Array<Record<string, unknown>>> {
   return rpc('admin_list_cohorts');
 }

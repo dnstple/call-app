@@ -39,6 +39,7 @@ import { AccessProvider, useAccess, AccessLoading } from './state/access';
 const PilotHub = lazy(() => import('./pages/PilotHub'));
 const AccountStatus = lazy(() => import('./pages/AccountStatus'));
 const InternalAccess = lazy(() => import('./pages/InternalAccess'));
+const InternalProfilePreview = lazy(() => import('./pages/InternalProfilePreview'));
 const InternalContact = lazy(() => import('./pages/InternalContact'));
 const InternalHome = lazy(() => import('./pages/InternalHome'));
 const ContactPage = lazy(() => import('./pages/ContactPage'));
@@ -309,6 +310,7 @@ function AppRoutes() {
                 {/* Pilot registration, cohorts & access management console. */}
                 <Route path="/internal" element={<SupportOnly><InternalHome /></SupportOnly>} />
                 <Route path="/internal/access" element={<SupportOnly><InternalAccess /></SupportOnly>} />
+                <Route path="/internal/access/preview/:accountId" element={<SupportOnly><InternalProfilePreview /></SupportOnly>} />
                 <Route path="/internal/contact" element={<SupportOnly><InternalContact /></SupportOnly>} />
                 <Route path="/internal/operations" element={<Navigate to="/support/operations" replace />} />
                 <Route path="/settings" element={<Settings />} />

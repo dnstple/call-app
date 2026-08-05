@@ -201,7 +201,6 @@ function DetailDrawer({ accountId, cohorts, onClose, onChanged }: {
 
   const d = detail ?? {};
   const profile = (d.profile as Record<string, unknown>) ?? {};
-  const profileId = profile.id ? String(profile.id) : null;
   const draftName = `${profile.first_name ?? ''} ${profile.last_name ?? ''}`.trim();
   const draftInterests = Array.isArray(profile.interests) ? (profile.interests as string[]) : [];
   const draftLanguages = Array.isArray(profile.languages) ? (profile.languages as string[]) : [];
@@ -236,11 +235,9 @@ function DetailDrawer({ accountId, cohorts, onClose, onChanged }: {
         <section className="access-drawer-sec">
           <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
             <h3 style={{ margin: 0 }}>Account draft</h3>
-            {profileId && (d.role as string) === 'companion' && (
-              <a className="btn btn-ghost btn-small" href={`#/people/${profileId}`} target="_blank" rel="noopener noreferrer">
-                View public profile ↗
-              </a>
-            )}
+            <a className="btn btn-ghost btn-small" href={`#/internal/access/preview/${accountId}`} target="_blank" rel="noopener noreferrer">
+              Preview full profile ↗
+            </a>
           </div>
           <p className="text-secondary" style={{ fontSize: '0.85rem', margin: '2px 0 12px' }}>
             What this person entered — how their account will appear once approved.
