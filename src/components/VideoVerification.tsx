@@ -16,11 +16,7 @@ import {
 } from '../repositories/verificationRepository';
 import { pushToast } from '../state/store';
 
-const SCRIPT = [
-  'Say your full name.',
-  'Say today’s date.',
-  'Tell us in a sentence why you’d like to be a Companion.',
-];
+const SCRIPT = 'Please introduce yourself and tell us why you’d like to become a Companion.';
 
 function fmt(sec: number): string {
   const s = Math.max(0, Math.floor(sec));
@@ -247,10 +243,8 @@ function Recorder({
   return (
     <div className="card card-tight col" style={{ gap: 12 }}>
       <div>
-        <strong>What to do</strong>
-        <ol className="muted" style={{ margin: '6px 0 0', paddingLeft: 18 }}>
-          {SCRIPT.map((s) => <li key={s}>{s}</li>)}
-        </ol>
+        <strong>What to say</strong>
+        <p className="muted" style={{ margin: '6px 0 0' }}>{SCRIPT}</p>
         <p className="faint" style={{ margin: '8px 0 0' }}>
           Please record between {minSeconds} and {maxSeconds} seconds in a quiet, well-lit place.
         </p>

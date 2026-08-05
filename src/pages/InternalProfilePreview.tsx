@@ -14,6 +14,11 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 import { adminProfilePreview } from '../repositories/accessRepository';
 import { avatarUrl } from '../repositories/profileRepository';
+import {
+  adminListVerificationVideos,
+  verificationVideoUrl,
+  type VerificationVideoRow,
+} from '../repositories/verificationRepository';
 
 const ISO_DAYS = ['', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
@@ -119,6 +124,8 @@ export default function InternalProfilePreview() {
             </div>
           </section>
 
+          {accountId && <VerificationVideoBlock accountId={accountId} />}
+
           {p.bio ? (
             <section className="card">
               <h2 style={{ marginTop: 0, fontSize: '1.05rem' }}>About</h2>
@@ -180,5 +187,72 @@ function PreviewRow({ label, value }: { label: string; value: string }) {
       <span className="text-secondary" style={{ flex: 'none' }}>{label}</span>
       <span style={{ textAlign: 'right' }}>{value}</span>
     </div>
+  );
+}
+
+function secs(n: number): string {
+  const s = Math.max(0, Math.floor(n));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+/** Support-only: the account's latest verification video, if any. Fetched via
+ * the support list RPC and matched by account (pilot scale is tiny). */
+function VerificationVideoBlock({ accountId }: { accountId: string }) {
+  const [row, setRow] = useState<VerificationVideoRow | null | undefined>(undefined);
+  const [url, setUrl] = useState<string | undefined>();
+
+  useEffect(() => {
+    let alive = true;
+    adminListVerificationVideos()
+      .then(async (rows) => {
+        if (!alive) return;
+        const found = rows.find((r) => r.account_id === accountId) ?? null;
+        setRow(found);
+        if (found) {
+          const u = await verificationVideoUrl(found.storage_path);
+          if (alive) setUrl(u);
+        }
+      })
+      .catch(() => { if (alive) setRow(null); });
+    return () => { alive = false; };
+  }, [accountId]);
+
+  if (row === undefined) {
+    return (
+      <section className="card">
+        <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+          <Loader2 size={16} aria-hidden="true" /><span className="text-secondary">Loading verification video…</span>
+        </div>
+      </section>
+    );
+  }
+  if (row === null) return null; // No submission for this account.
+
+  const badge = row.status === 'approved' ? 'a-full' : row.status === 'rejected' ? 'a-blocked' : 's-under_review';
+
+  return (
+    <section className="card col" style={{ gap: 10 }}>
+      <div className="row between" style={{ alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <h2 style={{ margin: 0, fontSize: '1.05rem' }}>Verification video</h2>
+        <span className={`access-badge ${badge}`}>{row.status}</span>
+      </div>
+      <span className="text-secondary" style={{ fontSize: '0.85rem' }}>
+        {secs(row.duration_seconds)} · submitted {new Date(row.created_at).toLocaleString()}
+      </span>
+      {url ? (
+        // eslint-disable-next-line jsx-a11y/media-has-caption
+        <video src={url} controls playsInline preload="metadata" style={{ width: '100%', maxHeight: 420, borderRadius: 12, background: '#000' }} />
+      ) : (
+        <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+          <Loader2 size={16} aria-hidden="true" /><span className="text-secondary">Loading video…</span>
+        </div>
+      )}
+      {row.review_notes && row.status !== 'pending' && (
+        <p className="text-secondary" style={{ margin: 0 }}><strong>Notes:</strong> {row.review_notes}</p>
+      )}
+      <Link className="btn btn-ghost btn-small" to="/internal/verification" style={{ alignSelf: 'flex-start' }}>
+        Review in video verification →
+      </Link>
+    </section>
   );
 }
