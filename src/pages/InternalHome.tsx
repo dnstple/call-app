@@ -7,7 +7,7 @@
  */
 import { NavLink } from 'react-router-dom';
 import {
-  Users, Mail, ClipboardList, Scale, Calculator, SlidersHorizontal, ShieldCheck,
+  Users, Mail, ClipboardList, Scale, Calculator, SlidersHorizontal, ShieldCheck, Video,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -16,6 +16,8 @@ type Tool = { to: string; title: string; body: string; Icon: LucideIcon };
 const TOOLS: Tool[] = [
   { to: '/internal/access', title: 'Pilot access', Icon: Users,
     body: 'Registrations, applications, cohorts and access grants.' },
+  { to: '/internal/verification', title: 'Video verification', Icon: Video,
+    body: 'Review companion identity videos and approve or reject.' },
   { to: '/internal/contact', title: 'Contact messages', Icon: Mail,
     body: 'Enquiries sent from the landing contact form.' },
   { to: '/internal/issues', title: 'Issue queue', Icon: ClipboardList,

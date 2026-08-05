@@ -25,6 +25,7 @@ import { formatPence } from '../domain/commission';
 import { ChipGroup, Modal, ProfilePhoto, RatingStars, VerificationBadge } from '../components/ui';
 import { roleLabel } from '../components/Shell';
 import { CompanionCompletionChecklist } from '../components/CompletionChecklist';
+import { VideoVerification } from '../components/VideoVerification';
 import type { Medium, User } from '../types';
 
 const INTEREST_OPTIONS = [
@@ -218,6 +219,13 @@ export default function MyProfile() {
       {supabase && editable && me.role === 'companion' && (
         <section className="section-tight">
           <CompanionCompletionChecklist profileId={me.id} />
+        </section>
+      )}
+
+      {/* Video verification (allowlisted companions only; self-hides otherwise). */}
+      {supabase && editable && me.role === 'companion' && (
+        <section className="section-tight">
+          <VideoVerification profileId={me.id} />
         </section>
       )}
 
