@@ -12,7 +12,8 @@ import { landingCopy, landingImages, SUPPORT_EMAIL, type LandingImageSlot } from
  * (public.public_launch_mode). During the companion_waitlist launch the primary
  * action is "Apply to become a Companion" and Member/Coordinator access is shown
  * as invitation-only — public booking is never implied. Invited sign-up links
- * keep working throughout. index.html's noindex,nofollow is preserved.
+ * keep working throughout. The public homepage is indexable (index.html sets
+ * robots index,follow) so it appears in search results.
  */
 function useLaunchMode(): LaunchMode {
   // Local preview (mock mode) has no pilot — show the open experience.
@@ -37,7 +38,7 @@ function useLaunchMode(): LaunchMode {
  * `src` in landingContent.ts to drop in real art; until then a neutral
  * photo-frame placeholder renders (never developer text in the public UI).
  *
- * The page keeps index.html's noindex,nofollow during the controlled pilot.
+ * The public homepage is indexable (index.html sets robots index,follow).
  */
 
 /** One replaceable image area. Real art → set slot.src in landingContent.ts. */
