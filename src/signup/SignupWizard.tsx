@@ -29,6 +29,8 @@ import {
   DURATION_OPTIONS,
   EMPTY_SIGNUP,
   FLUENCY_OPTIONS,
+  HEARD_ABOUT_OPTIONS,
+  HEARD_ABOUT_OTHER,
   INTEREST_OPTIONS,
   LANGUAGE_OPTIONS,
   MEDIUM_OPTIONS,
@@ -43,7 +45,7 @@ import {
 import { COUNTRIES } from '../domain/countries';
 import { clearDraft, demoData, loadDraft, markSignupSeen, saveDraft } from './storage';
 import { createAccountsFromSignup, type CreatedAccounts } from './complete';
-import { completeSupabaseSignup } from './completeSupabase';
+import { completeSupabaseSignup, saveSignupSource } from './completeSupabase';
 import { isSupabaseMode } from '../config/dataMode';
 import { useAuth } from '../auth/AuthProvider';
 import { AuthAppError } from '../auth/authErrors';
@@ -1213,6 +1215,72 @@ function routeLabel(v: string, memberName: string): string {
   return 'You (Coordinator)';
 }
 
+/** Optional "How did you hear about us?" — asked on the success screen for all
+ * roles. Never blocks the person; in demo mode it just acknowledges locally. */
+function HeardAboutCard() {
+  const [choice, setChoice] = useState('');
+  const [detail, setDetail] = useState('');
+  const [status, setStatus] = useState<'idle' | 'saving' | 'done' | 'error'>('idle');
+
+  const isOther = choice === HEARD_ABOUT_OTHER;
+  const canSave = choice !== '' && !(isOther && detail.trim() === '') && status !== 'saving';
+
+  async function save() {
+    if (!canSave) return;
+    setStatus('saving');
+    try {
+      if (isSupabaseMode()) await saveSignupSource(choice, isOther ? detail : undefined);
+      setStatus('done');
+    } catch {
+      setStatus('error');
+    }
+  }
+
+  if (status === 'done') {
+    return (
+      <div className="card card-tight" style={{ maxWidth: 420, margin: '8px auto 0', width: '100%', textAlign: 'center' }}>
+        <p className="muted" style={{ margin: 0 }}>Thanks — that helps us reach more people.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="card card-tight" style={{ maxWidth: 420, margin: '8px auto 0', width: '100%', textAlign: 'left' }}>
+      <label htmlFor="heard-about" className="bold" style={{ display: 'block', marginBottom: 6 }}>
+        How did you hear about us? <span className="faint">(optional)</span>
+      </label>
+      <select
+        id="heard-about"
+        className="input"
+        value={choice}
+        onChange={(e) => { setChoice(e.target.value); setStatus('idle'); }}
+      >
+        <option value="">Select an option…</option>
+        {HEARD_ABOUT_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+      </select>
+      {isOther && (
+        <input
+          className="input"
+          style={{ marginTop: 8 }}
+          placeholder="Please specify"
+          value={detail}
+          maxLength={120}
+          onChange={(e) => setDetail(e.target.value)}
+          aria-label="Please specify how you heard about us"
+        />
+      )}
+      {status === 'error' && (
+        <p className="hint" style={{ color: 'var(--danger)', marginTop: 6 }} role="alert">
+          We couldn’t save that just now. Please try again.
+        </p>
+      )}
+      <button className="btn btn-secondary btn-block" style={{ marginTop: 10 }} onClick={save} disabled={!canSave}>
+        {status === 'saving' ? 'Saving…' : 'Submit'}
+      </button>
+    </div>
+  );
+}
+
 /* ---------------- Success step ---------------- */
 
 function SuccessStep({ data, created }: { data: SignupData; created: CreatedAccounts | null }) {
@@ -1258,6 +1326,8 @@ function SuccessStep({ data, created }: { data: SignupData; created: CreatedAcco
           Verification pending review
         </span>
       )}
+      <HeardAboutCard />
+
       <div className="col" style={{ gap: 10, maxWidth: 320, margin: '8px auto 0', width: '100%' }}>
         {isSupabaseMode() ? (
           <>

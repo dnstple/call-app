@@ -116,6 +116,14 @@ export const LANGUAGE_OPTIONS = ['English', 'Welsh', 'Punjabi', 'Urdu', 'Hindi',
 
 export const FLUENCY_OPTIONS = ['Native or bilingual', 'Fluent', 'Conversational', 'Basic'];
 
+/** "How did you hear about us?" — asked optionally on the success screen. */
+export const HEARD_ABOUT_OPTIONS = [
+  'Instagram', 'Facebook', 'TikTok', 'Reddit', 'LinkedIn', 'Google', 'Indeed',
+  'University', 'Friend or family', 'Referral', 'Charity or community organisation',
+  'Healthcare or social-care professional', 'Other — please specify', 'Prefer not to say',
+];
+export const HEARD_ABOUT_OTHER = 'Other — please specify';
+
 export const RELATIONSHIP_OPTIONS = [
   'Child', 'Grandchild', 'Sibling', 'Other relative', 'Friend', 'Carer', 'Another trusted person',
 ];

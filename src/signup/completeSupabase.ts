@@ -188,6 +188,22 @@ async function applyProfileExtras(data: SignupData): Promise<void> {
   }
 }
 
+/**
+ * Persist the optional "How did you hear about us?" answer to the caller's own
+ * profile via set_signup_source (0127). Called from the success screen; resolves
+ * the owner profile server-side. Throws so the UI can show a retry state.
+ */
+export async function saveSignupSource(source: string, detail?: string): Promise<void> {
+  const client = getSupabaseClient() as unknown as {
+    rpc: (fn: string, params?: Record<string, unknown>) => Promise<{ error: unknown }>;
+  };
+  const { error } = await client.rpc('set_signup_source', {
+    p_source: source,
+    p_detail: detail?.trim() ? detail.trim() : null,
+  });
+  if (error) throw error;
+}
+
 async function applySignupPhoto(profileId: string, data: SignupData): Promise<void> {
   if (!data.photoDataUrl) return;
   const file = dataUrlToFile(data.photoDataUrl);
