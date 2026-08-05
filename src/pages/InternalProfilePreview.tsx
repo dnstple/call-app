@@ -21,12 +21,6 @@ function pretty(s: string | null | undefined): string {
   if (!s) return '—';
   return s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
-function hour(h: number): string {
-  const hh = ((h % 24) + 24) % 24;
-  const suffix = hh < 12 ? 'am' : 'pm';
-  const twelve = hh % 12 === 0 ? 12 : hh % 12;
-  return `${twelve}${suffix}`;
-}
 function price(minor: number, currency: string): string {
   const sym = currency === 'GBP' ? '£' : '';
   return `${sym}${(minor / 100).toFixed(2)}`;
@@ -149,7 +143,7 @@ export default function InternalProfilePreview() {
             {availability.length > 0 ? (
               <ul className="access-mini-list">
                 {availability.map((a, i) => (
-                  <li key={i}>{ISO_DAYS[Number(a.day_of_week)] ?? '—'}: {hour(Number(a.start_hour))}–{hour(Number(a.end_hour))} <span className="text-secondary">({String(a.time_zone)})</span></li>
+                  <li key={i}>{ISO_DAYS[Number(a.day_of_week)] ?? '—'}: {String(a.start)}–{String(a.end)} <span className="text-secondary">({String(a.timezone)})</span></li>
                 ))}
               </ul>
             ) : (
