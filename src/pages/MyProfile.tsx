@@ -135,6 +135,24 @@ export default function MyProfile() {
         </div>
       </header>
 
+      {supabase && editable && me.role === 'companion' && (
+        <section className="section-tight">
+          <h2>Availability & rates</h2>
+          {needsCompanionSetup(me.id) && (
+            <div className="banner banner-danger mb-4">
+              Your availability and rates didn’t finish saving during sign-up — pick up where you
+              left off below.
+            </div>
+          )}
+          <div className="card card-tight row between wrap">
+            <span className="muted">Weekly availability, time off and conversation prices.</span>
+            <Link to="/availability" className="btn btn-secondary btn-small">
+              Manage availability & rates
+            </Link>
+          </div>
+        </section>
+      )}
+
       <section className="section-tight">
         <div className="row between">
           <h2>About</h2>
@@ -226,24 +244,6 @@ export default function MyProfile() {
       {supabase && editable && me.role === 'companion' && (
         <section className="section-tight">
           <VideoVerification profileId={me.id} />
-        </section>
-      )}
-
-      {supabase && editable && me.role === 'companion' && (
-        <section className="section-tight">
-          <h2>Availability & rates</h2>
-          {needsCompanionSetup(me.id) && (
-            <div className="banner banner-danger mb-4">
-              Your availability and rates didn’t finish saving during sign-up — pick up where you
-              left off below.
-            </div>
-          )}
-          <div className="card card-tight row between wrap">
-            <span className="muted">Weekly availability, time off and conversation prices.</span>
-            <Link to="/availability" className="btn btn-secondary btn-small">
-              Manage availability & rates
-            </Link>
-          </div>
         </section>
       )}
 

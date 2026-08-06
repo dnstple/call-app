@@ -130,25 +130,27 @@ export function AgendaRow({ booking, viewerRole, needsAction, highlight, softene
         <span className="agenda-duration">{booking.duration_minutes} min</span>
       </span>
       <ProfileAvatar name={counterpart} url={avatarOf(counterpartId)} size="sm" alt="" statusDot={joinable} />
-      <span className="col grow" style={{ gap: 2, flex: '1 1 7rem', minWidth: '7rem', textAlign: 'left' }}>
-        <span className="bold">{counterpart}</span>
+      <span className="col grow agenda-person" style={{ gap: 2, minWidth: 0, textAlign: 'left' }}>
+        <span className="bold agenda-name">{counterpart}</span>
         <span className="faint small">
           {viewerRole !== 'companion' && `For ${booking.member_first_name} · `}
           {typeLabel(booking)}
         </span>
       </span>
-      {needsAction && <span className="pill pill-attention">Needs action</span>}
-      {!needsAction && pill && <span className={`pill ${pill.cls}`}>{pill.text}</span>}
-      {joinable && (
-        <span
-          className="btn btn-primary btn-small"
-          role="link"
-          aria-label="Join the call"
-          onClick={(e) => { e.stopPropagation(); navigate(`/conversations/${booking.id}/call`); }}
-        >
-          Join
-        </span>
-      )}
+      <span className="agenda-end">
+        {needsAction && <span className="pill pill-attention">Needs action</span>}
+        {!needsAction && pill && <span className={`pill ${pill.cls}`}>{pill.text}</span>}
+        {joinable && (
+          <span
+            className="btn btn-primary btn-small"
+            role="link"
+            aria-label="Join the call"
+            onClick={(e) => { e.stopPropagation(); navigate(`/conversations/${booking.id}/call`); }}
+          >
+            Join
+          </span>
+        )}
+      </span>
     </button>
   );
 }

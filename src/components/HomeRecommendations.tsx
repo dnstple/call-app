@@ -14,7 +14,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Sparkles, Star, Users, X } from 'lucide-react';
+import { Sparkles, Users, X } from 'lucide-react';
 import { getSupabaseClient } from '../supabase/client';
 import type { ConversationPlanRow, MyBookingRow } from '../supabase/database.types';
 import { listMyPlans } from '../repositories/planRepository';
@@ -34,6 +34,10 @@ function track(event: string, props?: Record<string, unknown>) {
     };
     void Promise.resolve(client.rpc('log_home_event', { p_event: event, p_props: props ?? {} })).catch(() => {});
   } catch { /* analytics must never break the UI */ }
+}
+
+function initials(name: string): string {
+  return name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase() ?? '').join('') || '?';
 }
 
 function InterestChips({ labels }: { labels: string[] }) {
@@ -286,25 +290,25 @@ export function CompanionHomeSuggestions({ companionProfileId }: { companionProf
       <div className="home-match-rail">
         {suggestions.map((s) => (
           <div key={s.member_profile_id} className="card home-match-card">
-            <div className="col" style={{ gap: 6, flex: 1, minWidth: 0 }}>
-              <div className="row" style={{ gap: 8, alignItems: 'center' }}>
-                <Star size={16} aria-hidden="true" style={{ color: 'var(--color-brand-strong)' }} />
+            <div className="home-match-head">
+              <span className="home-match-photo home-match-initial" aria-hidden="true">{initials(s.display_name)}</span>
+              <div className="home-match-title">
                 <strong>{s.display_name}</strong>
+                <span className="home-match-overlap">{sharedInterestLabel(s.overlap)}</span>
               </div>
-              <span className="faint small">{sharedInterestLabel(s.overlap)}</span>
-              <InterestChips labels={s.shared_interests} />
-              <div className="row" style={{ marginTop: 4 }}>
-                {s.relationship_status === 'active' ? (
-                  <button className="btn btn-secondary btn-small" onClick={() => navigate('/messages')}>{homeCopy.companionMatching.openMessages}</button>
-                ) : s.relationship_status === 'request_pending' ? (
-                  <span className="pill pill-info">{homeCopy.companionMatching.requested}</span>
-                ) : (
-                  <button className="btn btn-primary btn-small" disabled={busy === s.member_profile_id}
-                    onClick={() => void introduce(s.member_profile_id)}>
-                    {homeCopy.companionMatching.request}
-                  </button>
-                )}
-              </div>
+            </div>
+            <InterestChips labels={s.shared_interests} />
+            <div className="home-match-actions">
+              {s.relationship_status === 'active' ? (
+                <button className="btn btn-secondary btn-small" onClick={() => navigate('/messages')}>{homeCopy.companionMatching.openMessages}</button>
+              ) : s.relationship_status === 'request_pending' ? (
+                <span className="pill pill-info" style={{ alignSelf: 'center' }}>{homeCopy.companionMatching.requested}</span>
+              ) : (
+                <button className="btn btn-primary btn-small" disabled={busy === s.member_profile_id}
+                  onClick={() => void introduce(s.member_profile_id)}>
+                  {homeCopy.companionMatching.request}
+                </button>
+              )}
             </div>
           </div>
         ))}

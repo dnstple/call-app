@@ -662,6 +662,10 @@ table.plain th { color: var(--color-text-secondary); font-weight: 600; }
 #root:has(.msg-workspace) { min-height: 0; }
 .shell:has(.msg-workspace) { min-height: 0; }
 .shell:has(.msg-workspace) .sidenav { height: auto; }
+/* The chat sizes itself to the viewport (JS reserves the fixed bottom nav), so
+   the page wrapper must NOT add its usual bottom padding — that padding was the
+   dead, scrollable empty space below the composer. */
+.page:has(.msg-workspace) { padding: 0; max-width: none; }
 .msg-workspace {
   display: flex;
   width: 100%;
@@ -844,18 +848,22 @@ table.plain th { color: var(--color-text-secondary); font-weight: 600; }
   text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 8px;
 }
 .agenda-row {
-  display: flex; align-items: center; gap: 12px; width: 100%; flex-wrap: wrap;
+  display: flex; align-items: center; gap: 12px; width: 100%;
   background: var(--color-surface); border: 1px solid var(--color-border);
-  border-radius: var(--radius-m); padding: 10px 14px; cursor: pointer;
-  text-align: left; color: inherit; font: inherit; transition: border-color var(--motion), background var(--motion);
+  border-radius: var(--radius-l); padding: 12px 16px; cursor: pointer;
+  text-align: left; color: inherit; font: inherit; transition: border-color var(--motion), background var(--motion), box-shadow var(--motion);
 }
 .agenda-row:hover { border-color: var(--color-border-strong); background: var(--color-surface-muted); }
 .agenda-row:focus-visible { outline: 2px solid var(--color-brand-strong); outline-offset: 2px; }
 .agenda-time {
-  display: flex; flex-direction: column; align-items: center; min-width: 62px;
-  font-weight: 800; font-size: 1.05em; color: var(--color-text-primary);
+  display: flex; flex-direction: column; align-items: flex-start; min-width: 52px; flex: none;
+  font-weight: 800; font-size: 1.05em; color: var(--color-text-primary); line-height: 1.15;
 }
 .agenda-duration { font-size: 0.7em; font-weight: 500; color: var(--color-text-muted); }
+.agenda-person { flex: 1 1 auto; }
+.agenda-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Status + Join stay together, pinned to the right, never cramping the name. */
+.agenda-end { display: inline-flex; align-items: center; gap: 8px; flex: none; margin-left: auto; }
 .date-strip { display: flex; gap: 6px; width: 100%; overflow-x: auto; padding-bottom: 4px; }
 .date-strip-day {
   display: flex; flex-direction: column; align-items: center; gap: 2px;
@@ -1565,6 +1573,7 @@ svg.lucide-loader-circle, svg.lucide-loader-2, svg.lucide-loader {
 .home-match-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .home-match-photo { flex: none; width: 56px; height: 56px; border-radius: 14px; overflow: hidden; background: var(--color-brand-subtle); display: grid; place-items: center; text-decoration: none; color: var(--color-brand-strong); }
 .home-match-photo img { width: 100%; height: 100%; object-fit: cover; }
+.home-match-initial { font-weight: 800; font-size: 1.15rem; letter-spacing: 0.01em; }
 .home-match-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
 .home-match-title strong { font-size: 1.02rem; line-height: 1.25; }
 .home-match-overlap { font-size: 0.82rem; color: var(--color-text-secondary); }
