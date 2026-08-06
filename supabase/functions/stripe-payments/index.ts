@@ -463,12 +463,17 @@ Deno.serve(async (req) => {
       // 3D-B1 central fail-closed origin policy (Connect return keeps its
       // existing /#/settings?connect=… contract).
       const origin = resolveReturnOrigin(typeof body.origin === 'string' ? body.origin : '');
+      // Optional caller-supplied in-app return path (so onboarding can return to
+      // the page the Companion started from, e.g. a booking). Fail closed to the
+      // Settings contract for anything that isn't a plain in-app hash route.
+      const rawReturn = typeof body.returnPath === 'string' ? body.returnPath : '';
+      const safeReturn = /^\/#\/[A-Za-z0-9/_-]*$/.test(rawReturn) ? rawReturn : '/#/settings';
       // Account Links are short-lived and single-use by Stripe design; an
       // expired link is simply regenerated here ("Continue setup").
       const link = await stripe.accountLinks.create({
         account: made.stripeAccountId,
-        refresh_url: `${origin}/#/settings?connect=refresh`,
-        return_url: `${origin}/#/settings?connect=return`,
+        refresh_url: `${origin}${safeReturn}?connect=refresh`,
+        return_url: `${origin}${safeReturn}?connect=return`,
         type: 'account_onboarding',
       });
       return json({ ok: true, url: link.url });

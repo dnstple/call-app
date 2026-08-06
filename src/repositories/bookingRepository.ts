@@ -68,6 +68,11 @@ export function mapBookingError(e: any, fallback = 'Something went wrong. Please
   if (msg.includes('invalid_transition')) {
     return new RepoError('This conversation has already moved on — refresh to see its latest status.', 'conflict');
   }
+  // Belt-and-braces: if the (now removed) paid-acceptance gate is still live
+  // pre-migration, show a clear, in-context message rather than a raw code.
+  if (msg.includes('not_ready') && msg.includes('accepting')) {
+    return new RepoError('Set up your payout account before accepting paid conversations — you can do this from this page.', 'validation');
+  }
   if (msg.includes('reschedule_closed')) {
     return new RepoError(RESCHEDULE_CLOSED_COPY, 'conflict');
   }

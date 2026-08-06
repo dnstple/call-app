@@ -27,7 +27,7 @@ import {
   type AvailableSlot,
 } from '../repositories/bookingRepository';
 import { RepoError } from '../repositories/profileRepository';
-import { getConnectStatus } from '../repositories/billingRepository';
+import { getConnectStatus, createConnectOnboardingLink } from '../repositories/billingRepository';
 import { formatMinor } from '../repositories/availabilityRepository';
 import { browserTimezone } from '../domain/timezones';
 import { MEDIUM_LABELS } from '../domain/format';
@@ -165,19 +165,39 @@ export default function BookingDetail() {
   // payouts. This is distinct from BOTH message-request acceptance (which needs
   // no card and no payout at all) and the PAYER's card (enforced up-front by the
   // setup-first booking flow, never at the Companion's accept step).
-  const isPaidRequest = !!booking && !booking.is_trial && booking.price_minor > 0;
+  // Any priced booking (including a £5 trial) creates a held earning, so the
+  // payout notice applies to all of them — not only non-trial requests.
+  const isPaidBooking = !!booking && booking.price_minor > 0;
   const [payoutReady, setPayoutReady] = useState<boolean | null>(null);
+  const refreshPayoutReady = useCallback((refresh = false) => {
+    getConnectStatus(refresh)
+      .then((s) => setPayoutReady(Boolean(s.ready)))
+      .catch(() => setPayoutReady(null));
+  }, []);
   useEffect(() => {
-    if (!isSupabaseMode() || !booking || !isCompanionSide || booking.status !== 'requested' || !isPaidRequest) {
+    if (!isSupabaseMode() || !booking || !isCompanionSide || booking.status !== 'requested' || !isPaidBooking) {
       setPayoutReady(null);
       return;
     }
-    let live = true;
-    getConnectStatus()
-      .then((s) => { if (live) setPayoutReady(Boolean(s.ready)); })
-      .catch(() => { if (live) setPayoutReady(null); });
-    return () => { live = false; };
-  }, [booking, isCompanionSide, isPaidRequest]);
+    refreshPayoutReady(false);
+  }, [booking, isCompanionSide, isPaidBooking, refreshPayoutReady]);
+
+  // Returning from Stripe Connect onboarding (?connect=…): re-check readiness
+  // from the server so the notice clears without leaving the booking page.
+  const [onboarding, setOnboarding] = useState(false);
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.location.hash.includes('connect=')) {
+      refreshPayoutReady(true);
+    }
+  }, [refreshPayoutReady]);
+
+  const startPayoutOnboarding = useCallback(async () => {
+    if (onboarding || !booking) return;
+    setOnboarding(true);
+    const url = await createConnectOnboardingLink(`/#/conversations/${booking.id}`);
+    if (url) { window.location.href = url; return; } // Stripe-hosted onboarding
+    setOnboarding(false);
+  }, [onboarding, booking]);
 
   // Section 5 (first-come seat) — a Coordinator who ARRANGED a booking for a
   // managed Member, and is not the Member themselves, may take the single
@@ -506,19 +526,20 @@ export default function BookingDetail() {
           {/* Section 3 — held-payout notice: accepting is allowed; the payout
               simply waits until the Companion connects their account. Never a
               blocker, never a technical error. */}
-          {isCompanionSide && booking.status === 'requested' && isPaidRequest && payoutReady === false && (
+          {isCompanionSide && booking.status === 'requested' && isPaidBooking && payoutReady === false && (
             <div className="card card-tight col mt-2" style={{ gap: 8, maxWidth: 480 }} role="note">
               <span className="bold">You can accept — payouts are on hold</span>
               <span className="muted longform">
-                You can accept this conversation and hold it as normal. Your earnings will stay on
-                hold until you connect your payout account — then they’ll be released to you.
+                You can accept this conversation now. Your earnings will stay on hold until you set
+                up your payout account — then they’ll be released to you.
               </span>
               <button
                 className="btn btn-secondary btn-small"
                 style={{ alignSelf: 'flex-start' }}
-                onClick={() => navigate('/settings')}
+                disabled={onboarding}
+                onClick={() => void startPayoutOnboarding()}
               >
-                Set up payouts
+                {onboarding ? 'Opening…' : 'Set up payouts'}
               </button>
             </div>
           )}

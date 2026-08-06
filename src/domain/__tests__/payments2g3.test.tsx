@@ -42,8 +42,15 @@ describe('hosted onboarding + status sync', () => {
   it('6+19. Account Links are caller-scoped with allowlisted return/refresh URLs', () => {
     expect(FN).toContain('stripe.accountLinks.create');
     expect(FN).toContain("type: 'account_onboarding'");
-    expect(FN).toContain('/#/settings?connect=refresh');
-    expect(FN).toContain('/#/settings?connect=return');
+    // Return/refresh use the ?connect= contract. The path defaults to the
+    // Settings page, but a caller may supply a safe in-app hash route (e.g. a
+    // booking) so onboarding returns to where it was started — validated fail
+    // closed so it can never be an open redirect.
+    expect(FN).toContain('?connect=refresh');
+    expect(FN).toContain('?connect=return');
+    expect(FN).toContain("'/#/settings'");           // default fallback preserved
+    expect(FN).toContain('body.returnPath');          // caller-supplied path considered
+    expect(FN).toContain('safeReturn');               // …but validated before use
     // Expired links → regenerate via the same action ("Continue setup").
     expect(FN).toContain('expired link is simply regenerated');
     expect(PANEL).toContain("'Continue setup'");

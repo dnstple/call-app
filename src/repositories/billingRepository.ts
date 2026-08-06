@@ -241,9 +241,13 @@ export async function getConnectStatus(refresh = false): Promise<ConnectStatus> 
   return ((data as { status?: ConnectStatus }).status) ?? { hasAccount: false };
 }
 
-export async function createConnectOnboardingLink(): Promise<string | null> {
+export async function createConnectOnboardingLink(returnPath?: string): Promise<string | null> {
   const { data, error } = await getSupabaseClient().functions.invoke('stripe-payments', {
-    body: { action: 'create_connect_onboarding_link', origin: window.location.origin },
+    body: {
+      action: 'create_connect_onboarding_link',
+      origin: window.location.origin,
+      returnPath: returnPath ?? '',
+    },
   });
   if (error || !data) return null;
   return (data as { url?: string }).url ?? null;
