@@ -8,7 +8,7 @@
  * (with notes) → allow a re-record.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Video, Circle, Square, RefreshCw, CheckCircle2, Clock, AlertTriangle, Loader2 } from 'lucide-react';
+import { Video, Circle, Square, RefreshCw, CheckCircle2, Clock, AlertTriangle, Loader2, ShieldCheck } from 'lucide-react';
 import {
   getMyVideoVerification,
   submitVerificationVideo,
@@ -65,6 +65,16 @@ export function VideoVerification({ profileId }: { profileId: string }) {
           <h2 style={{ margin: 0 }}>Video verification</h2>
           <span className="faint">A short recorded video helps us confirm you’re a real person before your profile goes live.</span>
         </div>
+      </div>
+
+      <div
+        className="row"
+        role="note"
+        style={{ gap: 8, alignItems: 'center', background: 'var(--color-brand-subtle, var(--surface-muted))',
+          border: '1px solid var(--color-border)', borderRadius: 10, padding: '10px 12px' }}
+      >
+        <ShieldCheck size={18} aria-hidden="true" style={{ flex: 'none', color: 'var(--color-brand-strong)' }} />
+        <span><strong>Your privacy:</strong> this video is used only to verify your identity and is permanently deleted as soon as verification is complete.</span>
       </div>
 
       {status === 'approved' && (

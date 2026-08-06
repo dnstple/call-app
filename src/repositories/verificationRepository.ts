@@ -32,13 +32,14 @@ export interface VerificationVideoRow {
   account_id: string;
   name: string;
   email: string | null;
-  storage_path: string;
+  storage_path: string | null;
   duration_seconds: number;
   mime_type: string;
   size_bytes: number | null;
   status: 'pending' | 'approved' | 'rejected';
   review_notes: string | null;
   reviewed_at: string | null;
+  deleted_at: string | null;
   created_at: string;
 }
 
@@ -91,17 +92,27 @@ export async function adminListVerificationVideos(status?: string): Promise<Veri
   return (data ?? []) as VerificationVideoRow[];
 }
 
+/**
+ * Approve or reject. On completion the server clears the stored reference and
+ * stamps deletion (videos are deleted once verification is complete); it returns
+ * the former path so we can remove the underlying file. Best-effort file removal
+ * is done here so callers don't have to.
+ */
 export async function adminReviewVerificationVideo(
   id: string,
   decision: 'approved' | 'rejected',
   notes?: string,
 ): Promise<void> {
-  const { error } = await client().rpc('admin_review_verification_video', {
+  const { data, error } = await client().rpc('admin_review_verification_video', {
     p_id: id,
     p_decision: decision,
     p_notes: notes?.trim() ? notes.trim() : null,
   });
   if (error) throw error;
+  const path = (data as { deleted_path?: string } | null)?.deleted_path;
+  if (path) {
+    await client().storage.from(VERIFICATION_BUCKET).remove([path]).catch(() => {});
+  }
 }
 
 /** A short-lived signed URL for playing a submitted video (support & owner). */

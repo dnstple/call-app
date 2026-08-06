@@ -86,7 +86,9 @@ function ReviewCard({ row, onReviewed }: { row: VerificationVideoRow; onReviewed
 
   useEffect(() => {
     let alive = true;
-    verificationVideoUrl(row.storage_path).then((u) => { if (alive) setUrl(u); });
+    if (row.storage_path) {
+      verificationVideoUrl(row.storage_path).then((u) => { if (alive) setUrl(u); });
+    }
     return () => { alive = false; };
   }, [row.storage_path]);
 
@@ -120,7 +122,11 @@ function ReviewCard({ row, onReviewed }: { row: VerificationVideoRow; onReviewed
         <span className={`access-badge ${badge}`}>{row.status}</span>
       </div>
 
-      {url ? (
+      {!row.storage_path ? (
+        <p className="text-secondary" style={{ margin: 0 }}>
+          Video deleted after verification{row.deleted_at ? ` on ${new Date(row.deleted_at).toLocaleDateString()}` : ''}.
+        </p>
+      ) : url ? (
         // eslint-disable-next-line jsx-a11y/media-has-caption
         <video src={url} controls playsInline preload="metadata" style={{ width: '100%', maxHeight: 420, borderRadius: 12, background: '#000' }} />
       ) : (
@@ -135,23 +141,28 @@ function ReviewCard({ row, onReviewed }: { row: VerificationVideoRow; onReviewed
 
       {err && <p className="access-inline-error">{err}</p>}
 
-      <div className="col" style={{ gap: 8 }}>
-        <textarea
-          className="input"
-          rows={2}
-          placeholder="Review notes (required to reject)"
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-        />
-        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-          <button className="btn btn-primary btn-small" disabled={busy} onClick={() => review('approved')}>
-            <CheckCircle2 size={16} aria-hidden="true" /> Approve
-          </button>
-          <button className="btn btn-danger btn-small" disabled={busy} onClick={() => review('rejected')}>
-            <XCircle size={16} aria-hidden="true" /> Reject
-          </button>
+      {row.status === 'pending' && (
+        <div className="col" style={{ gap: 8 }}>
+          <p className="faint" style={{ margin: 0 }}>
+            The video is permanently deleted as soon as you approve or reject it.
+          </p>
+          <textarea
+            className="input"
+            rows={2}
+            placeholder="Review notes (required to reject)"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+          />
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+            <button className="btn btn-primary btn-small" disabled={busy} onClick={() => review('approved')}>
+              <CheckCircle2 size={16} aria-hidden="true" /> Approve
+            </button>
+            <button className="btn btn-danger btn-small" disabled={busy} onClick={() => review('rejected')}>
+              <XCircle size={16} aria-hidden="true" /> Reject
+            </button>
+          </div>
         </div>
-      </div>
+      )}
     </section>
   );
 }

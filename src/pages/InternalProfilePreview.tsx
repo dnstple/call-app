@@ -208,7 +208,7 @@ function VerificationVideoBlock({ accountId }: { accountId: string }) {
         if (!alive) return;
         const found = rows.find((r) => r.account_id === accountId) ?? null;
         setRow(found);
-        if (found) {
+        if (found && found.storage_path) {
           const u = await verificationVideoUrl(found.storage_path);
           if (alive) setUrl(u);
         }
@@ -239,7 +239,11 @@ function VerificationVideoBlock({ accountId }: { accountId: string }) {
       <span className="text-secondary" style={{ fontSize: '0.85rem' }}>
         {secs(row.duration_seconds)} · submitted {new Date(row.created_at).toLocaleString()}
       </span>
-      {url ? (
+      {!row.storage_path ? (
+        <p className="text-secondary" style={{ margin: 0 }}>
+          Video deleted after verification{row.deleted_at ? ` on ${new Date(row.deleted_at).toLocaleDateString()}` : ''}.
+        </p>
+      ) : url ? (
         // eslint-disable-next-line jsx-a11y/media-has-caption
         <video src={url} controls playsInline preload="metadata" style={{ width: '100%', maxHeight: 420, borderRadius: 12, background: '#000' }} />
       ) : (
