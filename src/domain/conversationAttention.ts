@@ -56,19 +56,24 @@ export function requiresCurrentUserAction(
     };
   }
 
+  // A request/proposal whose slot has already started can no longer be
+  // actioned — accepting a conversation for a time that has passed is
+  // meaningless — so it must not linger in "needs your attention".
+  const slotPassed = new Date(booking.starts_at).getTime() <= now.getTime();
+
   switch (booking.status) {
     case 'requested':
       // Only the COMPANION can act on a new request. The requester side
       // is simply waiting — that is a status, not attention.
-      return role === 'companion'
-        ? {
-            required: true,
-            kind: 'respond_to_request',
-            reason: 'A new booking request needs your response.',
-            action: 'Respond',
-          }
-        : NONE;
+      if (role !== 'companion' || slotPassed) return NONE;
+      return {
+        required: true,
+        kind: 'respond_to_request',
+        reason: 'A new booking request needs your response.',
+        action: 'Respond',
+      };
     case 'change_proposed':
+      if (slotPassed) return NONE;
       return {
         required: true,
         kind: 'review_proposal',

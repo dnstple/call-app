@@ -169,6 +169,13 @@ describe('requiresCurrentUserAction — role-aware classification', () => {
     expect(state.kind).toBe('respond_to_request');
   });
 
+  it('a request/proposal whose slot has already passed is NO LONGER attention', () => {
+    const past = new Date(Date.now() - 2 * HOUR).toISOString();
+    // Not confirmable (no completion window) and past its slot → un-actionable.
+    expect(requiresCurrentUserAction(booking({ status: 'requested', starts_at: past }), 'companion').required).toBe(false);
+    expect(requiresCurrentUserAction(booking({ status: 'change_proposed', starts_at: past }), 'companion').required).toBe(false);
+  });
+
   it('5. a proposed time change requires a response → attention', () => {
     for (const role of ['coordinator', 'companion'] as const) {
       const state = requiresCurrentUserAction(booking({ status: 'change_proposed' }), role);
