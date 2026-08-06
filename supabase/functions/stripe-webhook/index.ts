@@ -154,6 +154,28 @@ Deno.serve(async (req) => {
             p_metadata_order: orderId,
           });
           result = 'order_finalised';
+          // New commission model: record the ACTUAL Stripe processing fee from
+          // the charge's balance transaction, then snapshot the split. Idempotent
+          // (record_payment_processing_fee never rewrites a recorded snapshot).
+          // Best-effort: if the balance transaction is not yet available the fee
+          // stays 'pending' and NO payout is released until it is recorded.
+          try {
+            const chargeRef = pi.latest_charge;
+            if (chargeRef) {
+              const charge = typeof chargeRef === 'string'
+                ? await stripe.charges.retrieve(chargeRef, { expand: ['balance_transaction'] })
+                : chargeRef;
+              const bt = (charge as Stripe.Charge).balance_transaction;
+              if (bt) {
+                const btObj = typeof bt === 'string'
+                  ? await stripe.balanceTransactions.retrieve(bt) : bt;
+                await admin.rpc('record_payment_processing_fee', {
+                  p_order: orderId, p_charge: charge.id,
+                  p_balance_txn: btObj.id, p_fee_pence: btObj.fee,
+                });
+              }
+            }
+          } catch { /* fee stays pending; recorded on a later delivery/reconciliation */ }
         }
         break;
       }
