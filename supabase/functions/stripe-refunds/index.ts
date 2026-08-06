@@ -14,6 +14,7 @@
  */
 import Stripe from 'npm:stripe@17';
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { stripeKeyAllowed } from '../_shared/stripeMode.ts';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -33,8 +34,8 @@ Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
 
   const secretKey = Deno.env.get('STRIPE_SECRET_KEY') ?? '';
-  if (!secretKey.startsWith('sk_test_')) {
-    return json({ error: 'stripe_not_configured', detail: 'Test-mode secret key required.' }, 200);
+  if (!stripeKeyAllowed(secretKey)) {
+    return json({ error: 'stripe_not_configured', detail: 'A test-mode key, or a live key with STRIPE_LIVE_ENABLED=true, is required.' }, 200);
   }
   if ((req.headers.get('x-billing-secret') ?? '') !== (Deno.env.get('BILLING_CRON_SECRET') ?? ' ')) {
     return json({ error: 'unauthorised' }, 401);

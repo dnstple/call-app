@@ -15,6 +15,7 @@
  */
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import Stripe from 'npm:stripe@17';
+import { stripeKeyAllowed } from '../_shared/stripeMode.ts';
 
 // Every dispute event object carries the full identifiers + provider fields, so
 // the SAME upsert payload can be built for created/updated/closed/funds_* events.
@@ -43,7 +44,7 @@ Deno.serve(async (req) => {
   // one must be. Secrets are never logged or echoed.
   const platformSecret = Deno.env.get('STRIPE_WEBHOOK_SECRET') ?? '';
   const connectSecret = Deno.env.get('STRIPE_CONNECT_WEBHOOK_SECRET') ?? '';
-  if (!secretKey.startsWith('sk_test_') || (!platformSecret && !connectSecret)) {
+  if (!stripeKeyAllowed(secretKey) || (!platformSecret && !connectSecret)) {
     return new Response('not_configured', { status: 500 });
   }
   const stripe = new Stripe(secretKey);
