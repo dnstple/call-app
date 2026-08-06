@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   computeCommission,
   commissionRateBps,
+  allocatePence,
   STANDARD_COMMISSION_BPS,
   TRIAL_COMMISSION_BPS,
 } from '../commission';
@@ -72,6 +73,26 @@ describe('commission model — authoritative integer-pence calculation', () => {
     expect(() => computeCommission(1000, -1, false)).toThrow();
     expect(() => computeCommission(1000, 1001, false)).toThrow(); // fee > gross
     expect(() => computeCommission(10.5, 0, false)).toThrow();    // non-integer
+  });
+
+  it('package/plan allocation sums EXACTLY to the total (largest remainder)', () => {
+    // A package earning of 1311p across 4 calls: 328,328,328,327 → 1311.
+    const a = allocatePence(1311, 4);
+    expect(a.reduce((s, x) => s + x, 0)).toBe(1311);
+    expect(a).toEqual([328, 328, 328, 327]);
+    // Each component of the breakdown is allocated across credits and the
+    // per-call slices sum EXACTLY back to the payment-level total (the spec's
+    // reconciliation requirement — components are allocated independently).
+    const r = computeCommission(6137, 137, false); // odd figures → real remainders
+    const feeShares = allocatePence(r.stripeFeePence, 3);
+    const commShares = allocatePence(r.commissionPence, 3);
+    const earnShares = allocatePence(r.companionEarningsPence, 3);
+    expect(feeShares.reduce((s, x) => s + x, 0)).toBe(r.stripeFeePence);
+    expect(commShares.reduce((s, x) => s + x, 0)).toBe(r.commissionPence);
+    expect(earnShares.reduce((s, x) => s + x, 0)).toBe(r.companionEarningsPence);
+    // Uneven splits differ by at most one penny between shares.
+    expect(Math.max(...earnShares) - Math.min(...earnShares)).toBeLessThanOrEqual(1);
+    expect(() => allocatePence(100, 0)).toThrow();
   });
 
   it('a zero-net payment yields zero commission and zero earnings', () => {

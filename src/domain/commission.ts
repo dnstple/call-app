@@ -72,6 +72,20 @@ function roundHalfAwayFromZero(n: number): number {
   return Math.sign(n) * Math.round(Math.abs(n));
 }
 
+/**
+ * Split an integer-pence total into `parts` shares that sum EXACTLY to the total
+ * (largest-remainder: the first `remainder` shares get one extra penny). Mirrors
+ * the SQL allocation used for package/plan credits so per-call figures reconcile
+ * to the payment-level totals.
+ */
+export function allocatePence(totalPence: number, parts: number): number[] {
+  if (!Number.isInteger(totalPence) || totalPence < 0) throw new Error('totalPence must be a non-negative integer');
+  if (!Number.isInteger(parts) || parts < 1) throw new Error('parts must be a positive integer');
+  const base = Math.floor(totalPence / parts);
+  const remainder = totalPence - base * parts;
+  return Array.from({ length: parts }, (_, i) => base + (i < remainder ? 1 : 0));
+}
+
 export function computeCommission(
   grossPence: number,
   stripeFeePence: number,

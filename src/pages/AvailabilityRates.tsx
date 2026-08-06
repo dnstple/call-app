@@ -14,6 +14,7 @@ import { PageHeader, Switch } from '../components/ui';
 import { PackageOfferEditor } from '../components/PackageOfferEditor';
 import { RepoError } from '../repositories/profileRepository';
 import * as repo from '../repositories/availabilityRepository';
+import { computeCommission, formatPence } from '../domain/commission';
 import { clearSetupIncomplete } from '../signup/completeSupabase';
 import {
   browserTimezone,
@@ -490,13 +491,19 @@ function ExceptionsEditor({
 
 /* ================= Offers ================= */
 
-function FeeLine({ priceMinor, type, rates }: { priceMinor: number; type: 'trial' | 'single'; rates: { trialPct: number; standardPct: number } }) {
+function FeeLine({ priceMinor, type }: { priceMinor: number; type: 'trial' | 'single' }) {
   if (!Number.isFinite(priceMinor) || priceMinor < repo.OFFER_PRICE_MIN_MINOR) return null;
-  const fee = repo.calculateFeePreview(priceMinor, type, rates);
+  const isTrial = type === 'trial';
+  // ESTIMATE ONLY: the real Stripe fee depends on the customer's card and is
+  // deducted at payment time. A typical UK card is ~1.5% + 20p; the authoritative
+  // split is computed server-side from the actual fee after payment.
+  const estFee = Math.min(Math.round(priceMinor * 0.015) + 20, priceMinor);
+  const est = computeCommission(priceMinor, estFee, isTrial);
   return (
     <p className="faint" style={{ margin: 0 }}>
-      Estimated platform fee ({fee.ratePct}%): {repo.formatMinor(fee.feeMinor)} · you’d receive{' '}
-      {repo.formatMinor(fee.companionMinor)}
+      {isTrial
+        ? <>No Apricoti commission on trials. Stripe’s payment-processing fee still applies — you’d receive about <strong>{formatPence(est.companionEarningsPence)}</strong> (estimate).</>
+        : <>Apricoti charges 10% commission after Stripe’s payment-processing fee. You’d receive about <strong>{formatPence(est.companionEarningsPence)}</strong> (estimate — the exact Stripe fee depends on the customer’s card).</>}
     </p>
   );
 }
@@ -564,7 +571,7 @@ export function SingleOfferRow({
             <button className="btn btn-ghost btn-small" disabled={saving} onClick={onStopEdit}>Cancel</button>
           </div>
         </div>
-        <FeeLine priceMinor={priceMinor} type="single" rates={rates} />
+        <FeeLine priceMinor={priceMinor} type="single" />
         {err && <span className="faint" role="alert" style={{ color: 'var(--color-danger-text)' }}>{err}</span>}
       </div>
     );
@@ -647,7 +654,8 @@ function OffersEditor({
         <h3>Trial conversation</h3>
         <p className="muted small">
           Every trial is a <strong>30-minute introduction for £5</strong>. This is a fixed rate set
-          by the platform and can’t be changed — the platform takes {rates.trialPct}% on trials.
+          by the platform and can’t be changed. Apricoti charges <strong>no commission</strong> on
+          trials — Stripe’s payment-processing fee still applies.
         </p>
         <div className="row wrap" style={{ gap: 10, alignItems: 'center' }}>
           <span className="badge">30 minutes · £5</span>
@@ -677,13 +685,13 @@ function OffersEditor({
             </button>
           )}
         </div>
-        <FeeLine priceMinor={500} type="trial" rates={rates} />
+        <FeeLine priceMinor={500} type="trial" />
       </div>
 
       {/* Singles */}
       <div className="card card-tight">
         <h3>Standard conversations</h3>
-        <p className="muted small">The platform takes {rates.standardPct}% on standard conversations. You can offer one active conversation of each length.</p>
+        <p className="muted small">Apricoti charges <strong>10% commission after Stripe’s payment-processing fee</strong> has been deducted. You can offer one active conversation of each length.</p>
         {singles.length > 0 && (
           <div className="stack-list mb-4">
             {singles.map((o) => (
@@ -755,7 +763,7 @@ function OffersEditor({
           </button>
         </div>
         {addError && <p className="faint" role="alert" style={{ color: 'var(--color-danger-text)', margin: '6px 0 0' }}>{addError}</p>}
-        <FeeLine priceMinor={repo.poundsToMinor(newPrice)} type="single" rates={rates} />
+        <FeeLine priceMinor={repo.poundsToMinor(newPrice)} type="single" />
       </div>
     </div>
   );
