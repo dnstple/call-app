@@ -32,7 +32,7 @@ import { formatMinor } from '../repositories/availabilityRepository';
 import { browserTimezone } from '../domain/timezones';
 import { MEDIUM_LABELS } from '../domain/format';
 import type { BookingHistoryRow, BookingProposalRow, MyBookingRow } from '../supabase/database.types';
-import { EmptyState } from '../components/ui';
+import { EmptyState, Modal } from '../components/ui';
 import { SlotPicker, slotDayLabel, slotTimeLabel } from '../components/SupabaseBookingWizard';
 import { getAllAvailablePackageSlots } from '../repositories/packageRepository';
 import { DateTimeSlotPicker, SLOT_WINDOW_DAYS } from '../components/DateTimeSlotPicker';
@@ -566,18 +566,32 @@ export default function BookingDetail() {
           )}
 
           {declining && (
-            <div className="card card-tight col mt-4" style={{ gap: 10, maxWidth: 480 }}>
-              <label className="col" style={{ gap: 6 }}>
-                <span className="bold">Reason (optional)</span>
-                <input type="text" value={reason} maxLength={200} onChange={(e) => setReason(e.target.value)} />
-              </label>
-              <div className="row" style={{ gap: 10 }}>
-                <button className="btn btn-primary btn-small" disabled={busy} onClick={run(() => declineBooking(booking.id, reason || undefined))}>
-                  Confirm decline
-                </button>
-                <button className="btn btn-ghost btn-small" onClick={() => setDeclining(false)}>Back</button>
+            <Modal title="Decline this request?" onClose={() => { if (!busy) { setDeclining(false); setReason(''); } }}>
+              <div className="col" style={{ gap: 12 }}>
+                <p className="muted" style={{ margin: 0 }}>
+                  This request will be declined and the person let know. You can add a short reason if
+                  you’d like — it’s optional.
+                </p>
+                <label className="col" style={{ gap: 6 }}>
+                  <span className="bold">Reason (optional)</span>
+                  <input
+                    type="text"
+                    autoFocus
+                    placeholder="e.g. I’m not free at that time"
+                    value={reason}
+                    maxLength={200}
+                    onChange={(e) => setReason(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && !busy) void run(() => declineBooking(booking.id, reason || undefined))(); }}
+                  />
+                </label>
+                <div className="row" style={{ gap: 10, justifyContent: 'flex-end' }}>
+                  <button className="btn btn-ghost" disabled={busy} onClick={() => { setDeclining(false); setReason(''); }}>Keep it</button>
+                  <button className="btn btn-danger" disabled={busy} onClick={run(() => declineBooking(booking.id, reason || undefined))}>
+                    {busy ? 'Declining…' : 'Decline conversation'}
+                  </button>
+                </div>
               </div>
-            </div>
+            </Modal>
           )}
 
           {cancelling && (
