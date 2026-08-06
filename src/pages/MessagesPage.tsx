@@ -570,6 +570,14 @@ export default function MessagesPage() {
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
+  // While Messages is open, lock the whole app to the viewport so the DOCUMENT
+  // itself can never scroll — only the message list does. This kills the
+  // "empty scrollable space below the composer" regardless of :has() support.
+  useEffect(() => {
+    document.documentElement.classList.add('chat-viewport');
+    return () => document.documentElement.classList.remove('chat-viewport');
+  }, []);
+
   // The workspace fills everything below the shell's banner + topbar. The
   // offset is MEASURED from where the shell actually placed us — never a
   // hardcoded sidebar/banner guess — so the page itself never scrolls.

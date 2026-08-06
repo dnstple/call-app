@@ -666,6 +666,16 @@ table.plain th { color: var(--color-text-secondary); font-weight: 600; }
    the page wrapper must NOT add its usual bottom padding — that padding was the
    dead, scrollable empty space below the composer. */
 .page:has(.msg-workspace) { padding: 0; max-width: none; }
+
+/* Robust lock (no :has() dependency): while a chat is open the whole app is
+   pinned to the dynamic viewport height and the DOCUMENT cannot scroll — only
+   the message list scrolls internally. This removes the empty scrollable space
+   below the composer on every browser. */
+html.chat-viewport, html.chat-viewport body { height: 100%; overflow: hidden; overscroll-behavior: none; }
+html.chat-viewport #root { height: 100dvh; min-height: 0; overflow: hidden; }
+html.chat-viewport .shell { min-height: 0; height: 100%; }
+html.chat-viewport .main-col { min-height: 0; }
+html.chat-viewport .page { min-height: 0; padding: 0; max-width: none; overflow: hidden; }
 .msg-workspace {
   display: flex;
   width: 100%;
