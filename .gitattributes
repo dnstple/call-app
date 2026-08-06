@@ -1,0 +1,37 @@
+# Normalise line endings to LF for all text files on checkout and commit.
+#
+# Without this, a machine with core.autocrlf=true checks migrations and source
+# out with CRLF, which breaks source-contract tests that assert multi-line
+# substrings (they match on "\n", not "\r\n"), and churns every file in git.
+# Enforcing eol=lf keeps the working tree byte-identical to the committed LF
+# content on every platform.
+
+* text=auto eol=lf
+
+# Explicit text types (belt and braces).
+*.sql   text eol=lf
+*.ts    text eol=lf
+*.tsx   text eol=lf
+*.js    text eol=lf
+*.jsx   text eol=lf
+*.mjs   text eol=lf
+*.cjs   text eol=lf
+*.json  text eol=lf
+*.md    text eol=lf
+*.css   text eol=lf
+*.html  text eol=lf
+*.svg   text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+
+# Binary assets — never touch these.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.pdf   binary
+*.woff  binary
+*.woff2 binary
+*.mp4   binary
+*.webm  binary
