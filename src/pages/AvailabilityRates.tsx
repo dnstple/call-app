@@ -612,7 +612,6 @@ function OffersEditor({
 }) {
   const trial = offers.find((o) => o.offer_type === 'trial' && o.active);
   const singles = offers.filter((o) => o.offer_type === 'single');
-  const [trialPrice, setTrialPrice] = useState(trial ? String(trial.price_minor / 100) : '5');
   const [newPrice, setNewPrice] = useState('10');
   const [newDuration, setNewDuration] = useState(30);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -623,10 +622,6 @@ function OffersEditor({
   // At most one ACTIVE standard offer per duration.
   const activeDurationTaken = (duration: number, exceptId: string) =>
     singles.some((o) => o.active && o.duration_minutes === duration && o.id !== exceptId);
-
-  useEffect(() => {
-    if (trial) setTrialPrice(String(trial.price_minor / 100));
-  }, [trial?.id, trial?.price_minor]);
 
   async function run(action: () => Promise<unknown>, success: string) {
     if (busy) return;
@@ -647,52 +642,42 @@ function OffersEditor({
     <div className="col" style={{ gap: 16 }}>
       {error && <div className="banner banner-danger" role="alert">{error}</div>}
 
-      {/* Trial */}
+      {/* Trial — fixed terms (30 min / £5), not editable. */}
       <div className="card card-tight">
         <h3>Trial conversation</h3>
         <p className="muted small">
-          One 30-minute introduction. We recommend about £5 — the platform takes {rates.trialPct}% on trials.
+          Every trial is a <strong>30-minute introduction for £5</strong>. This is a fixed rate set
+          by the platform and can’t be changed — the platform takes {rates.trialPct}% on trials.
         </p>
-        <div className="row wrap" style={{ gap: 10 }}>
-          <div className="field" style={{ marginBottom: 0, width: 140 }}>
-            <label htmlFor="trial-price">Price (£)</label>
-            <input id="trial-price" type="number" min={1} step={0.5} value={trialPrice} onChange={(e) => setTrialPrice(e.target.value)} />
-          </div>
-          <div style={{ alignSelf: 'flex-end' }}>
-            {trial ? (
-              <div className="row" style={{ gap: 8 }}>
-                <button
-                  className="btn btn-secondary btn-small"
-                  disabled={busy}
-                  onClick={() => run(() => repo.updateOffer(trial.id, { price_minor: repo.poundsToMinor(trialPrice) }), 'Trial price updated')}
-                >
-                  Update
-                </button>
-                <button
-                  className="btn btn-danger btn-small"
-                  disabled={busy}
-                  onClick={() => run(() => repo.archiveOffer(trial.id), 'Trial offer turned off')}
-                >
-                  Turn off
-                </button>
-              </div>
-            ) : (
+        <div className="row wrap" style={{ gap: 10, alignItems: 'center' }}>
+          <span className="badge">30 minutes · £5</span>
+          {trial ? (
+            <>
+              <span className="badge badge-success">Active</span>
               <button
-                className="btn btn-secondary btn-small"
+                className="btn btn-danger btn-small"
                 disabled={busy}
-                onClick={() =>
-                  run(
-                    () => repo.createOffer(profileId, 'trial', { durationMinutes: 30, priceMinor: repo.poundsToMinor(trialPrice), supportedMethods: ['in_app'] }),
-                    'Trial offer created',
-                  )
-                }
+                onClick={() => run(() => repo.archiveOffer(trial.id), 'Trial offer turned off')}
               >
-                Offer a trial
+                Turn off
               </button>
-            )}
-          </div>
+            </>
+          ) : (
+            <button
+              className="btn btn-secondary btn-small"
+              disabled={busy}
+              onClick={() =>
+                run(
+                  () => repo.createOffer(profileId, 'trial', { durationMinutes: 30, priceMinor: 500, supportedMethods: ['in_app'] }),
+                  'Trial offer created',
+                )
+              }
+            >
+              Offer a 30-minute trial (£5)
+            </button>
+          )}
         </div>
-        <FeeLine priceMinor={repo.poundsToMinor(trialPrice)} type="trial" rates={rates} />
+        <FeeLine priceMinor={500} type="trial" rates={rates} />
       </div>
 
       {/* Singles */}

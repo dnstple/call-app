@@ -1200,7 +1200,8 @@ function ReviewStep({
           )}
           {role === 'companion' && (
             <ReviewSection title="After approval" onEdit={undefined}>
-              <ReviewRow label="Pricing & packages" value="You’ll set these in your dashboard once your profile is approved." />
+              <ReviewRow label="Trial conversations" value="Every trial is a fixed 30-minute introduction for £5 (this can’t be changed)." />
+              <ReviewRow label="Your own pricing" value="You’ll set your standard conversation prices in your dashboard once your profile is approved." />
             </ReviewSection>
           )}
         </>
