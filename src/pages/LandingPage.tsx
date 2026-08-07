@@ -5,7 +5,6 @@ import { APP_NAME } from '../config/branding';
 import { isSupabaseMode } from '../config/dataMode';
 import { publicLaunchMode, type LaunchMode } from '../repositories/accessRepository';
 import { ContactForm } from '../components/ContactForm';
-import { TwoPeopleTalking, CompanionCaller } from '../components/LandingIllustrations';
 import { landingCopy, SUPPORT_EMAIL } from '../content/landingContent';
 
 /**
@@ -42,8 +41,8 @@ function useLaunchMode(): LaunchMode {
  * The public homepage is indexable (index.html sets robots index,follow).
  */
 
-/* Photos removed — the landing page now uses flat illustrations
-   (TwoPeopleTalking / CompanionCaller) in place of the old image slots. */
+/* The landing page uses the Apricoti brand illustrations (cropped from the
+   product ad creatives) in public/: landing-hero.png and landing-companion.png. */
 
 export default function LandingPage() {
   const c = landingCopy;
@@ -90,7 +89,7 @@ export default function LandingPage() {
             </div>
             <p className="landing-fineprint">{c.hero.fineprint}</p>
           </div>
-          <TwoPeopleTalking className="landing-hero-photo landing-illus" />
+          <img src="/landing-hero.png" alt="A younger Companion and an older Member talking on the phone" loading="eager" className="landing-hero-photo landing-illus" />
         </div>
       </section>
 
@@ -210,7 +209,7 @@ export default function LandingPage() {
       {/* Become a Companion — centred split, image left on desktop / above on mobile */}
       <section className="landing-section">
         <div className="landing-container landing-split">
-          <CompanionCaller className="landing-illus" />
+          <img src="/landing-companion.png" alt="A Companion smiling on the phone" loading="lazy" className="landing-illus" />
           <div className="landing-split-text">
             <span className="section-label">{c.companion.label}</span>
             <h2>{c.companion.title}</h2>
