@@ -1,11 +1,12 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { CheckCircle2, Mail, Shield, Sparkles, Tag, UserRound, Video } from 'lucide-react';
 import { APP_NAME } from '../config/branding';
 import { isSupabaseMode } from '../config/dataMode';
 import { publicLaunchMode, type LaunchMode } from '../repositories/accessRepository';
 import { ContactForm } from '../components/ContactForm';
-import { landingCopy, landingImages, SUPPORT_EMAIL, type LandingImageSlot } from '../content/landingContent';
+import { TwoPeopleTalking, CompanionCaller } from '../components/LandingIllustrations';
+import { landingCopy, SUPPORT_EMAIL } from '../content/landingContent';
 
 /**
  * The signed-out landing page adapts to the authoritative launch mode
@@ -41,39 +42,8 @@ function useLaunchMode(): LaunchMode {
  * The public homepage is indexable (index.html sets robots index,follow).
  */
 
-/** One replaceable image area. Real art → set slot.src in landingContent.ts. */
-function LandingImage({ slot, className }: { slot: LandingImageSlot; className?: string }) {
-  const style = {
-    aspectRatio: slot.aspectRatio,
-    ['--landing-object-position' as string]: slot.objectPosition,
-  } as CSSProperties;
-  if (slot.src) {
-    return (
-      <img
-        src={slot.src}
-        alt={slot.alt}
-        loading="lazy"
-        className={`landing-photo landing-photo-${slot.mobileTreatment} ${className ?? ''}`}
-        style={style}
-      />
-    );
-  }
-  // Neutral placeholder: a calm gradient frame, labelled for assistive tech,
-  // with an internal-only note that never shows to normal users.
-  return (
-    <div
-      className={`landing-photo landing-photo-placeholder landing-tone-${slot.tone} ${className ?? ''}`}
-      style={style}
-      role="img"
-      aria-label={slot.alt}
-    >
-      <Sparkles size={26} aria-hidden="true" />
-      <span className="landing-photo-devnote" aria-hidden="true" data-dev-only>
-        Image: {slot.alt}
-      </span>
-    </div>
-  );
-}
+/* Photos removed — the landing page now uses flat illustrations
+   (TwoPeopleTalking / CompanionCaller) in place of the old image slots. */
 
 export default function LandingPage() {
   const c = landingCopy;
@@ -120,7 +90,7 @@ export default function LandingPage() {
             </div>
             <p className="landing-fineprint">{c.hero.fineprint}</p>
           </div>
-          <LandingImage slot={landingImages.hero} className="landing-hero-photo" />
+          <TwoPeopleTalking className="landing-hero-photo landing-illus" />
         </div>
       </section>
 
@@ -240,7 +210,7 @@ export default function LandingPage() {
       {/* Become a Companion — centred split, image left on desktop / above on mobile */}
       <section className="landing-section">
         <div className="landing-container landing-split">
-          <LandingImage slot={landingImages.coordinator} />
+          <CompanionCaller className="landing-illus" />
           <div className="landing-split-text">
             <span className="section-label">{c.companion.label}</span>
             <h2>{c.companion.title}</h2>
