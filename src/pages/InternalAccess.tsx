@@ -14,6 +14,7 @@ import {
   adminActions, cohortActions,
   type AdminListResult, type AdminListRow,
 } from '../repositories/accessRepository';
+import { sendTestEmail } from '../repositories/emailRepository';
 
 const STATUS = ['incomplete', 'ready_for_review', 'under_review', 'approved', 'rejected', 'suspended'];
 const ACCESS = ['waitlist', 'pilot', 'full', 'blocked'];
@@ -66,6 +67,20 @@ export default function InternalAccess() {
 
   const refresh = () => { loadTop(); loadList(); };
 
+  const [emailBusy, setEmailBusy] = useState(false);
+  const [emailMsg, setEmailMsg] = useState<string | null>(null);
+  const onTestEmail = async () => {
+    setEmailBusy(true); setEmailMsg(null);
+    try {
+      const r = await sendTestEmail();
+      setEmailMsg(r.ok
+        ? `Test email sent to ${r.recipient ?? 'the configured recipient'} (run ${r.testRunId ?? '—'}).`
+        : (r.error ?? 'The test email could not be sent.'));
+    } finally {
+      setEmailBusy(false);
+    }
+  };
+
   const dashCount = (group: string, key: string): number => {
     const g = (dash?.[group] as Record<string, number>) ?? {};
     return Number(g[key] ?? 0);
@@ -78,8 +93,14 @@ export default function InternalAccess() {
           <span className="section-label">Support</span>
           <h1 style={{ margin: 0 }}>Pilot access</h1>
         </div>
-        <button className="btn btn-ghost btn-small" onClick={refresh}><RefreshCw size={16} aria-hidden="true" /> Refresh</button>
+        <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+          <button className="btn btn-ghost btn-small" onClick={onTestEmail} disabled={emailBusy} title="Send a test email to the configured EMAIL_TEST_RECIPIENT">
+            {emailBusy ? <Loader2 size={16} className="spin" aria-hidden="true" /> : null} Send test email
+          </button>
+          <button className="btn btn-ghost btn-small" onClick={refresh}><RefreshCw size={16} aria-hidden="true" /> Refresh</button>
+        </div>
       </header>
+      {emailMsg ? <p role="status" style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--muted, #6b625c)' }}>{emailMsg}</p> : null}
 
       {/* Dashboard */}
       <section className="access-dash-grid">
