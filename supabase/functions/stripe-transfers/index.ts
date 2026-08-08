@@ -65,11 +65,14 @@ Deno.serve(async (req) => {
   // clean no-op) and this settlement pass moves no money — the control is the
   // authoritative gate, so this Edge Function already runs through the enforced
   // path. finalize_transfer_* below record provider outcomes and stay ungated.
-  const claimed = await admin.rpc('claim_plan_transfers', { p_limit: limit });
+  // 0136: production execution path. claim_payable_transfers keeps every eligibility
+  // rail of claim_plan_transfers but is gated by the single production switch and
+  // bounded by per-transfer + daily ceilings and the optional allowlist.
+  const claimed = await admin.rpc('claim_payable_transfers', { p_limit: limit });
   if (claimed.error) return json({ error: 'claim_failed' }, 500);
   const items = (claimed.data ?? []) as Claim[];
 
-  let transferred = 0, retryable = 0, permanent = 0;
+  let transferred = 0, retryable = 0, permanent = 0, insufficient = 0;
   for (const it of items) {
     try {
       const tr = await stripe.transfers.create(
@@ -95,6 +98,20 @@ Deno.serve(async (req) => {
     } catch (err) {
       // Map to a SAFE code; never persist the raw Stripe object.
       const e = err as { type?: string; code?: string };
+      // Insufficient available balance (settlement timing): the money was collected
+      // but hasn't settled yet. Keep the earning retryable AND alert the platform.
+      if (e.code === 'balance_insufficient') {
+        await admin.rpc('finalize_transfer_failed_retryable', {
+          p_attempt: it.attempt_id, p_code: 'balance_insufficient',
+          p_message: 'Insufficient available balance; will retry once funds settle.',
+        });
+        await admin.rpc('record_payout_insufficient_balance', {
+          p_earning: it.earning_id, p_booking: it.booking_id,
+          p_amount_minor: it.amount_minor, p_currency: it.currency,
+        });
+        retryable += 1; insufficient += 1;
+        continue;
+      }
       const isPermanent = e.type === 'StripeInvalidRequestError'
         || e.code === 'account_invalid' || e.code === 'transfers_not_allowed' || e.code === 'account_closed';
       const code = e.code ?? (e.type ?? 'provider_error');
@@ -111,5 +128,5 @@ Deno.serve(async (req) => {
       }
     }
   }
-  return json({ ok: true, claimed: items.length, transferred, retryable, permanent });
+  return json({ ok: true, claimed: items.length, transferred, retryable, permanent, insufficient });
 });
