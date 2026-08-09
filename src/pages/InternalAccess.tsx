@@ -17,6 +17,7 @@ import {
 import {
   sendTestEmail,
   syncMarketingAudience, sendMarketingTest, sendMarketingCampaign,
+  nudgeIncompleteCompanions,
 } from '../repositories/emailRepository';
 
 const STATUS = ['incomplete', 'ready_for_review', 'under_review', 'approved', 'rejected', 'suspended'];
@@ -100,6 +101,10 @@ export default function InternalAccess() {
   };
   const onSyncAudience = () => runMkt('Sync', () => syncMarketingAudience());
   const onMktTest = () => runMkt('Test', () => sendMarketingTest(mktSubject));
+  const onNudgeIncomplete = () => {
+    if (!window.confirm('Email every Companion whose profile isn’t published yet, asking them to finish it?')) return;
+    return runMkt('Nudge', () => nudgeIncompleteCompanions());
+  };
   const onMktSend = () => {
     const typed = window.prompt(
       'This sends the marketing campaign to EVERY user in the audience.\nType SEND to confirm:', '');
@@ -155,6 +160,16 @@ export default function InternalAccess() {
         <p className="muted small" style={{ margin: 0 }}>
           Sync first, send yourself a test, then “Send to everyone” (type SEND to confirm). Recipients can unsubscribe; this uses your marketing audience in Resend.
         </p>
+
+        <div style={{ borderTop: '1px solid var(--border, #FBE9DE)', margin: '6px 0', paddingTop: 10 }}>
+          <div className="row wrap" style={{ gap: 8, alignItems: 'center' }}>
+            <button className="btn btn-secondary btn-small" disabled={mktBusy} onClick={onNudgeIncomplete}>
+              Email incomplete companions
+            </button>
+            <span className="muted small">Nudges companions who haven’t finished their profile (photo, sections, consent) to complete it. Once per companion per day.</span>
+          </div>
+        </div>
+
         {mktMsg ? <p role="status" style={{ margin: 0, fontSize: 13, color: 'var(--muted, #6b625c)' }}>{mktMsg}</p> : null}
       </section>
 

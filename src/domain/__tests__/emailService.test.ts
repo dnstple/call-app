@@ -10,6 +10,7 @@ import { mapResendEvent, verifyResendSignature } from '../../../supabase/functio
 import { sendViaResend } from '../../../supabase/functions/_shared/email/resend.ts';
 import { assertBookingEmailAuthorized, EmailAuthorizationError, type BookingRow } from '../../../supabase/functions/_shared/email/booking.ts';
 import { MARKETING_CAMPAIGN_HTML, marketingPreviewHtml } from '../../../supabase/functions/_shared/email/marketing.ts';
+import { renderCompanionNudge, COMPANION_NUDGE_SUBJECT } from '../../../supabase/functions/_shared/email/companionNudge.ts';
 
 const GOOD_ENV = {
   RESEND_API_KEY: 're_test_key',
@@ -222,6 +223,24 @@ describe('Edge Function guarantees (source contract)', () => {
     expect(s).toContain("body.confirm !== 'SEND'");
     // Sync is create-only so it never re-subscribes someone who opted out.
     expect(s).toContain('never resurrect');
+  });
+
+  it('companion nudge renders safely with the CTA on APP_URL', () => {
+    const r = renderCompanionNudge({ firstName: '<b>Grace</b>', appUrl: 'https://apricoti.co.uk', supportEmail: 'info@apricoti.co.uk' });
+    expect(r.subject).toBe(COMPANION_NUDGE_SUBJECT);
+    expect(r.html).not.toContain('<b>Grace</b>');           // escaped
+    expect(r.html).toContain('&lt;b&gt;Grace');
+    expect(r.html).toContain('https://apricoti.co.uk');
+    expect(r.text).toContain('info@apricoti.co.uk');
+    expect(r.html).not.toContain('localhost');
+  });
+
+  it('incomplete-companion nudge is admin-gated and idempotent per companion/day', () => {
+    const s = src('nudge-incomplete-companions/index.ts');
+    expect(s).toContain("from('support_admins')");
+    expect(s).toMatch(/return json\(\{ error: 'forbidden' \}, 403\)/);
+    expect(s).toContain("rpc('support_incomplete_companions')");
+    expect(s).toContain('companion_incomplete/');           // deterministic idempotency key
   });
 
   it('the Resend API key stays server-side (never in the frontend repository)', () => {

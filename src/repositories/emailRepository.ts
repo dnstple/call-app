@@ -62,3 +62,12 @@ export async function sendMarketingCampaign(subject?: string): Promise<Marketing
   if (!ok) return { ok: false, message: String(data.detail ?? data.error ?? 'Campaign send failed.') };
   return { ok: true, message: `Campaign sent (broadcast ${data.broadcast_id}).` };
 }
+
+/** Email every Companion whose profile isn't publishable yet, nudging them to finish. */
+export async function nudgeIncompleteCompanions(): Promise<MarketingResult> {
+  const { data, error } = await getSupabaseClient().functions.invoke('nudge-incomplete-companions', { body: {} });
+  if (error) return { ok: false, message: 'Request failed. Check the email provider configuration.' };
+  const r = (data ?? {}) as { ok?: boolean; total?: number; sent?: number; skipped?: number; failed?: number; detail?: string; error?: string };
+  if (!r.ok) return { ok: false, message: String(r.detail ?? r.error ?? 'Could not send the nudge emails.') };
+  return { ok: true, message: `Nudged incomplete companions: ${r.sent} sent, ${r.skipped} skipped, ${r.failed} failed (${r.total} matched).` };
+}
