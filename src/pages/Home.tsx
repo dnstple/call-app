@@ -22,6 +22,7 @@ import {
 } from '../state/selectors';
 import { ConversationRow, NextConversationCard } from '../components/ConversationRow';
 import { ManagingContext } from '../components/ManagingContext';
+import { InvitePromoCard } from '../components/InvitePromoCard';
 import { ProfileAvatar } from '../components/ProfileAvatar';
 import { useProfileAvatars } from '../state/avatars';
 import { ProfileCardCompact } from '../components/ProfileCard';
@@ -354,6 +355,9 @@ export default function Home() {
         {isSupabaseConfigured() && accountRole === 'companion' && ownedCompanionProfileId && (
           <CompanionHomeSuggestions companionProfileId={ownedCompanionProfileId} />
         )}
+
+        {/* Growth: gentle prompt to invite a coordinator or member. */}
+        <InvitePromoCard />
 
         {/* Role-specific supporting info */}
         {isSupabaseConfigured() && me.role !== 'companion' && planActivity > 0 && <ConversationPlans />}
