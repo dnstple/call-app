@@ -9,6 +9,7 @@ import { renderEmail } from '../../../supabase/functions/_shared/email/templates
 import { mapResendEvent, verifyResendSignature } from '../../../supabase/functions/_shared/email/webhook.ts';
 import { sendViaResend } from '../../../supabase/functions/_shared/email/resend.ts';
 import { assertBookingEmailAuthorized, EmailAuthorizationError, type BookingRow } from '../../../supabase/functions/_shared/email/booking.ts';
+import { MARKETING_CAMPAIGN_HTML, marketingPreviewHtml } from '../../../supabase/functions/_shared/email/marketing.ts';
 
 const GOOD_ENV = {
   RESEND_API_KEY: 're_test_key',
@@ -199,6 +200,28 @@ describe('Edge Function guarantees (source contract)', () => {
     expect(s).toMatch(/return json\(\{ error: 'invalid_signature' \}, 401\)/);
     expect(s).toContain("from('email_webhook_events')");
     expect(s).toContain('duplicate: true');
+  });
+
+  it('marketing broadcast always carries an unsubscribe link and personalises safely', () => {
+    // The broadcast HTML must include Resend's unsubscribe + name tokens.
+    expect(MARKETING_CAMPAIGN_HTML).toContain('{{{RESEND_UNSUBSCRIBE_URL}}}');
+    expect(MARKETING_CAMPAIGN_HTML).toContain('{{{FIRST_NAME|there}}}');
+    // The admin preview substitutes both tokens (nothing raw left, real URL, not localhost).
+    const preview = marketingPreviewHtml('https://www.apricoti.co.uk');
+    expect(preview).not.toContain('{{{');
+    expect(preview).toContain('https://www.apricoti.co.uk/unsubscribe');
+    expect(preview).not.toContain('localhost');
+  });
+
+  it('marketing send is admin-gated and requires the SEND confirmation', () => {
+    const s = src('marketing-broadcast/index.ts');
+    expect(s).toContain("from('support_admins')");
+    expect(s).toMatch(/return json\(\{ error: 'forbidden' \}, 403\)/);
+    expect(s).toMatch(/return json\(\{ error: 'unauthorised' \}, 401\)/);
+    // Sending to everyone cannot happen without the explicit confirmation.
+    expect(s).toContain("body.confirm !== 'SEND'");
+    // Sync is create-only so it never re-subscribes someone who opted out.
+    expect(s).toContain('never resurrect');
   });
 
   it('the Resend API key stays server-side (never in the frontend repository)', () => {

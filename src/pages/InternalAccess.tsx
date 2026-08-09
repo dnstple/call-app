@@ -14,7 +14,10 @@ import {
   adminActions, cohortActions,
   type AdminListResult, type AdminListRow,
 } from '../repositories/accessRepository';
-import { sendTestEmail } from '../repositories/emailRepository';
+import {
+  sendTestEmail,
+  syncMarketingAudience, sendMarketingTest, sendMarketingCampaign,
+} from '../repositories/emailRepository';
 
 const STATUS = ['incomplete', 'ready_for_review', 'under_review', 'approved', 'rejected', 'suspended'];
 const ACCESS = ['waitlist', 'pilot', 'full', 'blocked'];
@@ -81,6 +84,29 @@ export default function InternalAccess() {
     }
   };
 
+  const [mktBusy, setMktBusy] = useState(false);
+  const [mktMsg, setMktMsg] = useState<string | null>(null);
+  const [mktSubject, setMktSubject] = useState('Know someone who’d love Apricoti?');
+  const runMkt = async (label: string, fn: () => Promise<{ ok: boolean; message: string }>) => {
+    setMktBusy(true); setMktMsg(null);
+    try {
+      const r = await fn();
+      setMktMsg(r.message);
+    } catch {
+      setMktMsg(`${label} failed.`);
+    } finally {
+      setMktBusy(false);
+    }
+  };
+  const onSyncAudience = () => runMkt('Sync', () => syncMarketingAudience());
+  const onMktTest = () => runMkt('Test', () => sendMarketingTest(mktSubject));
+  const onMktSend = () => {
+    const typed = window.prompt(
+      'This sends the marketing campaign to EVERY user in the audience.\nType SEND to confirm:', '');
+    if (typed !== 'SEND') { setMktMsg('Cancelled — you must type SEND exactly.'); return; }
+    return runMkt('Send', () => sendMarketingCampaign(mktSubject));
+  };
+
   const dashCount = (group: string, key: string): number => {
     const g = (dash?.[group] as Record<string, number>) ?? {};
     return Number(g[key] ?? 0);
@@ -101,6 +127,36 @@ export default function InternalAccess() {
         </div>
       </header>
       {emailMsg ? <p role="status" style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--muted, #6b625c)' }}>{emailMsg}</p> : null}
+
+      <section className="card section-tight col" style={{ gap: 10, marginTop: 12 }} aria-label="Marketing campaign">
+        <div className="row between" style={{ alignItems: 'center' }}>
+          <h2 className="section-label" style={{ margin: 0 }}>Marketing campaign — invite coordinators/members</h2>
+        </div>
+        <label className="col" style={{ gap: 4, fontSize: 13 }}>
+          Subject line
+          <input
+            className="input"
+            value={mktSubject}
+            onChange={(e) => setMktSubject(e.target.value)}
+            style={{ maxWidth: 420 }}
+          />
+        </label>
+        <div className="row wrap" style={{ gap: 8 }}>
+          <button className="btn btn-ghost btn-small" disabled={mktBusy} onClick={onSyncAudience}>
+            {mktBusy ? <Loader2 size={16} className="spin" aria-hidden="true" /> : null} Sync audience
+          </button>
+          <button className="btn btn-secondary btn-small" disabled={mktBusy} onClick={onMktTest}>
+            Send test to me
+          </button>
+          <button className="btn btn-primary btn-small" disabled={mktBusy} onClick={onMktSend}>
+            Send to everyone…
+          </button>
+        </div>
+        <p className="muted small" style={{ margin: 0 }}>
+          Sync first, send yourself a test, then “Send to everyone” (type SEND to confirm). Recipients can unsubscribe; this uses your marketing audience in Resend.
+        </p>
+        {mktMsg ? <p role="status" style={{ margin: 0, fontSize: 13, color: 'var(--muted, #6b625c)' }}>{mktMsg}</p> : null}
+      </section>
 
       {/* Dashboard */}
       <section className="access-dash-grid">

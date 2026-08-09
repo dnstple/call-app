@@ -27,3 +27,38 @@ export async function sendTestEmail(): Promise<TestEmailResult> {
   }
   return { ok: true, testRunId: r.test_run_id, recipient: r.recipient, messageId: r.message_id };
 }
+
+/* -------- Marketing broadcast (admin-only, via marketing-broadcast fn) -------- */
+
+export interface MarketingResult {
+  ok: boolean;
+  message: string;
+}
+
+async function callMarketing(body: Record<string, unknown>): Promise<{ ok: boolean; data: Record<string, unknown> }> {
+  const { data, error } = await getSupabaseClient().functions.invoke('marketing-broadcast', { body });
+  if (error) return { ok: false, data: { error: 'request_failed' } };
+  const r = (data ?? {}) as Record<string, unknown>;
+  return { ok: Boolean(r.ok), data: r };
+}
+
+/** Push active users into the Resend marketing audience. */
+export async function syncMarketingAudience(): Promise<MarketingResult> {
+  const { ok, data } = await callMarketing({ action: 'sync' });
+  if (!ok) return { ok: false, message: String(data.detail ?? data.error ?? 'Sync failed.') };
+  return { ok: true, message: `Synced audience: ${data.added} added, ${data.skipped} skipped (${data.scanned} scanned).` };
+}
+
+/** Send the campaign to the configured test recipient only. */
+export async function sendMarketingTest(subject?: string): Promise<MarketingResult> {
+  const { ok, data } = await callMarketing({ action: 'test', subject });
+  if (!ok) return { ok: false, message: String(data.detail ?? data.error ?? 'Test send failed.') };
+  return { ok: true, message: `Test sent to ${data.recipient}.` };
+}
+
+/** Send the campaign to EVERYONE in the audience. Requires the SEND confirmation. */
+export async function sendMarketingCampaign(subject?: string): Promise<MarketingResult> {
+  const { ok, data } = await callMarketing({ action: 'send', subject, confirm: 'SEND' });
+  if (!ok) return { ok: false, message: String(data.detail ?? data.error ?? 'Campaign send failed.') };
+  return { ok: true, message: `Campaign sent (broadcast ${data.broadcast_id}).` };
+}
