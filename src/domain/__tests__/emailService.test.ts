@@ -235,12 +235,13 @@ describe('Edge Function guarantees (source contract)', () => {
     expect(r.html).not.toContain('localhost');
   });
 
-  it('incomplete-companion nudge is admin-gated and idempotent per companion/day', () => {
-    const s = src('nudge-incomplete-companions/index.ts');
-    expect(s).toContain("from('support_admins')");
-    expect(s).toMatch(/return json\(\{ error: 'forbidden' \}, 403\)/);
-    expect(s).toContain("rpc('support_incomplete_companions')");
-    expect(s).toContain('companion_incomplete/');           // deterministic idempotency key
+  it('incomplete-companion nudge is an in-app, admin-gated, deduped notification (no email)', () => {
+    const sql = readFileSync('supabase/migrations/0144_nudge_incomplete_companions_inapp.sql', 'utf8');
+    expect(sql).toContain('support_nudge_incomplete_companions');
+    expect(sql).toContain('is_support_admin');            // admin-gated
+    expect(sql).toContain('notify_account');              // in-app channel
+    expect(sql).toContain('profile_incomplete_nudge');    // type maps to NO email category
+    expect(sql).toContain('profile_nudge:');              // per-companion/day dedupe key
   });
 
   it('the Resend API key stays server-side (never in the frontend repository)', () => {

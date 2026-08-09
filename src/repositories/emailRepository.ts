@@ -63,11 +63,14 @@ export async function sendMarketingCampaign(subject?: string): Promise<Marketing
   return { ok: true, message: `Campaign sent (broadcast ${data.broadcast_id}).` };
 }
 
-/** Email every Companion whose profile isn't publishable yet, nudging them to finish. */
+/** Post an IN-APP notification to every Companion whose profile isn't publishable yet. */
 export async function nudgeIncompleteCompanions(): Promise<MarketingResult> {
-  const { data, error } = await getSupabaseClient().functions.invoke('nudge-incomplete-companions', { body: {} });
-  if (error) return { ok: false, message: 'Request failed. Check the email provider configuration.' };
-  const r = (data ?? {}) as { ok?: boolean; total?: number; sent?: number; skipped?: number; failed?: number; detail?: string; error?: string };
-  if (!r.ok) return { ok: false, message: String(r.detail ?? r.error ?? 'Could not send the nudge emails.') };
-  return { ok: true, message: `Nudged incomplete companions: ${r.sent} sent, ${r.skipped} skipped, ${r.failed} failed (${r.total} matched).` };
+  const client = getSupabaseClient() as unknown as {
+    rpc: (fn: string) => Promise<{ data: unknown; error: unknown }>;
+  };
+  const { data, error } = await client.rpc('support_nudge_incomplete_companions');
+  if (error) return { ok: false, message: 'Could not post the in-app notifications. Please try again.' };
+  const r = (data ?? {}) as { ok?: boolean; notified?: number };
+  if (!r.ok) return { ok: false, message: 'Could not notify companions.' };
+  return { ok: true, message: `Sent an in-app message to ${r.notified ?? 0} incomplete companion(s).` };
 }

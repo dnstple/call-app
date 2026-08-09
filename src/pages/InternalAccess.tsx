@@ -102,7 +102,7 @@ export default function InternalAccess() {
   const onSyncAudience = () => runMkt('Sync', () => syncMarketingAudience());
   const onMktTest = () => runMkt('Test', () => sendMarketingTest(mktSubject));
   const onNudgeIncomplete = () => {
-    if (!window.confirm('Email every Companion whose profile isn’t published yet, asking them to finish it?')) return;
+    if (!window.confirm('Send an in-app message to every Companion whose profile isn’t published yet, asking them to finish it?')) return;
     return runMkt('Nudge', () => nudgeIncompleteCompanions());
   };
   const onMktSend = () => {
@@ -164,9 +164,9 @@ export default function InternalAccess() {
         <div style={{ borderTop: '1px solid var(--border, #FBE9DE)', margin: '6px 0', paddingTop: 10 }}>
           <div className="row wrap" style={{ gap: 8, alignItems: 'center' }}>
             <button className="btn btn-secondary btn-small" disabled={mktBusy} onClick={onNudgeIncomplete}>
-              Email incomplete companions
+              Notify incomplete companions
             </button>
-            <span className="muted small">Nudges companions who haven’t finished their profile (photo, sections, consent) to complete it. Once per companion per day.</span>
+            <span className="muted small">Posts an in-app message (no email) to companions who haven’t finished their profile (photo, sections, consent). Once per companion per day.</span>
           </div>
         </div>
 
