@@ -29,6 +29,20 @@ const json = (b: unknown, s = 200) =>
 
 const DEFAULT_SUBJECT = 'Know someone who’d love Apricoti?';
 
+/**
+ * Resolve the audience id: use the configured one if set, otherwise auto-discover
+ * the account's default audience via the List Audiences API (Resend now gives one
+ * default audience with no id in the dashboard URL).
+ */
+async function resolveAudienceId(apiKey: string, envId: string): Promise<string | null> {
+  if (envId) return envId;
+  const res = await fetch('https://api.resend.com/audiences', { headers: { Authorization: `Bearer ${apiKey}` } });
+  if (!res.ok) return null;
+  const body = await res.json().catch(() => null);
+  const list = (body?.data ?? body?.audiences ?? []) as Array<{ id?: string }>;
+  return Array.isArray(list) && list.length > 0 && list[0]?.id ? list[0].id : null;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
@@ -46,7 +60,7 @@ Deno.serve(async (req) => {
     if (e instanceof EmailConfigError) return json({ error: 'email_not_configured', detail: e.message }, 503);
     throw e;
   }
-  const audienceId = Deno.env.get('RESEND_MARKETING_AUDIENCE_ID') ?? '';
+  const audienceEnvId = Deno.env.get('RESEND_MARKETING_AUDIENCE_ID') ?? '';
 
   // Authenticate + admin gate.
   const authHeader = req.headers.get('Authorization') ?? '';
@@ -74,7 +88,8 @@ Deno.serve(async (req) => {
 
   // ---- sync: push active users into the Resend audience ----
   if (body.action === 'sync') {
-    if (!audienceId) return json({ error: 'audience_not_configured', detail: 'Set RESEND_MARKETING_AUDIENCE_ID.' }, 503);
+    const audienceId = await resolveAudienceId(config.resendApiKey, audienceEnvId);
+    if (!audienceId) return json({ error: 'audience_not_found', detail: 'No Resend audience available.' }, 503);
     const { data: accounts } = await admin.from('accounts').select('id, display_name, status');
     const active = new Map((accounts ?? [])
       .filter((a: { status: string }) => a.status === 'active')
@@ -114,7 +129,8 @@ Deno.serve(async (req) => {
   // ---- send: create + send the broadcast to the whole audience (guarded) ----
   if (body.action === 'send') {
     if (body.confirm !== 'SEND') return json({ error: 'confirmation_required', detail: 'Pass confirm:"SEND".' }, 400);
-    if (!audienceId) return json({ error: 'audience_not_configured', detail: 'Set RESEND_MARKETING_AUDIENCE_ID.' }, 503);
+    const audienceId = await resolveAudienceId(config.resendApiKey, audienceEnvId);
+    if (!audienceId) return json({ error: 'audience_not_found', detail: 'No Resend audience available.' }, 503);
 
     const create = await fetch('https://api.resend.com/broadcasts', {
       method: 'POST', headers: rHeaders,
