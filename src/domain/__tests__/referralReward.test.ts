@@ -41,3 +41,28 @@ describe('referral reward engine (0148)', () => {
     expect(SQL).toMatch(/exception when others then\s*null;/);   // reward failure can't roll back the earning
   });
 });
+
+const SQL149 = readFileSync('supabase/migrations/0149_referral_reward_cash_payout.sql', 'utf8');
+const WORKER = readFileSync('supabase/functions/stripe-transfers/index.ts', 'utf8');
+
+describe('referral reward cash payout (0149)', () => {
+  it('routes a payout-ready Companion referrer to CASH, everyone else to credit', () => {
+    expect(SQL149).toContain('companion_payments_ready(v_comp_profile)');
+    expect(SQL149).toContain("'cash', v_conn, v_comp_profile, 'payable'");
+    expect(SQL149).toContain('issue_account_credit');   // credit branch retained for non-companions
+  });
+
+  it('claims payable cash rewards with a per-attempt idempotency key + finalisers', () => {
+    expect(SQL149).toContain('claim_referral_reward_transfers');
+    expect(SQL149).toContain("'refreward-' || r.id::text || '-a'");  // fresh key per attempt
+    expect(SQL149).toContain('finalize_referral_reward_transferred');
+    expect(SQL149).toContain('finalize_referral_reward_failed');
+    expect(SQL149).toContain('production_payouts_enabled');           // gated like earnings
+  });
+
+  it('the transfer worker also pays referral-reward transfers', () => {
+    expect(WORKER).toContain("rpc('claim_referral_reward_transfers'");
+    expect(WORKER).toContain('finalize_referral_reward_transferred');
+    expect(WORKER).toContain("kind: 'referral_reward'");
+  });
+});

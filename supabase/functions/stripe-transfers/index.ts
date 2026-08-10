@@ -128,5 +128,37 @@ Deno.serve(async (req) => {
       }
     }
   }
-  return json({ ok: true, claimed: items.length, transferred, retryable, permanent, insufficient });
+  // Referral reward cash payouts (£5 to Companion referrers) — same balance + pipeline.
+  const rewardsClaim = await admin.rpc('claim_referral_reward_transfers', { p_limit: limit });
+  const rewards = (rewardsClaim.data ?? []) as Array<{
+    reward_id: string; connected_account_id: string; amount_minor: number; stripe_idempotency_key: string;
+  }>;
+  for (const rw of rewards) {
+    try {
+      const tr = await stripe.transfers.create(
+        {
+          amount: rw.amount_minor, currency: 'gbp', destination: rw.connected_account_id,
+          metadata: { referral_reward_id: rw.reward_id, kind: 'referral_reward' },
+        },
+        { idempotencyKey: rw.stripe_idempotency_key },
+      );
+      await admin.rpc('finalize_referral_reward_transferred', { p_reward: rw.reward_id, p_transfer_id: tr.id });
+      transferred += 1;
+    } catch (err) {
+      const e = err as { type?: string; code?: string };
+      if (e.code === 'balance_insufficient') {
+        await admin.rpc('finalize_referral_reward_failed', { p_reward: rw.reward_id, p_code: 'balance_insufficient', p_permanent: false });
+        retryable += 1; insufficient += 1;
+        continue;
+      }
+      const isPermanent = e.type === 'StripeInvalidRequestError'
+        || e.code === 'account_invalid' || e.code === 'transfers_not_allowed' || e.code === 'account_closed';
+      await admin.rpc('finalize_referral_reward_failed', {
+        p_reward: rw.reward_id, p_code: e.code ?? (e.type ?? 'provider_error'), p_permanent: isPermanent,
+      });
+      if (isPermanent) permanent += 1; else retryable += 1;
+    }
+  }
+
+  return json({ ok: true, claimed: items.length, referral_rewards: rewards.length, transferred, retryable, permanent, insufficient });
 });
