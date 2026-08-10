@@ -96,7 +96,8 @@ export function publicLaunchMode(): Promise<LaunchMode> {
 // Admin console (support-admin only server-side).
 // ---------------------------------------------------------------------------
 export interface AdminListRow {
-  account_id: string; role: string | null; application_status: ApplicationStatus;
+  account_id: string; role: string | null; intended_role: string | null;
+  application_status: ApplicationStatus;
   access_level: AccessLevel; cohort_name: string | null;
   first_name: string | null; last_name: string | null; email: string | null;
   registered: string; last_active: string;

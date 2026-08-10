@@ -17,7 +17,8 @@ import {
 import {
   sendTestEmail,
   syncMarketingAudience, sendMarketingTest, sendMarketingCampaign,
-  nudgeIncompleteCompanions,
+  nudgeIncompleteCompanions, nudgeIncompleteOnboarding, resendConfirmations,
+  getOnboardingNudgeConfig, setOnboardingNudgeConfig, type OnboardingNudgeConfig,
 } from '../repositories/emailRepository';
 
 const STATUS = ['incomplete', 'ready_for_review', 'under_review', 'approved', 'rejected', 'suspended'];
@@ -105,6 +106,14 @@ export default function InternalAccess() {
     if (!window.confirm('Send an in-app message to every Companion whose profile isn’t published yet, asking them to finish it?')) return;
     return runMkt('Nudge', () => nudgeIncompleteCompanions());
   };
+  const onNudgeOnboarding = () => {
+    if (!window.confirm('Run the “finish setting up your account” email campaign now? This also runs automatically each day and only emails people who are due (weekly cadence, honouring unsubscribes).')) return;
+    return runMkt('Reminder', () => nudgeIncompleteOnboarding());
+  };
+  const onResendConfirmations = () => {
+    if (!window.confirm('Email people who signed up but never confirmed their email? Each gets a magic link that confirms them and signs them in. Runs daily; this triggers a run now.')) return;
+    return runMkt('Confirmation resend', () => resendConfirmations());
+  };
   const onMktSend = () => {
     const typed = window.prompt(
       'This sends the marketing campaign to EVERY user in the audience.\nType SEND to confirm:', '');
@@ -168,6 +177,19 @@ export default function InternalAccess() {
             </button>
             <span className="muted small">Posts an in-app message (no email) to companions who haven’t finished their profile (photo, sections, consent). Once per companion per day.</span>
           </div>
+          <div className="row wrap" style={{ gap: 8, alignItems: 'center', marginTop: 8 }}>
+            <button className="btn btn-secondary btn-small" disabled={mktBusy} onClick={onNudgeOnboarding}>
+              Send account-setup reminders
+            </button>
+            <span className="muted small">Emails everyone who started but didn’t finish signing up, asking them to complete their account. Runs automatically every day; this button triggers a run now. Weekly per person, with one-click unsubscribe.</span>
+          </div>
+          <div className="row wrap" style={{ gap: 8, alignItems: 'center', marginTop: 8 }}>
+            <button className="btn btn-secondary btn-small" disabled={mktBusy} onClick={onResendConfirmations}>
+              Resend email confirmations
+            </button>
+            <span className="muted small">For people who signed up but never confirmed their email (no account yet). Sends a magic link that confirms them and signs them in. Runs daily; same cadence &amp; cap.</span>
+          </div>
+          <OnboardingCadencePanel />
         </div>
 
         {mktMsg ? <p role="status" style={{ margin: 0, fontSize: 13, color: 'var(--muted, #6b625c)' }}>{mktMsg}</p> : null}
@@ -218,7 +240,13 @@ export default function InternalAccess() {
                 {list.rows.map((r: AdminListRow) => (
                   <tr key={r.account_id}>
                     <td>{`${r.first_name ?? ''} ${r.last_name ?? ''}`.trim() || r.email || '—'}<br /><span className="text-secondary" style={{ fontSize: '0.8rem' }}>{r.email}</span></td>
-                    <td>{pretty(r.role)}</td>
+                    <td>
+                      {r.role
+                        ? pretty(r.role)
+                        : r.intended_role
+                          ? <span title="Chosen at sign-up; profile not created yet">{pretty(r.intended_role)} <span className="text-secondary" style={{ fontSize: '0.72rem' }}>(intended)</span></span>
+                          : '—'}
+                    </td>
                     <td><span className={`access-badge s-${r.application_status}`}>{pretty(r.application_status)}</span></td>
                     <td><span className={`access-badge a-${r.access_level}`}>{pretty(r.access_level)}</span></td>
                     <td>{r.cohort_name ?? '—'}</td>
@@ -320,7 +348,7 @@ function DetailDrawer({ accountId, cohorts, onClose, onChanged }: {
         <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginTop: 6 }}>
           <span className={`access-badge s-${d.application_status}`}>{pretty(d.application_status as string)}</span>
           <span className={`access-badge a-${d.access_level}`}>{pretty(d.access_level as string)}</span>
-          <span className="access-badge">{pretty(d.role as string)}</span>
+          <span className="access-badge">{d.role ? pretty(d.role as string) : d.intended_role ? `${pretty(d.intended_role as string)} (intended)` : '—'}</span>
           <span className="access-badge">{d.email_confirmed ? 'Email confirmed' : 'Email unconfirmed'}</span>
           {checklist && <span className="access-badge">{checklist.completion_pct ?? 0}% complete</span>}
         </div>
@@ -453,6 +481,55 @@ function DetailDrawer({ accountId, cohorts, onClose, onChanged }: {
           </button>
         </section>
       </aside>
+    </div>
+  );
+}
+
+// --------------------------------------------------------------------------
+// Cadence controls for the automated account-setup reminder campaign (0153/0154).
+function OnboardingCadencePanel() {
+  const [cfg, setCfg] = useState<OnboardingNudgeConfig | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  useEffect(() => { getOnboardingNudgeConfig().then(setCfg).catch(() => {}); }, []);
+
+  const save = async (patch: Partial<OnboardingNudgeConfig>) => {
+    setBusy(true); setMsg(null);
+    try {
+      const next = await setOnboardingNudgeConfig(patch);
+      if (next) { setCfg(next); setMsg('Saved.'); }
+      else setMsg('Could not save — please try again.');
+    } finally { setBusy(false); }
+  };
+
+  if (!cfg) return null;
+
+  return (
+    <div style={{ borderTop: '1px solid var(--border, #FBE9DE)', marginTop: 6, paddingTop: 10 }}>
+      <div className="row wrap" style={{ gap: 12, alignItems: 'center' }}>
+        <strong style={{ fontSize: 13 }}>Reminder cadence</strong>
+        <label className="row" style={{ gap: 6, alignItems: 'center', fontSize: 13 }}>
+          <input type="checkbox" checked={cfg.enabled} disabled={busy}
+            onChange={(e) => save({ enabled: e.target.checked })} />
+          {cfg.enabled ? 'Campaign on' : 'Campaign paused'}
+        </label>
+        <label className="row" style={{ gap: 6, alignItems: 'center', fontSize: 13 }}>
+          Every
+          <input className="input" type="number" min={1} max={90} defaultValue={cfg.cadence_days} disabled={busy}
+            style={{ width: 64 }}
+            onBlur={(e) => { const n = parseInt(e.target.value, 10); if (Number.isFinite(n) && n !== cfg.cadence_days) save({ cadence_days: n }); }} />
+          days
+        </label>
+        <label className="row" style={{ gap: 6, alignItems: 'center', fontSize: 13 }}>
+          Max
+          <input className="input" type="number" min={0} max={52} defaultValue={cfg.max_reminders} disabled={busy}
+            style={{ width: 64 }}
+            onBlur={(e) => { const n = parseInt(e.target.value, 10); if (Number.isFinite(n) && n !== cfg.max_reminders) save({ max_reminders: n }); }} />
+          reminders (0 = no limit)
+        </label>
+        {msg ? <span className="muted small" role="status">{msg}</span> : null}
+      </div>
     </div>
   );
 }

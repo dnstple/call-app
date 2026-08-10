@@ -179,7 +179,7 @@ export function RegisterPage() {
     try {
       if (role) sessionStorage.setItem('companionship-intended-role', role);
     } catch { /* ignore */ }
-    const { needsConfirmation } = await signUp(email.trim(), password);
+    const { needsConfirmation } = await signUp(email.trim(), password, role || undefined);
     navigate(needsConfirmation ? `/verify-email?email=${encodeURIComponent(email.trim())}` : '/signup', {
       replace: true,
     });

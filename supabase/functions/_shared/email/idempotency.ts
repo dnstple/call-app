@@ -14,3 +14,8 @@ export function entityEmailKey(event: EmailEvent, entityId: string, recipientUse
 export function testEmailKey(testRunId: string): string {
   return `test_email/${testRunId}`;
 }
+
+/** e.g. onboarding_incomplete/{account}/{yyyy-mm-dd} — one send per account per day. */
+export function onboardingNudgeKey(accountId: string, isoDate: string): string {
+  return `onboarding_incomplete/${accountId}/${isoDate}`;
+}

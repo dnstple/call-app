@@ -18,6 +18,8 @@ export interface ResendSendInput {
   to: string;
   rendered: RenderedEmail;
   idempotencyKey: string;
+  /** Optional per-message headers, e.g. List-Unsubscribe for one-click opt-out. */
+  headers?: Record<string, string>;
 }
 
 /** Injected in tests; defaults to global fetch in the Edge runtime. */
@@ -43,6 +45,7 @@ export async function sendViaResend(
         subject: input.rendered.subject,
         html: input.rendered.html,
         text: input.rendered.text,
+        ...(input.headers && Object.keys(input.headers).length > 0 ? { headers: input.headers } : {}),
       }),
     });
 

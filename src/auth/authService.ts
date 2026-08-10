@@ -10,11 +10,24 @@ import { mapAuthError } from './authErrors';
 import { emailConfirmRedirect, passwordResetRedirect } from './redirects';
 import type { AccessibleProfile } from './authTypes';
 
-export async function signUpWithPassword(email: string, password: string): Promise<{ needsConfirmation: boolean }> {
+const VALID_ROLES = ['member', 'coordinator', 'companion'];
+
+export async function signUpWithPassword(
+  email: string,
+  password: string,
+  intendedRole?: string,
+): Promise<{ needsConfirmation: boolean }> {
+  // Capture the role the person chose ("become a companion/coordinator/member")
+  // at account creation, so it survives even if they abandon the wizard before a
+  // profile is ever created. Stored on auth.users.raw_user_meta_data.
+  const role = intendedRole && VALID_ROLES.includes(intendedRole) ? intendedRole : undefined;
   const { data, error } = await getSupabaseClient().auth.signUp({
     email,
     password,
-    options: { emailRedirectTo: emailConfirmRedirect() },
+    options: {
+      emailRedirectTo: emailConfirmRedirect(),
+      ...(role ? { data: { intended_role: role } } : {}),
+    },
   });
   if (error) throw mapAuthError(error, 'signUp');
   // No session ⇒ email confirmation required before sign-in.

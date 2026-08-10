@@ -153,8 +153,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const s = await svc.signInWithPassword(email, password);
         await applySession(s);
       },
-      async signUp(email, password) {
-        return svc.signUpWithPassword(email, password);
+      async signUp(email, password, intendedRole) {
+        return svc.signUpWithPassword(email, password, intendedRole);
       },
       async signOut() {
         await svc.signOut();

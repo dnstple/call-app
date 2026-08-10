@@ -26,7 +26,7 @@ export interface AuthState {
 
 export interface AuthActions {
   signIn(email: string, password: string): Promise<void>;
-  signUp(email: string, password: string): Promise<{ needsConfirmation: boolean }>;
+  signUp(email: string, password: string, intendedRole?: string): Promise<{ needsConfirmation: boolean }>;
   signOut(): Promise<void>;
   requestPasswordReset(email: string): Promise<void>;
   updatePassword(newPassword: string): Promise<void>;
