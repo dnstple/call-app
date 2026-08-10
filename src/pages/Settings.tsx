@@ -201,7 +201,7 @@ export default function Settings() {
             <SettingsRow
               icon={<ReceiptText size={20} aria-hidden="true" />}
               label="Transaction history"
-              description="Simulated payments and fees"
+              description="Your payments and fees"
               onClick={() => open('transactions')}
             />
             <SettingsRow

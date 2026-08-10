@@ -58,7 +58,8 @@ describe('BillingPanel setup flow', () => {
     renderPanel();
     expect(await screen.findByText(/No payment method saved\. Add a card now/)).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Add payment method' })).toBeTruthy();
-    expect(screen.getByText('Stripe test mode')).toBeTruthy();
+    // Production: the "Stripe test mode" label has been removed.
+    expect(screen.queryByText('Stripe test mode')).toBeNull();
   });
 
   it('3. clicking Add calls the secure backend for a hosted session', async () => {

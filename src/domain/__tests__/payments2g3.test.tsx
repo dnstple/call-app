@@ -122,7 +122,8 @@ describe('Companion payment-settings UI', () => {
     expect(PANEL).toContain('Stripe still needs some information.');
     expect(PANEL).toContain('Stripe is reviewing your information.');
     expect(PANEL).toContain('Earnings will become available after eligible conversations are completed.');
-    expect(PANEL).toContain('Stripe test mode');
+    // Production: the "Stripe test mode" label has been removed from the earnings panel.
+    expect(PANEL).not.toContain('Stripe test mode');
   });
 
   it('the panel is Companion-only; Coordinator billing stays separate', () => {

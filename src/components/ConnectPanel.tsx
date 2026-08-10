@@ -101,7 +101,6 @@ export function ConnectPanel() {
     <section className="card col" style={{ gap: 10 }} aria-label="Payments and earnings">
       <div className="row between wrap" style={{ gap: 8 }}>
         <h3 style={{ margin: 0 }}>Payments and earnings</h3>
-        <span className="pill pill-info">Stripe test mode</span>
       </div>
 
       {headline === 'loading' ? (

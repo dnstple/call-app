@@ -76,7 +76,6 @@ export function BillingPanel() {
     <section className="card col" style={{ gap: 10 }} aria-label="Payments and credit">
       <div className="row between wrap" style={{ gap: 8 }}>
         <h3 style={{ margin: 0 }}>Payments</h3>
-        <span className="pill pill-info">Stripe test mode</span>
       </div>
 
       {phase === 'completed' && (
