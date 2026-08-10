@@ -25,6 +25,7 @@ import {
 } from '../repositories/homeRepository';
 import { homeCopy } from '../content/homeContent';
 import { formatPence } from '../domain/commission';
+import { useProfileAvatars } from '../state/avatars';
 
 /** Best-effort analytics; never blocks. (log_home_event isn't in generated types.) */
 function track(event: string, props?: Record<string, unknown>) {
@@ -50,14 +51,15 @@ function InterestChips({ labels }: { labels: string[] }) {
 }
 
 /** One Companion recommendation card. */
-function MatchCard({ m, strongest }: { m: CompanionMatch; strongest: boolean }) {
+function MatchCard({ m, strongest, photoUrl }: { m: CompanionMatch; strongest: boolean; photoUrl?: string }) {
   const to = `/people/${m.companion_profile_id}`;
+  const img = photoUrl ?? m.photo_url ?? null;
   return (
     <div className="card home-match-card">
       <div className="home-match-head">
         <Link to={to} className="home-match-photo" aria-hidden="true" tabIndex={-1}
           onClick={() => track('home_match_profile_opened', { companion: m.companion_profile_id })}>
-          {m.photo_url ? <img src={m.photo_url} alt="" loading="lazy" /> : <span className="home-match-photo-fallback"><Sparkles size={22} aria-hidden="true" /></span>}
+          {img ? <img src={img} alt="" loading="lazy" /> : <span className="home-match-photo-fallback"><Sparkles size={22} aria-hidden="true" /></span>}
         </Link>
         <div className="home-match-title">
           <strong>{m.display_name}</strong>
@@ -102,6 +104,8 @@ export function MemberHomeRecommendations({ memberProfileId, memberFirstName }: 
   const [bookings, setBookings] = useState<MyBookingRow[]>([]);
   const [dismissals, setDismissals] = useState<HomeDismissal[]>([]);
   const [hasInterests, setHasInterests] = useState<boolean | null>(null);
+  // Resolve real (private-bucket) avatars to signed URLs for every suggestion.
+  const avatarOf = useProfileAvatars((matches ?? []).map((m) => m.companion_profile_id));
 
   const reload = useCallback(() => {
     recommendedCompanions(memberProfileId, 6).then(setMatches).catch(() => setMatches([]));
@@ -212,7 +216,7 @@ export function MemberHomeRecommendations({ memberProfileId, memberFirstName }: 
             <p className="text-secondary" style={{ margin: '0 0 12px' }}>{homeCopy.matching.supporting(memberFirstName)}</p>
             <div className="home-match-rail">
               {interestMatches.slice(0, 4).map((m) => (
-                <MatchCard key={m.companion_profile_id} m={m} strongest={m.companion_profile_id === strongestId} />
+                <MatchCard key={m.companion_profile_id} m={m} strongest={m.companion_profile_id === strongestId} photoUrl={avatarOf(m.companion_profile_id)} />
               ))}
             </div>
             <div className="row" style={{ marginTop: 10 }}>
@@ -225,7 +229,7 @@ export function MemberHomeRecommendations({ memberProfileId, memberFirstName }: 
               <strong>{homeCopy.fallback.heading}</strong> — {homeCopy.fallback.copy}
             </p>
             <div className="home-match-rail">
-              {fallback.slice(0, 4).map((m) => <MatchCard key={m.companion_profile_id} m={m} strongest={false} />)}
+              {fallback.slice(0, 4).map((m) => <MatchCard key={m.companion_profile_id} m={m} strongest={false} photoUrl={avatarOf(m.companion_profile_id)} />)}
             </div>
           </div>
         ) : (

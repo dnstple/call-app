@@ -1593,7 +1593,7 @@ svg.lucide-loader-circle, svg.lucide-loader-2, svg.lucide-loader {
 .home-match-bio { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.45; }
 .home-match-price { font-size: 0.85rem; color: var(--color-text-secondary); }
 .home-match-actions { display: flex; gap: 8px; margin-top: 2px; }
-.home-match-actions .btn { flex: 1; justify-content: center; }
+.home-match-actions .btn { flex: 1; justify-content: center; white-space: nowrap; font-size: 0.8rem; padding-left: 10px; padding-right: 10px; }
 .home-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .home-chip { font-size: 0.75rem; padding: 3px 10px; border-radius: 999px; background: var(--color-brand-subtle); color: var(--color-brand-strong); white-space: nowrap; }
 .home-badge { align-self: flex-start; font-size: 0.7rem; font-weight: 600; padding: 3px 10px; border-radius: 999px; background: var(--color-success-bg); color: var(--color-success-text); white-space: nowrap; }
