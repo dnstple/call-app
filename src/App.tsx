@@ -29,6 +29,7 @@ const InternalTrust = lazy(() => import('./pages/InternalTrust'));
 import Settings from './pages/Settings';
 import AvailabilityRates from './pages/AvailabilityRates';
 import LandingPage from './pages/LandingPage';
+import LegalPage from './pages/LegalPage';
 import SignupWizard from './signup/SignupWizard';
 import { hasSeenSignup } from './signup/storage';
 import { EmptyState } from './components/ui';
@@ -251,6 +252,11 @@ function AppRoutes() {
           </Suspense>
         }
       />
+
+      {/* Public legal pages — reachable by anyone, incl. email footer links. */}
+      <Route path="/privacy" element={<LegalPage docKey="privacy" />} />
+      <Route path="/terms" element={<LegalPage docKey="terms" />} />
+      <Route path="/referral-terms" element={<LegalPage docKey="referral-terms" />} />
 
       {/* Sign-up wizard renders outside the main shell */}
       <Route path="/signup" element={<SignupWizard />} />

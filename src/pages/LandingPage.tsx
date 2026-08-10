@@ -299,6 +299,9 @@ export default function LandingPage() {
               <Link to={startTo}>Become a Companion</Link>
               <a href="#contact">Contact</a>
               <Link to="/login">Sign in</Link>
+              <Link to="/terms">Terms</Link>
+              <Link to="/privacy">Privacy</Link>
+              <Link to="/referral-terms">Referral terms</Link>
               <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>
             </nav>
           </div>
