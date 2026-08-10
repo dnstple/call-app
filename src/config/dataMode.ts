@@ -28,6 +28,13 @@ function envMode(): DataMode {
 }
 
 export function getDataMode(): DataMode {
+  // Production builds are ALWAYS real data — mock mode and the localStorage
+  // "Prototype tools" override can never apply once the app is built for prod.
+  try {
+    if (import.meta.env?.PROD) return 'supabase';
+  } catch {
+    /* import.meta.env unavailable */
+  }
   try {
     const v = localStorage.getItem(OVERRIDE_KEY);
     if (v === 'supabase' || v === 'mock') return v;

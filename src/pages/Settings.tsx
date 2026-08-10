@@ -237,6 +237,7 @@ export default function Settings() {
           </div>
         </section>
 
+        {!import.meta.env.PROD && (
         <section>
           <h3 className="muted mb-2" style={{ fontWeight: 600 }}>Prototype tools</h3>
           <div className="settings-group">
@@ -314,6 +315,7 @@ export default function Settings() {
             />
           </div>
         </section>
+        )}
       </div>
 
       {/* ---------------- Focused detail modals ---------------- */}
