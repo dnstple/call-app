@@ -18,9 +18,9 @@ import { escapeHtml, plainText } from './escape.ts';
 export const REFERRAL_TEMPLATE_KEY = 'coordinator_member_referral_invitation';
 export const REFERRAL_TEMPLATE_VERSION = 'v1';
 
-export const REFERRAL_DEFAULT_SUBJECT = 'Earn up to £10 when you introduce a family to Apricoti';
+export const REFERRAL_DEFAULT_SUBJECT = 'Earn £5 when you introduce a family to Apricoti';
 export const REFERRAL_DEFAULT_PREHEADER =
-  'Help a new Coordinator or Member discover Apricoti and receive rewards as they continue.';
+  'Introduce a new Coordinator or Member and receive £5 for a successful referral.';
 
 const C = {
   apricot: '#F2A272',
@@ -204,21 +204,20 @@ export function renderReferralInvitation(vars: ReferralInvitationVars): Rendered
 </td></tr>
 
 <tr><td style="padding:24px 28px 6px;font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.6;color:${C.ink};">
-<p style="margin:0 0 10px;"><strong>How the reward works</strong></p>
+<p style="margin:0 0 10px;"><strong>Get £5 for a successful referral</strong></p>
 <p style="margin:0 0 6px;">1. Share your personal Apricoti referral link.</p>
 <p style="margin:0 0 6px;">2. The Coordinator or Member creates their own account and books a free 30-minute trial call.</p>
+<p style="margin:0 0 6px;">3. Once their household completes four paid calls, you receive £5.</p>
 </td></tr>
 
 <tr><td style="padding:6px 28px 4px;">
 <table role="presentation" cellpadding="0" cellspacing="0" border="0">
 ${milestoneRow('4 paid calls', '£5 reward')}
-<tr><td colspan="3" style="font-size:0;line-height:8px;">&nbsp;</td></tr>
-${milestoneRow('8 paid calls', 'additional £5 reward')}
 </table>
 </td></tr>
 
 <tr><td style="padding:14px 28px 4px;font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.6;color:${C.ink};">
-<p style="margin:0;">You can earn up to <strong>£10</strong> for each qualifying household you introduce.</p>
+<p style="margin:0;">That’s <strong>£5 for every successful referral</strong> you make.</p>
 </td></tr>
 
 <tr><td style="padding:14px 28px 4px;">
@@ -233,9 +232,7 @@ ${ctaButton('View and share my referral link', dashOrReferral)}
 
 <tr><td style="padding:16px 28px 4px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.6;color:${C.ink};">
 <p style="margin:0 0 12px;">Please share your referral link rather than sending us someone’s personal details. The person joining Apricoti must choose to register and provide their own information or give the appropriate consent.</p>
-<p style="margin:0 0 12px;">The programme is currently limited to the first ${limit} qualifying households.${endSentence} Trial, cancelled, refunded or disputed calls do not count towards the reward milestones. Existing users and self-referrals are not eligible.</p>
-<p style="margin:0 0 12px;">If you work professionally as a carer or support worker, please make sure participation is permitted by your employer and professional policies.</p>
-<p style="margin:0 0 12px;">${termsLink}</p>
+<p style="margin:0 0 12px;font-size:12px;line-height:1.55;color:${C.muted};">Terms: the £5 is paid once the household completes four paid calls; trial, cancelled, refunded, disputed, fraudulent or unpaid calls do not count. The person must be a genuinely new Apricoti user and household — existing users and self-referrals do not qualify. One referrer is attributed and one £5 reward is available per household. The programme is limited to the first ${limit} qualifying households.${endSentence} If you work professionally as a carer or in a public-sector role, please ensure participation is permitted by your employer and professional policies; Apricoti does not offer personal incentives to NHS or public-sector staff. ${termsLink}</p>
 <p style="margin:0 0 4px;">Thank you for helping more people discover regular companionship.</p>
 <p style="margin:0 0 12px;">The Apricoti team</p>
 <p style="margin:0;font-size:14px;color:${C.muted};">Questions? Contact <a href="mailto:${support}" style="color:${C.deepApricot};">${support}</a>.</p>
@@ -265,16 +262,14 @@ ${escapeHtml(vars.legal_company_name)}${vars.registered_office_address ? ' · ' 
     '- A Coordinator: a relative, friend or carer who would like to arrange regular calls for someone they care about.',
     '- A Member: someone who would like to choose a Companion and arrange friendly calls for themselves.',
     '',
-    'How the reward works',
+    'Get £5 for a successful referral',
     '1. Share your personal Apricoti referral link.',
     '2. The Coordinator or Member creates their own account and books a free 30-minute trial call.',
-    '3. You receive £5 after their household completes four paid calls.',
-    '4. You receive another £5 after they complete eight paid calls.',
+    '3. Once their household completes four paid calls, you receive £5.',
     '',
-    '  4 paid calls  -> £5 reward',
-    '  8 paid calls  -> additional £5 reward',
+    '  4 paid calls  ->  £5 reward',
     '',
-    'You can earn up to £10 for each qualifying household you introduce.',
+    'That is £5 for every successful referral you make.',
     '',
     `View and share my referral link: ${dashOrReferral}`,
     `Your referral code: ${vars.referral_code}`,
@@ -283,10 +278,11 @@ ${escapeHtml(vars.legal_company_name)}${vars.registered_office_address ? ' · ' 
     'Please share your referral link rather than sending us someone’s personal details. The person joining',
     'Apricoti must choose to register and provide their own information or give the appropriate consent.',
     '',
-    `The programme is currently limited to the first ${vars.programme_limit} qualifying households.` +
+    'Terms: the £5 is paid once the household completes four paid calls; trial, cancelled, refunded,',
+    'disputed, fraudulent or unpaid calls do not count. The person must be a genuinely new Apricoti user',
+    'and household — existing users and self-referrals do not qualify. One £5 reward per household.',
+    `The programme is limited to the first ${vars.programme_limit} qualifying households.` +
       (vars.programme_end_date && vars.programme_end_date.trim() ? ` The pilot is scheduled to run until ${vars.programme_end_date.trim()}.` : ''),
-    'Trial, cancelled, refunded or disputed calls do not count towards the reward milestones.',
-    'Existing users and self-referrals are not eligible.',
     '',
     'If you work professionally as a carer or support worker, please make sure participation is permitted',
     'by your employer and professional policies.',

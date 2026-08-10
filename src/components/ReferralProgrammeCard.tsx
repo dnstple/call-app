@@ -45,8 +45,8 @@ export function ReferralProgrammeCard() {
         </button>
       </div>
       <p className="muted" style={{ margin: 0 }}>
-        Invite a Coordinator or Member you know. They start with a free 30-minute trial, and you can earn
-        up to <strong>£10</strong> as their calls continue — £5 after four paid calls, £5 after eight.
+        Get <strong>£5 for a successful referral</strong>. Invite a Coordinator or Member you know — they
+        start with a free 30-minute trial, and once their household completes four paid calls, you receive £5.
       </p>
       <p className="small" style={{ margin: 0 }}>
         Your referral code: <strong style={{ letterSpacing: 1 }}>{code}</strong>
@@ -59,7 +59,9 @@ export function ReferralProgrammeCard() {
         <a className="btn btn-secondary btn-small" href="/referrals">View my referrals</a>
       </div>
       <p className="faint small" style={{ margin: 0 }}>
-        Share your link — please don’t send us anyone’s personal details. Pilot limited to the first 25 households.
+        Terms: share your link — please don’t send us anyone’s personal details. The £5 is paid once the
+        household completes four paid calls; trial, cancelled, refunded or disputed calls don’t count. New
+        users and households only; no self-referrals. One reward per household. Pilot limited to the first 25 households.
       </p>
     </section>
   );

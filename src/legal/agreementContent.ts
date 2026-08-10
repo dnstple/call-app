@@ -104,7 +104,7 @@ export const AGREEMENT_SECTIONS: AgreementSection[] = [
     body: [
       'From time to time Apricoti runs an introduction reward programme. Where it applies:',
       '• You may introduce a new Coordinator or Member by sharing your personal referral link. Do not send us anyone’s personal details — the person must register themselves or give appropriate consent.',
-      '• The referred household begins with a free 30-minute trial. The referrer may receive £5 after the household completes four paid calls, and a further £5 after eight paid calls — a maximum of £10 per qualifying household.',
+      '• You receive £5 for a successful referral: once the household you introduced completes four paid calls, you receive £5. One £5 reward per qualifying household.',
       '• Trial, cancelled, refunded, disputed, fraudulent or unpaid calls do not count. The person must be a genuinely new user and household. Existing users and self-referrals do not qualify. Only one referrer is attributed per household, and one reward is available per household.',
       '• The pilot programme is limited to the first 25 qualifying households. Apricoti may review, pause or end the programme at any time, while honouring rewards already validly earned.',
       'The reward is added to the referrer’s normal Apricoti payout or account credit, depending on account type.',

@@ -103,12 +103,13 @@ describe('robust content', () => {
     expect(r.html).toContain('v:roundrect');
     expect(r.html).toMatch(/min-height:44px|height:48px/);
   });
-  it('both reward milestones are present', () => {
+  it('shows a single £5 reward at four paid calls (no second milestone)', () => {
     const r = renderReferralInvitation(base());
     expect(r.html).toContain('4 paid calls');
-    expect(r.html).toContain('8 paid calls');
     expect(r.html).toContain('£5 reward');
-    expect(r.html).toContain('additional £5 reward');
+    expect(r.html).toContain('£5 for a successful referral');
+    expect(r.html).not.toContain('8 paid calls');
+    expect(r.html).not.toContain('£10');
   });
 });
 
@@ -116,7 +117,7 @@ describe('plain-text version is complete', () => {
   it('contains programme, both milestones, url, code, terms, support, unsubscribe', () => {
     const r = renderReferralInvitation(base());
     expect(r.text).toContain('4 paid calls');
-    expect(r.text).toContain('8 paid calls');
+    expect(r.text).not.toContain('8 paid calls');
     expect(r.text).toContain('https://apricoti.co.uk/join?ref=GRACE24');
     expect(r.text).toContain('GRACE24');
     expect(r.text).toContain('https://apricoti.co.uk/referral-terms');
