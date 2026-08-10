@@ -13,7 +13,7 @@ import {
 } from '../legal/agreementContent';
 import { recordAgreement } from '../repositories/agreementRepository';
 
-export function MembershipAgreement({ onSigned }: { onSigned: () => void }) {
+export function MembershipAgreement({ onSigned, onDismiss }: { onSigned: () => void; onDismiss?: () => void }) {
   const [scrolledEnd, setScrolledEnd] = useState(false);
   const [checks, setChecks] = useState<Record<string, boolean>>({});
   const [isCarer, setIsCarer] = useState(false);
@@ -59,9 +59,16 @@ export function MembershipAgreement({ onSigned }: { onSigned: () => void }) {
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(32,28,25,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 12 }}>
       <div style={{ display: 'flex', flexDirection: 'column', width: '100%', maxWidth: 680, height: '92vh', maxHeight: '92vh', background: '#FCFAF7', borderRadius: 16, overflow: 'hidden', boxShadow: '0 10px 40px rgba(0,0,0,0.25)' }}>
-        <div style={{ padding: '18px 20px 12px', borderBottom: '1px solid #FBE9DE' }}>
-          <h1 style={{ margin: '0 0 2px', fontSize: '1.4em' }}>{AGREEMENT_TITLE}</h1>
-          <p style={{ margin: 0, fontSize: 13, color: '#6b625c' }}>{AGREEMENT_EFFECTIVE} · Please read to the end to sign.</p>
+        <div style={{ padding: '18px 20px 12px', borderBottom: '1px solid #FBE9DE', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+          <div>
+            <h1 style={{ margin: '0 0 2px', fontSize: '1.4em' }}>{AGREEMENT_TITLE}</h1>
+            <p style={{ margin: 0, fontSize: 13, color: '#6b625c' }}>{AGREEMENT_EFFECTIVE} · You’ll need to sign this before your first call.</p>
+          </div>
+          {onDismiss && (
+            <button onClick={onDismiss} aria-label="Remind me later" style={{ background: 'none', border: 'none', color: '#6b625c', fontSize: 14, cursor: 'pointer', padding: 4, whiteSpace: 'nowrap' }}>
+              Not now
+            </button>
+          )}
         </div>
 
         <div
@@ -143,6 +150,15 @@ export function AgreementGate({ children }: { children: ReactNode }) {
     return () => { live = false; };
   }, []);
   if (needs === null) return <>{children}</>;
-  if (needs) return <MembershipAgreement onSigned={() => setNeeds(false)} />;
+  // Consent is prompted, not enforced here — the user can defer and keep using
+  // the app; signing is required at call join (0145). Show the app behind the prompt.
+  if (needs) {
+    return (
+      <>
+        {children}
+        <MembershipAgreement onSigned={() => setNeeds(false)} onDismiss={() => setNeeds(false)} />
+      </>
+    );
+  }
   return <>{children}</>;
 }
