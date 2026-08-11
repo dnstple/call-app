@@ -134,6 +134,7 @@ export default function InternalAccess() {
           <h1 style={{ margin: 0 }}>Pilot access</h1>
         </div>
         <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+          <a className="btn btn-ghost btn-small" href="#/internal/bookings">Bookings</a>
           <button className="btn btn-ghost btn-small" onClick={onTestEmail} disabled={emailBusy} title="Send a test email to the configured EMAIL_TEST_RECIPIENT">
             {emailBusy ? <Loader2 size={16} className="spin" aria-hidden="true" /> : null} Send test email
           </button>
