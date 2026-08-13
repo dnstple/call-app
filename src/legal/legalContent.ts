@@ -129,41 +129,41 @@ export const REFERRAL_TERMS: LegalDoc = {
       id: 'how-it-works',
       title: '2. How it works',
       body: [
-        '• Share your personal Apricoti referral link or code. Please do not send us anyone’s personal details — the person must choose to register themselves, or give appropriate consent.',
+        '• Share your personal Apricoti invite link or code. Please do not send us anyone’s personal details — the person must choose to register themselves, or give appropriate consent.',
         '• The person you introduce creates their own account and can book a free 30-minute trial call.',
-        '• You receive £5 once their household completes four paid calls.',
+        '• If you are a Companion, you then earn in the ordinary way from any paid conversations you go on to have with the people you introduced.',
       ],
     },
     {
       id: 'reward',
-      title: '3. The reward',
+      title: '3. The benefit',
       body: [
-        'The reward is £5 per qualifying household. It is paid as a cash payout to your Apricoti payout account if you are a companion with a set-up payout account, or otherwise added to your Apricoti account as credit.',
-        'One £5 reward is available per referred household, and only one referrer is attributed per household (including where a coordinator and member are linked to the same household).',
+        'There is no separate cash bounty for making an introduction. For Companions, the benefit is the ongoing paid conversations you have with the members and coordinators you bring to Apricoti — you earn from those calls in the normal way, after Apricoti’s usual processing fee and commission.',
+        'Members and coordinators who make introductions are simply helping people they know find companionship; no payment is made for the introduction itself.',
       ],
     },
     {
       id: 'what-counts',
       title: '4. What counts, and what does not',
       body: [
-        'A "paid call" is a completed, paid conversation. Trial, cancelled, refunded, disputed, fraudulent or unpaid calls do not count towards the four-call requirement.',
+        'A "paid call" is a completed, paid conversation. Trial, cancelled, refunded, disputed, fraudulent or unpaid calls are handled under the normal conversation and payment terms.',
         'The person introduced must be a genuinely new Apricoti user and household. Existing users and self-referrals do not qualify.',
       ],
     },
     {
       id: 'eligibility-limits',
-      title: '5. Eligibility and limits',
+      title: '5. Eligibility and conduct',
       body: [
-        'The pilot is limited to the first 25 qualifying households. Rewards are subject to these terms and to our right to withhold a reward where we reasonably believe the programme is being abused or the activity is fraudulent.',
-        'If you work professionally as a carer, support worker or in a public-sector role, you may take part only where permitted by your employer, contract and professional policies. Apricoti does not offer or pay personal incentives to NHS staff, social prescribers or other public-sector professionals in the course of their duties.',
+        'We may review, pause or change how introductions work at any time, and may withhold any benefit where we reasonably believe the programme is being abused or the activity is fraudulent.',
+        'If you work professionally as a carer, support worker or in a public-sector role, you may make introductions only where permitted by your employer, contract and professional policies. Apricoti does not offer or pay personal incentives to NHS staff, social prescribers or other public-sector professionals in the course of their duties.',
       ],
     },
     {
       id: 'general',
       title: '6. General',
       body: [
-        'The referred member must consent to participating. Rewards have no cash-equivalent guarantee beyond what is stated here and may be treated as taxable income in your own circumstances — you are responsible for any tax due.',
-        `Questions about the programme can be sent to ${SUPPORT}.`,
+        'The person introduced must consent to participating. Earnings from conversations are paid under the normal Apricoti payment terms and may be treated as taxable income in your own circumstances — you are responsible for any tax due.',
+        `Questions about introductions can be sent to ${SUPPORT}.`,
       ],
     },
   ],

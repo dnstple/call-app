@@ -51,7 +51,8 @@ Deno.serve(async (req) => {
       .upsert({ user_id: accountId, unsubscribed: true, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
     error = res.error;
   } else {
-    const res = await admin.rpc('suppress_onboarding_emails', { p_account: accountId, p_source: 'email_unsubscribe' });
+    // Generic per-category suppression (onboarding, companion_recruit, …).
+    const res = await admin.rpc('suppress_email', { p_account: accountId, p_category: category });
     error = res.error;
   }
   if (error) {

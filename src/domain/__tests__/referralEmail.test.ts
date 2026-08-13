@@ -74,16 +74,11 @@ describe('escaping and injection', () => {
 });
 
 describe('optional values drop cleanly', () => {
-  it('omits the programme-end sentence when absent (no empty label / broken punctuation)', () => {
-    const v = base(); delete v.programme_end_date;
-    const r = renderReferralInvitation(v);
-    expect(r.html).not.toContain('scheduled to run until');
-    expect(r.html).toContain('limited to the first 25 qualifying households.');
-  });
-  it('includes the programme-end sentence when supplied', () => {
-    const r = renderReferralInvitation({ ...base(), programme_end_date: '31 December 2026' });
-    expect(r.html).toContain('scheduled to run until 31 December 2026');
-    expect(r.text).toContain('scheduled to run until 31 December 2026');
+  it('carries no cash-bounty wording (introductions are about earning from calls)', () => {
+    const r = renderReferralInvitation(base());
+    expect(r.html).not.toContain('£5');
+    expect(r.html).not.toContain('successful referral');
+    expect(r.html).toContain('earn in the ordinary way');
   });
   it('omits optional preferences/office cleanly', () => {
     const v = base(); delete v.preferences_url; delete v.registered_office_address;
@@ -103,12 +98,11 @@ describe('robust content', () => {
     expect(r.html).toContain('v:roundrect');
     expect(r.html).toMatch(/min-height:44px|height:48px/);
   });
-  it('shows a single £5 reward at four paid calls (no second milestone)', () => {
+  it('frames the value as earning from conversations, with no £5 bounty', () => {
     const r = renderReferralInvitation(base());
-    expect(r.html).toContain('4 paid calls');
-    expect(r.html).toContain('£5 reward');
-    expect(r.html).toContain('£5 for a successful referral');
-    expect(r.html).not.toContain('8 paid calls');
+    expect(r.html).toContain('You earn every time');
+    expect(r.html).toContain('earn from every conversation');
+    expect(r.html).not.toContain('£5');
     expect(r.html).not.toContain('£10');
   });
 });
@@ -116,8 +110,8 @@ describe('robust content', () => {
 describe('plain-text version is complete', () => {
   it('contains programme, both milestones, url, code, terms, support, unsubscribe', () => {
     const r = renderReferralInvitation(base());
-    expect(r.text).toContain('4 paid calls');
-    expect(r.text).not.toContain('8 paid calls');
+    expect(r.text).toContain('You earn every time');
+    expect(r.text).not.toContain('£5');
     expect(r.text).toContain('https://apricoti.co.uk/join?ref=GRACE24');
     expect(r.text).toContain('GRACE24');
     expect(r.text).toContain('https://apricoti.co.uk/referral-terms');

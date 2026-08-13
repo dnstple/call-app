@@ -356,8 +356,8 @@ export default function Home() {
           <CompanionHomeSuggestions companionProfileId={ownedCompanionProfileId} />
         )}
 
-        {/* Growth: referral programme prompt (eligible referrers only). */}
-        <ReferralProgrammeCard />
+        {/* Growth: invite prompt (eligible referrers only). Companion-focused. */}
+        <ReferralProgrammeCard role={accountRole} />
 
         {/* Role-specific supporting info */}
         {isSupabaseConfigured() && me.role !== 'companion' && planActivity > 0 && <ConversationPlans />}

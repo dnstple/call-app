@@ -18,6 +18,7 @@ import {
   sendTestEmail,
   syncMarketingAudience, sendMarketingTest, sendMarketingCampaign,
   nudgeIncompleteCompanions, nudgeIncompleteOnboarding, resendConfirmations,
+  recruitCompanionsInApp, sendCompanionRecruitEmail,
   getOnboardingNudgeConfig, setOnboardingNudgeConfig, type OnboardingNudgeConfig,
 } from '../repositories/emailRepository';
 
@@ -114,6 +115,15 @@ export default function InternalAccess() {
     if (!window.confirm('Email people who signed up but never confirmed their email? Each gets a magic link that confirms them and signs them in. Runs daily; this triggers a run now.')) return;
     return runMkt('Confirmation resend', () => resendConfirmations());
   };
+  const onRecruitInApp = () => {
+    if (!window.confirm('Post the “invite people you know and earn” message to every active companion (in-app, once per day)?')) return;
+    return runMkt('Recruit message', () => recruitCompanionsInApp());
+  };
+  const onRecruitEmail = () => {
+    const typed = window.prompt('Email the recruitment campaign to EVERY active companion.\nType SEND to confirm:', '');
+    if (typed !== 'SEND') { setMktMsg('Cancelled — you must type SEND exactly.'); return; }
+    return runMkt('Recruit email', () => sendCompanionRecruitEmail());
+  };
   const onMktSend = () => {
     const typed = window.prompt(
       'This sends the marketing campaign to EVERY user in the audience.\nType SEND to confirm:', '');
@@ -191,6 +201,19 @@ export default function InternalAccess() {
             <span className="muted small">For people who signed up but never confirmed their email (no account yet). Sends a magic link that confirms them and signs them in. Runs daily; same cadence &amp; cap.</span>
           </div>
           <OnboardingCadencePanel />
+
+          <div style={{ borderTop: '1px solid var(--border, #FBE9DE)', margin: '6px 0', paddingTop: 10 }}>
+            <h2 className="section-label" style={{ margin: '0 0 6px' }}>Companion recruitment — invite members/coordinators</h2>
+            <div className="row wrap" style={{ gap: 8, alignItems: 'center' }}>
+              <button className="btn btn-secondary btn-small" disabled={mktBusy} onClick={onRecruitInApp}>
+                Post in-app message
+              </button>
+              <button className="btn btn-primary btn-small" disabled={mktBusy} onClick={onRecruitEmail}>
+                Email all companions…
+              </button>
+              <span className="muted small">Pushes the “invite people you know and earn from calls with them” prompt to every active companion. In-app is once per day; email (type SEND) is once per companion per day and includes unsubscribe.</span>
+            </div>
+          </div>
         </div>
 
         {mktMsg ? <p role="status" style={{ margin: 0, fontSize: 13, color: 'var(--muted, #6b625c)' }}>{mktMsg}</p> : null}

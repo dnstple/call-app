@@ -152,7 +152,7 @@ describe('sender + unsubscribe edge functions', () => {
 
   it('unsubscribe endpoint verifies the token before suppressing', () => {
     expect(UNSUB_FN).toContain('verifyUnsubscribe');
-    expect(UNSUB_FN).toContain("rpc('suppress_onboarding_emails'");
+    expect(UNSUB_FN).toContain("rpc('suppress_email'");
   });
 
   it('unsubscribe endpoint handles the auth_confirmation category by user id', () => {

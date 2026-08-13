@@ -56,14 +56,13 @@ Payments are processed by Stripe. Companion payouts are made to the Companion’
 Refunds, cancellations and disputes are handled in line with our in-app processes. Trial, cancelled, refunded, disputed or unpaid conversations may not count towards any reward or milestone.
 You authorise Apricoti to take payment for conversations you book, and (for Companions) you authorise payouts of amounts genuinely earned, subject to holds where a concern, dispute or review is open.
 
-## 8. Introduction reward programme
+## 8. Introductions
 
-From time to time Apricoti runs an introduction reward programme. Where it applies:
-- You may introduce a new Coordinator or Member by sharing your personal referral link. Do not send us anyone’s personal details — the person must register themselves or give appropriate consent.
-- You receive £5 for a successful referral: once the household you introduced completes four paid calls, you receive £5. One £5 reward per qualifying household.
-- Trial, cancelled, refunded, disputed, fraudulent or unpaid calls do not count. The person must be a genuinely new user and household. Existing users and self-referrals do not qualify. Only one referrer is attributed per household, and one reward is available per household.
-- The pilot programme is limited to the first 25 qualifying households. Apricoti may review, pause or end the programme at any time, while honouring rewards already validly earned.
-The reward is added to the referrer’s normal Apricoti payout or account credit, depending on account type.
+You may introduce people you know to Apricoti by sharing your personal invite link. Where you do:
+- Do not send us anyone’s personal details — the person must register themselves or give appropriate consent, and choose to join of their own accord.
+- The person you introduce must be a genuinely new Apricoti user and household. Existing users and self-referrals do not qualify.
+- Companions who introduce someone earn in the ordinary way from any paid conversations they go on to have with them; there is no separate cash bounty for making an introduction.
+Apricoti may change how introductions work at any time. If you work professionally as a carer, support worker or in a public-sector role, only make introductions where permitted by your employer, contract and professional policies.
 
 ## 9. Professional carers and public-sector staff
 

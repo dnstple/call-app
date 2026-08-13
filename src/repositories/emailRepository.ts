@@ -75,6 +75,27 @@ export async function nudgeIncompleteCompanions(): Promise<MarketingResult> {
   return { ok: true, message: `Sent an in-app message to ${r.notified ?? 0} incomplete companion(s).` };
 }
 
+/** Post the recruitment IN-APP message to every active companion. */
+export async function recruitCompanionsInApp(): Promise<MarketingResult> {
+  const client = getSupabaseClient() as unknown as {
+    rpc: (fn: string) => Promise<{ data: unknown; error: unknown }>;
+  };
+  const { data, error } = await client.rpc('support_recruit_companions_inapp');
+  if (error) return { ok: false, message: 'Could not post the in-app message. Please try again.' };
+  const r = (data ?? {}) as { ok?: boolean; notified?: number };
+  if (!r.ok) return { ok: false, message: 'Could not post the message.' };
+  return { ok: true, message: `Posted the recruitment message to ${r.notified ?? 0} companion(s).` };
+}
+
+/** Send the recruitment EMAIL to every active companion (manual admin push). */
+export async function sendCompanionRecruitEmail(): Promise<MarketingResult> {
+  const { data, error } = await getSupabaseClient().functions.invoke('campaign-companion-recruit', { body: {} });
+  if (error) return { ok: false, message: 'Could not send the recruitment email. Please try again.' };
+  const r = (data ?? {}) as { ok?: boolean; sent?: number; skipped?: number; failed?: number };
+  if (!r.ok) return { ok: false, message: 'The recruitment email did not send.' };
+  return { ok: true, message: `Recruitment email — ${r.sent ?? 0} sent, ${r.skipped ?? 0} skipped, ${r.failed ?? 0} failed.` };
+}
+
 export interface OnboardingNudgeConfig {
   enabled: boolean;
   cadence_days: number;

@@ -18,9 +18,9 @@ import { escapeHtml, plainText } from './escape.ts';
 export const REFERRAL_TEMPLATE_KEY = 'coordinator_member_referral_invitation';
 export const REFERRAL_TEMPLATE_VERSION = 'v1';
 
-export const REFERRAL_DEFAULT_SUBJECT = 'Earn £5 when you introduce a family to Apricoti';
+export const REFERRAL_DEFAULT_SUBJECT = 'Invite the people you know to Apricoti';
 export const REFERRAL_DEFAULT_PREHEADER =
-  'Introduce a new Coordinator or Member and receive £5 for a successful referral.';
+  'Introduce a Coordinator or Member you know — and earn from the conversations you have with them.';
 
 const C = {
   apricot: '#F2A272',
@@ -156,13 +156,7 @@ export function renderReferralInvitation(vars: ReferralInvitationVars): Rendered
   const preheader = (vars.preheader && vars.preheader.trim()) || REFERRAL_DEFAULT_PREHEADER;
   const name = escapeHtml(vars.recipient_first_name);
   const code = escapeHtml(vars.referral_code);
-  const limit = escapeHtml(String(vars.programme_limit));
   const support = escapeHtml(vars.support_email);
-
-  // Optional programme-end sentence — omitted cleanly when absent.
-  const endSentence = (vars.programme_end_date && vars.programme_end_date.trim())
-    ? ` The pilot is scheduled to run until ${escapeHtml(vars.programme_end_date.trim())}.`
-    : '';
 
   const termsLink = `<a href="${escapeHtml(vars.programme_terms_url)}" style="color:${C.deepApricot};">Read the full programme terms</a>`;
   const dashOrReferral = vars.referral_dashboard_url || vars.referral_url;
@@ -204,24 +198,24 @@ export function renderReferralInvitation(vars: ReferralInvitationVars): Rendered
 </td></tr>
 
 <tr><td style="padding:24px 28px 6px;font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.6;color:${C.ink};">
-<p style="margin:0 0 10px;"><strong>Get £5 for a successful referral</strong></p>
-<p style="margin:0 0 6px;">1. Share your personal Apricoti referral link.</p>
+<p style="margin:0 0 10px;"><strong>Turn people you know into regular conversations</strong></p>
+<p style="margin:0 0 6px;">1. Share your personal Apricoti invite link.</p>
 <p style="margin:0 0 6px;">2. The Coordinator or Member creates their own account and books a free 30-minute trial call.</p>
-<p style="margin:0 0 6px;">3. Once their household completes four paid calls, you receive £5.</p>
+<p style="margin:0 0 6px;">3. When they go on to book paid calls with you, you earn from every conversation you have together.</p>
 </td></tr>
 
 <tr><td style="padding:6px 28px 4px;">
 <table role="presentation" cellpadding="0" cellspacing="0" border="0">
-${milestoneRow('4 paid calls', '£5 reward')}
+${milestoneRow('They book calls with you', 'You earn every time')}
 </table>
 </td></tr>
 
 <tr><td style="padding:14px 28px 4px;font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.6;color:${C.ink};">
-<p style="margin:0;">That’s <strong>£5 for every successful referral</strong> you make.</p>
+<p style="margin:0;">It’s the simplest way to fill your calendar with <strong>people you’ll genuinely enjoy talking to</strong>.</p>
 </td></tr>
 
 <tr><td style="padding:14px 28px 4px;">
-${ctaButton('View and share my referral link', dashOrReferral)}
+${ctaButton('View and share my invite link', dashOrReferral)}
 </td></tr>
 
 <tr><td style="padding:8px 28px 4px;font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.6;color:${C.ink};">
@@ -232,7 +226,7 @@ ${ctaButton('View and share my referral link', dashOrReferral)}
 
 <tr><td style="padding:16px 28px 4px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.6;color:${C.ink};">
 <p style="margin:0 0 12px;">Please share your referral link rather than sending us someone’s personal details. The person joining Apricoti must choose to register and provide their own information or give the appropriate consent.</p>
-<p style="margin:0 0 12px;font-size:12px;line-height:1.55;color:${C.muted};">Terms: the £5 is paid once the household completes four paid calls; trial, cancelled, refunded, disputed, fraudulent or unpaid calls do not count. The person must be a genuinely new Apricoti user and household — existing users and self-referrals do not qualify. One referrer is attributed and one £5 reward is available per household. The programme is limited to the first ${limit} qualifying households.${endSentence} If you work professionally as a carer or in a public-sector role, please ensure participation is permitted by your employer and professional policies; Apricoti does not offer personal incentives to NHS or public-sector staff. ${termsLink}</p>
+<p style="margin:0 0 12px;font-size:12px;line-height:1.55;color:${C.muted};">There is no cash bounty for an introduction — as a Companion you earn in the ordinary way from paid conversations with the people you bring to Apricoti, after the usual processing fee and commission. The person must be a genuinely new Apricoti user and household — existing users and self-referrals do not qualify. If you work professionally as a carer or in a public-sector role, please ensure introductions are permitted by your employer and professional policies; Apricoti does not offer personal incentives to NHS or public-sector staff. ${termsLink}</p>
 <p style="margin:0 0 4px;">Thank you for helping more people discover regular companionship.</p>
 <p style="margin:0 0 12px;">The Apricoti team</p>
 <p style="margin:0;font-size:14px;color:${C.muted};">Questions? Contact <a href="mailto:${support}" style="color:${C.deepApricot};">${support}</a>.</p>
@@ -262,29 +256,27 @@ ${escapeHtml(vars.legal_company_name)}${vars.registered_office_address ? ' · ' 
     '- A Coordinator: a relative, friend or carer who would like to arrange regular calls for someone they care about.',
     '- A Member: someone who would like to choose a Companion and arrange friendly calls for themselves.',
     '',
-    'Get £5 for a successful referral',
-    '1. Share your personal Apricoti referral link.',
+    'Turn people you know into regular conversations',
+    '1. Share your personal Apricoti invite link.',
     '2. The Coordinator or Member creates their own account and books a free 30-minute trial call.',
-    '3. Once their household completes four paid calls, you receive £5.',
+    '3. When they go on to book paid calls with you, you earn from every conversation you have together.',
     '',
-    '  4 paid calls  ->  £5 reward',
+    '  They book calls with you  ->  You earn every time',
     '',
-    'That is £5 for every successful referral you make.',
+    'It is the simplest way to fill your calendar with people you will genuinely enjoy talking to.',
     '',
-    `View and share my referral link: ${dashOrReferral}`,
-    `Your referral code: ${vars.referral_code}`,
-    `Referral link: ${vars.referral_url}`,
+    `View and share my invite link: ${dashOrReferral}`,
+    `Your invite code: ${vars.referral_code}`,
+    `Invite link: ${vars.referral_url}`,
     '',
-    'Please share your referral link rather than sending us someone’s personal details. The person joining',
+    'Please share your invite link rather than sending us someone’s personal details. The person joining',
     'Apricoti must choose to register and provide their own information or give the appropriate consent.',
     '',
-    'Terms: the £5 is paid once the household completes four paid calls; trial, cancelled, refunded,',
-    'disputed, fraudulent or unpaid calls do not count. The person must be a genuinely new Apricoti user',
-    'and household — existing users and self-referrals do not qualify. One £5 reward per household.',
-    `The programme is limited to the first ${vars.programme_limit} qualifying households.` +
-      (vars.programme_end_date && vars.programme_end_date.trim() ? ` The pilot is scheduled to run until ${vars.programme_end_date.trim()}.` : ''),
+    'There is no cash bounty for an introduction — as a Companion you earn in the ordinary way from paid',
+    'conversations with the people you bring to Apricoti, after the usual processing fee and commission. The',
+    'person must be a genuinely new Apricoti user and household — existing users and self-referrals do not qualify.',
     '',
-    'If you work professionally as a carer or support worker, please make sure participation is permitted',
+    'If you work professionally as a carer or support worker, please make sure introductions are permitted',
     'by your employer and professional policies.',
     '',
     `Read the full programme terms: ${vars.programme_terms_url}`,
