@@ -422,6 +422,25 @@ function DetailDrawer({ accountId, cohorts, onClose, onChanged }: {
           </div>
         </section>
 
+        {d.role === 'companion' && profile.id ? (
+          <section className="access-drawer-sec">
+            <h3>Explore visibility</h3>
+            <div className="access-actions">
+              <button className="btn btn-small offer-delete" disabled={busy}
+                onClick={() => withReason('hide from Explore', (r) => adminActions.hideFromExplore(String(profile.id), r))}>
+                Hide from Explore…
+              </button>
+              <button className="btn btn-ghost btn-small" disabled={busy}
+                onClick={() => run('restore to Explore', () => adminActions.restoreToExplore(String(profile.id)), 'Make this companion discoverable in Explore again?')}>
+                Restore to Explore
+              </button>
+            </div>
+            <p className="text-secondary" style={{ fontSize: '0.85rem', margin: '6px 0 0' }}>
+              Hiding suspends the companion — removed from Explore, recommendations and new bookings. Existing bookings and history are untouched. For a full account lockout, also use “Block” above.
+            </p>
+          </section>
+        ) : null}
+
         <section className="access-drawer-sec">
           <h3>Cohort</h3>
           <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>

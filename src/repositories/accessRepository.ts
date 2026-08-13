@@ -155,6 +155,13 @@ export const adminActions = {
   addNote: (a: string, note: string) => rpc('admin_add_note', { p_account: a, p_note: note }),
   resendNotification: (a: string, event: string, reason?: string) => rpc('admin_resend_notification', { p_account: a, p_event: event, p_reason: reason ?? null }),
   deleteUser: (a: string, reason: string) => rpc('admin_delete_user', { p_account: a, p_reason: reason }),
+  // Companion Explore visibility (moderation lever). Suspending removes them from
+  // Explore, recommendations and new bookings; approving restores them. Takes the
+  // companion PROFILE id, not the account id.
+  hideFromExplore: (profileId: string, reason: string) =>
+    rpc('support_set_companion_moderation', { p_profile: profileId, p_status: 'suspended', p_reason: reason }),
+  restoreToExplore: (profileId: string, reason?: string) =>
+    rpc('support_set_companion_moderation', { p_profile: profileId, p_status: 'approved', p_reason: reason ?? null }),
 };
 
 export const cohortActions = {
