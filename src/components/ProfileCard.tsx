@@ -12,7 +12,6 @@ import { ProfilePhoto, RatingStars } from './ui';
 import { CardRatingSummary } from './CompanionReviews';
 import { isSupabaseMode } from '../config/dataMode';
 import { getMarketMeta } from '../repositories/profileRepository';
-import { formatMinor } from '../repositories/availabilityRepository';
 import {
   ensureFavouritesLoaded,
   toggleFavouriteSupabase,
@@ -139,20 +138,12 @@ export function ProfileCard({ user }: { user: User }) {
         {user.role === 'companion' && isSupabaseMode() && (() => {
           const meta = getMarketMeta(user.id);
           if (!meta) return null;
+          // Standardised membership pricing: no per-companion prices are shown.
           return (
             <p className="small" style={{ margin: 0 }}>
-              {meta.trialPriceMinor !== null && (
-                <>
-                  <strong>Trial {formatMinor(meta.trialPriceMinor)}</strong>
-                  {meta.minSinglePriceMinor !== null && <span className="muted"> · </span>}
-                </>
-              )}
-              {meta.minSinglePriceMinor !== null && (
-                <span className="muted">from {formatMinor(meta.minSinglePriceMinor)}</span>
-              )}
               {meta.acceptingNewMembers === false
-                ? <span className="muted"> · not taking new members</span>
-                : <span style={{ color: 'var(--color-success-text)' }}> · accepting new members</span>}
+                ? <span className="muted">Not taking new members</span>
+                : <span style={{ color: 'var(--color-success-text)' }}>Accepting new members</span>}
             </p>
           );
         })()}
