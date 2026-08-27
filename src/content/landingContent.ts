@@ -155,7 +155,7 @@ export const landingCopy = {
     cards: [
       {
         title: 'Clear roles and boundaries',
-        body: 'Apricoti is for social conversation — not healthcare, therapy, counselling, care or emergency support.',
+        body: 'Apricoti is for social conversation — not healthcare, counselling, care or emergency support.',
       },
       {
         title: 'A simple way to raise a concern',

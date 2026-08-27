@@ -232,7 +232,7 @@ export default function LandingPage() {
           </div>
           <details className="landing-faq-item">
             <summary>What is a Companion?</summary>
-            <p>A Companion is someone who offers scheduled social conversations through Apricoti. They create a profile, set their availability and price, and talk with Members about everyday life and shared interests. They are not carers, therapists or medical professionals in this role.</p>
+            <p>A Companion is someone who offers scheduled social conversations through Apricoti. They create a profile, set their availability, and talk with Members about everyday life and shared interests. They are not carers, counsellors or medical professionals in this role.</p>
           </details>
           <details className="landing-faq-item">
             <summary>Who are the conversations for?</summary>
@@ -247,8 +247,8 @@ export default function LandingPage() {
             <p>Each Member can book one paid trial with each Companion. The length and price are shown before payment. A trial is a chance for both people to decide whether they would like to speak again.</p>
           </details>
           <details className="landing-faq-item">
-            <summary>Are Companions carers or therapists?</summary>
-            <p>No. Apricoti is for social companionship. Companions do not provide personal care, therapy, counselling, medical advice or emergency support.</p>
+            <summary>Are Companions carers or medical professionals?</summary>
+            <p>No. Apricoti is for social companionship. Companions do not provide personal care, counselling, medical advice or emergency support.</p>
           </details>
           <details className="landing-faq-item">
             <summary>How do payments work?</summary>

@@ -11,7 +11,7 @@ This is a single combined document covering all roles. Some sections apply only 
 ## 2. What Apricoti is — and is not
 
 Apricoti is a social-companionship service. It helps people arrange regular, friendly video conversations with a Companion they choose.
-Apricoti is NOT a healthcare, medical, nursing, counselling, therapy, crisis or emergency service. Companions are not doctors, nurses, therapists, social workers or care professionals acting in that capacity, and must not give medical, legal or financial advice.
+Apricoti is NOT a healthcare, medical, nursing, counselling, crisis or emergency service. Companions are not doctors, nurses, counsellors, social workers or care professionals acting in that capacity, and must not give medical, legal or financial advice.
 If you or someone you care for is in danger or needs urgent help, contact the emergency services on 999, or NHS 111 for urgent non-emergency medical help. Apricoti cannot respond to emergencies.
 Conversations are not recorded by Apricoti and must not be recorded by participants.
 

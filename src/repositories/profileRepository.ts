@@ -276,6 +276,10 @@ export async function listDiscoverableCompanions(q: ExploreQuery): Promise<Explo
   if (q.day) query = query.contains('available_days', [q.day]);
   if (q.daypart) query = query.contains('available_dayparts', [q.daypart]);
 
+  // Admin-set Explore rank (1..5, 5 = top) is ALWAYS the primary sort; the
+  // chosen sort only orders companions within the same rank.
+  query = query.order('explore_rank', { ascending: false, nullsFirst: false });
+
   switch (q.sort) {
     case 'alphabetical':
       query = query.order('first_name', { ascending: true });

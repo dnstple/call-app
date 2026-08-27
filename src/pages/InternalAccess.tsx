@@ -461,6 +461,14 @@ function DetailDrawer({ accountId, cohorts, onClose, onChanged }: {
             <p className="text-secondary" style={{ fontSize: '0.85rem', margin: '6px 0 0' }}>
               Hiding suspends the companion — removed from Explore, recommendations and new bookings. Existing bookings and history are untouched. For a full account lockout, also use “Block” above.
             </p>
+            <div className="row" style={{ gap: 8, alignItems: 'center', marginTop: 10 }}>
+              <label style={{ fontSize: 13 }}>Explore rank</label>
+              <select className="input" disabled={busy} defaultValue={String(Number(profile.explore_rank ?? 1))}
+                onChange={(e) => { const n = parseInt(e.target.value, 10); run('set rank', () => adminActions.setRank(String(profile.id), n)); }}>
+                {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n}{n === 5 ? ' (top)' : n === 1 ? ' (default)' : ''}</option>)}
+              </select>
+              <span className="text-secondary" style={{ fontSize: '0.8rem' }}>Admin-only. 5 pushes to the top of Explore; members and companions never see this.</span>
+            </div>
           </section>
         ) : null}
 

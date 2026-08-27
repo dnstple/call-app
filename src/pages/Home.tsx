@@ -23,6 +23,7 @@ import {
 import { ConversationRow, NextConversationCard } from '../components/ConversationRow';
 import { ManagingContext } from '../components/ManagingContext';
 import { ReferralProgrammeCard } from '../components/ReferralProgrammeCard';
+import { CreditsCard } from '../components/CreditsCard';
 import { ProfileAvatar } from '../components/ProfileAvatar';
 import { useProfileAvatars } from '../state/avatars';
 import { ProfileCardCompact } from '../components/ProfileCard';
@@ -349,6 +350,9 @@ export default function Home() {
         {/* Recommendations & gentle prompts — below urgent/upcoming content.
             Member/Coordinator: continuation → matches → regular → discovery.
             Companion: interest-based Member suggestions. */}
+        {isSupabaseConfigured() && accountRole !== 'companion' && targetMemberProfileId && (
+          <CreditsCard memberProfileId={targetMemberProfileId} memberFirstName={accountRole === 'coordinator' ? managedFirstName : undefined} />
+        )}
         {isSupabaseConfigured() && accountRole !== 'companion' && targetMemberProfileId && (
           <MemberHomeRecommendations memberProfileId={targetMemberProfileId} memberFirstName={managedFirstName} />
         )}

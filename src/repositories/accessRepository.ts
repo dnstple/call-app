@@ -162,6 +162,9 @@ export const adminActions = {
     rpc('support_set_companion_moderation', { p_profile: profileId, p_status: 'suspended', p_reason: reason }),
   restoreToExplore: (profileId: string, reason?: string) =>
     rpc('support_set_companion_moderation', { p_profile: profileId, p_status: 'approved', p_reason: reason ?? null }),
+  // Admin-only 1–5 Explore position rank (5 = top). Takes the companion PROFILE id.
+  setRank: (profileId: string, rank: number, reason?: string) =>
+    rpc('admin_set_companion_rank', { p_profile: profileId, p_rank: rank, p_reason: reason ?? null }),
 };
 
 export const cohortActions = {
