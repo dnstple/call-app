@@ -180,6 +180,43 @@ export async function getAllAvailableSlots(input: {
   );
 }
 
+/* ---------------- Credit booking (membership model) ---------------- */
+
+/** 45-minute available slots for a companion (no offer needed). */
+export async function getCreditSlots(input: { companionProfileId: string; from: string; to: string }): Promise<AvailableSlot[]> {
+  const client = getSupabaseClient() as unknown as {
+    rpc: (fn: string, p: Record<string, unknown>) => Promise<{ data: unknown; error: unknown }>;
+  };
+  const { data, error } = await client.rpc('get_credit_slots', {
+    p_companion: input.companionProfileId, p_from: input.from, p_to: input.to,
+  });
+  if (error) throw mapBookingError(error, 'We couldn’t load available times.');
+  return ((data ?? []) as SlotRow[]).map((s) => ({ startsAt: s.slot_start, endsAt: s.slot_end }));
+}
+
+export async function getAllCreditSlots(input: { companionProfileId: string; from: string; to: string }): Promise<AvailableSlot[]> {
+  return paginateSlotWindow((from, to) => getCreditSlots({ ...input, from, to }), input.from, input.to);
+}
+
+/** Book a 45-minute call by spending one membership credit. */
+export async function createCreditBooking(companionProfileId: string, memberProfileId: string, startsAt: string): Promise<{ ok: boolean; bookingId?: string; error?: string }> {
+  const client = getSupabaseClient() as unknown as {
+    rpc: (fn: string, p: Record<string, unknown>) => Promise<{ data: unknown; error: { message?: string } | null }>;
+  };
+  const { data, error } = await client.rpc('create_credit_booking', {
+    p_companion_profile: companionProfileId, p_member_profile: memberProfileId, p_starts_at: startsAt,
+  });
+  if (error) {
+    const m = String(error.message ?? '');
+    if (/no_credits/.test(m)) return { ok: false, error: 'no_credits' };
+    if (/slot_taken/.test(m)) return { ok: false, error: 'That time has just been taken — please choose another.' };
+    if (/companion_unavailable/.test(m)) return { ok: false, error: 'This companion isn’t available to book right now.' };
+    if (/starts_in_past/.test(m)) return { ok: false, error: 'Please choose a time in the future.' };
+    return { ok: false, error: 'We couldn’t book that call. Please try again.' };
+  }
+  return { ok: true, bookingId: data as string };
+}
+
 /* ---------------- Create ---------------- */
 
 /**

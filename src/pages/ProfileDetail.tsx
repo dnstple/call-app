@@ -38,6 +38,8 @@ import {
 } from '../components/ui';
 import { BookingWizard, PackagePurchaseDialog } from '../components/BookingWizard';
 import { SupabaseBookingWizard } from '../components/SupabaseBookingWizard';
+import { CreditBookingWizard } from '../components/CreditBookingWizard';
+import { useManagedMember } from '../state/managedMember';
 import { getBillingStatus } from '../repositories/billingRepository';
 import { clearBookingDraft, loadBookingDraft } from '../payments/bookingDraft';
 import { pushToast } from '../state/store';
@@ -66,6 +68,9 @@ export default function ProfileDetail() {
   // Interactions that are not migrated yet stay hidden for marketplace
   // profiles in Supabase mode — never fake success with mock actions.
   const readOnly = supabase && !stateUser;
+  // Acting member for credit bookings (membership model). When present, booking
+  // spends a call credit instead of using the old offer/price flow.
+  const creditMemberProfileId = useManagedMember().selected?.profileId ?? null;
   const [booking, setBooking] = useState(false);
   const [buyPackage, setBuyPackage] = useState<PackageOffer | null>(null);
   const [reporting, setReporting] = useState(false);
@@ -526,12 +531,20 @@ export default function ProfileDetail() {
 
       {booking && <BookingWizard companion={user} onClose={() => setBooking(false)} />}
       {realBooking && (
-        <SupabaseBookingWizard
-          companion={user}
-          offers={realOffers}
-          resume={resumeDraft}
-          onClose={() => { setRealBooking(false); setResumeDraft(null); }}
-        />
+        creditMemberProfileId ? (
+          <CreditBookingWizard
+            companion={user}
+            memberProfileId={creditMemberProfileId}
+            onClose={() => setRealBooking(false)}
+          />
+        ) : (
+          <SupabaseBookingWizard
+            companion={user}
+            offers={realOffers}
+            resume={resumeDraft}
+            onClose={() => { setRealBooking(false); setResumeDraft(null); }}
+          />
+        )
       )}
       {buyPackage && <PackagePurchaseDialog offer={buyPackage} companion={user} onClose={() => setBuyPackage(null)} />}
       {reporting && <ReportDialog reportedUser={user} onClose={() => setReporting(false)} />}
