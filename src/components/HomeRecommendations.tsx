@@ -71,24 +71,15 @@ function MatchCard({ m, strongest, photoUrl }: { m: CompanionMatch; strongest: b
       <InterestChips labels={m.shared_interests} />
       {m.bio_excerpt && <p className="muted small home-match-bio" style={{ margin: 0 }}>{m.bio_excerpt}</p>}
 
-      {m.offers_trial && m.trial_price_minor != null && (
-        <span className="home-match-price">Trial from {formatPence(m.trial_price_minor)}</span>
-      )}
-      {!m.offers_trial && m.from_price_minor != null && (
-        <span className="home-match-price">From {formatPence(m.from_price_minor)}</span>
-      )}
-
       <div className="home-match-actions">
         <Link to={to} className="btn btn-secondary btn-small"
           onClick={() => track('home_match_profile_opened', { companion: m.companion_profile_id })}>
           View profile
         </Link>
-        {m.offers_trial && (
-          <Link to={to} className="btn btn-primary btn-small"
-            onClick={() => track('home_trial_cta_selected', { companion: m.companion_profile_id })}>
-            Book a trial
-          </Link>
-        )}
+        <Link to={to} className="btn btn-primary btn-small"
+          onClick={() => track('home_match_profile_opened', { companion: m.companion_profile_id })}>
+          Book a call
+        </Link>
       </div>
     </div>
   );

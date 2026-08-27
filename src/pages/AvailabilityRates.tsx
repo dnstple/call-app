@@ -369,7 +369,18 @@ export default function AvailabilityRates() {
         <ExceptionsEditor profileId={profileId} exceptions={exceptions} onChanged={setExceptions} />
       </section>
 
-      {/* ---------- Offers ---------- */}
+      {/* ---------- Payment (membership model) ---------- */}
+      <section className="card section-tight">
+        <h2>How you’re paid</h2>
+        <p className="muted">
+          Members pay a monthly Apricoti membership, so you don’t set your own prices. Every call is a
+          45-minute conversation funded by one member credit. For each completed call you’re paid the
+          credit allocation (£8.33) less the payment processing fee and Apricoti’s 15% commission, paid to
+          your connected payout account in the usual way.
+        </p>
+      </section>
+
+      {false && (
       <section className="card section-tight">
         <h2>Conversation rates</h2>
         <div className="banner mb-4">
@@ -378,9 +389,10 @@ export default function AvailabilityRates() {
         </div>
         <OffersEditor profileId={profileId} offers={offers} rates={rates} methods={active?.profile.mediums ?? []} onChanged={reloadOffers} />
       </section>
+      )}
 
-      {/* ---------- Packages (Stage 2E3B1) ---------- */}
-      <PackageOfferEditor profileId={profileId} methods={active?.profile.mediums ?? []} />
+      {/* ---------- Packages (retired in the membership model) ---------- */}
+      {false && <PackageOfferEditor profileId={profileId} methods={active?.profile.mediums ?? []} />}
     </div>
   );
 }
