@@ -45,7 +45,6 @@ import { clearBookingDraft, loadBookingDraft } from '../payments/bookingDraft';
 import { pushToast } from '../state/store';
 import { PublicPackages } from '../components/PackagePurchaseSupabase';
 import { CardRatingSummary, CompanionReviews } from '../components/CompanionReviews';
-import { CompanionPlanHero } from '../components/CompanionPlanHero';
 import { IN_APP_CALL_LABEL } from '../components/FlowModal';
 import { useAuthSnapshot } from '../state/authBridge';
 import { ReportDialog } from '../components/ConversationRow';
@@ -258,15 +257,11 @@ export default function ProfileDetail() {
               <RatingStars average={rating.average} reviewerCount={rating.reviewerCount} />
             )}
           </div>
-          {canBook && (
+          {canBook && !(supabase && user.role === 'companion') && (
             <div className="row wrap mt-2" style={{ gap: 12 }}>
               <button className="btn btn-primary" onClick={() => setBooking(true)}>
                 Schedule conversation
               </button>
-              {trial && trialOk && (
-                <span className="muted">First trial conversation {formatPence(trial.pricePence)}</span>
-              )}
-              {trial && !trialOk && <span className="faint">Trial already used</span>}
             </div>
           )}
           {blocked && <span className="badge badge-danger" style={{ alignSelf: 'flex-start' }}>Blocked</span>}
@@ -275,13 +270,16 @@ export default function ProfileDetail() {
 
       {/* Stage 2E4B — the trial conversation, then ongoing companionship: the
           primary actions of the product, above everything else. */}
-      {supabase && user.role === 'companion' && (
-        <CompanionPlanHero
-          companion={user}
-          offers={realOffers}
-          acceptingNewMembers={getMarketMeta(user.id)?.acceptingNewMembers !== false}
-          onBookOneOff={() => setRealBooking(true)}
-        />
+      {supabase && user.role === 'companion' && !isOwnerViewing && (
+        <section className="card section-tight col" style={{ gap: 10 }} aria-label="Book a call">
+          <h2 style={{ margin: 0 }}>Book a call with {user.firstName}</h2>
+          <p className="muted" style={{ margin: 0 }}>
+            Each call is a friendly 45-minute conversation and uses one of your membership credits.
+          </p>
+          <button className="btn btn-primary" style={{ alignSelf: 'flex-start' }} onClick={() => setRealBooking(true)}>
+            Book a 45-minute call
+          </button>
+        </section>
       )}
 
       {/* Section 4 — Availability & rates sits directly beneath the identity /
@@ -394,73 +392,10 @@ export default function ProfileDetail() {
       {/* Regular & one-off now share ONE selector inside the hero above. This
           quiet reveal exposes the Companion's prepaid package bundles, which
           belong with the recurring/regular flow. */}
-      {supabase && user.role === 'companion' && realOffers.some((o) => o.offer_type === 'single') && (
-        <section className="section-tight">
-          {!showPackages ? (
-            <button className="btn btn-ghost btn-small" onClick={() => setShowPackages(true)}>
-              See conversation packages
-            </button>
-          ) : (
-            <div>
-              <h2>Conversation packages</h2>
-              <p className="muted" style={{ marginTop: 0 }}>Prepaid bundles you can buy up front.</p>
-              <PublicPackages companion={user} />
-              {canBookReal && (
-                <button className="btn btn-primary btn-small mt-2" onClick={() => setRealBooking(true)}>
-                  Book a conversation
-                </button>
-              )}
-            </div>
-          )}
-        </section>
-      )}
+      {/* Prepaid packages and per-companion pricing retired in the membership model. */}
 
       {user.role === 'companion' && (
         <>
-          {offers.length > 0 && (
-          <section className="section-tight">
-            <h2>Conversations & pricing</h2>
-            {trial && (
-              <div className="card card-muted mb-4">
-                <div className="row between wrap">
-                  <div>
-                    <div className="bold">Trial conversation</div>
-                    <div className="muted small">
-                      One {trial.durationMins}-minute introductory call per person. No platform fee.
-                    </div>
-                  </div>
-                  <div className="bold" style={{ fontSize: '1.2em' }}>{formatPence(trial.pricePence)}</div>
-                </div>
-              </div>
-            )}
-            <div className="stack-list">
-              {paidOffers.map((o) => (
-                <div key={o.id} className="card card-tight row between wrap">
-                  <div>
-                    <div className="bold">{o.title}</div>
-                    <div className="faint">
-                      {o.callCount} × {o.durationMins} mins
-                      {o.kind === 'package' && ` · valid ${o.validityDays} days`}
-                    </div>
-                  </div>
-                  <div className="row" style={{ gap: 14 }}>
-                    <span className="bold">{formatPence(o.pricePence)}</span>
-                    {canBook && o.kind === 'package' && (
-                      <button className="btn btn-secondary btn-small" onClick={() => setBuyPackage(o)}>
-                        Buy plan
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <p className="faint mt-4">
-              Prices are set by the Companion and include the {state.config.standardCommissionPct}% platform fee
-              on non-trial bookings (a configurable platform setting).
-            </p>
-          </section>
-          )}
-
           {rules.length > 0 && (
           <section className="section-tight">
             <h2>Availability</h2>
