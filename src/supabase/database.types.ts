@@ -313,7 +313,11 @@ export type BookingStatus2D =
   | 'change_proposed'
   | 'cancelled'
   | 'completed'
-  | 'needs_review';
+  | 'needs_review'
+  // Credit-model statuses (membership restructure).
+  | 'booked'
+  | 'companion_confirmed'
+  | 'admin_fallback';
 
 /** Prices/fees are server-side snapshots — estimates until payments exist. */
 export type BookingRow = {

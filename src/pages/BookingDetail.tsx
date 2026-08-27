@@ -13,6 +13,7 @@ import { useAuthSnapshot } from '../state/authBridge';
 import {
   acceptBooking,
   acceptTimeProposal,
+  // (confirmBooking imported separately below)
   cancelBooking,
   canRescheduleBooking,
   declineBooking,
@@ -26,6 +27,7 @@ import {
   rejectTimeProposal,
   type AvailableSlot,
 } from '../repositories/bookingRepository';
+import { confirmBooking } from '../repositories/bookingConfirmRepository';
 import { RepoError } from '../repositories/profileRepository';
 import { getConnectStatus, createConnectOnboardingLink } from '../repositories/billingRepository';
 import { formatMinor } from '../repositories/availabilityRepository';
@@ -56,6 +58,9 @@ const STATUS_BADGE: Record<string, string> = {
   cancelled: 'badge-danger',
   completed: 'badge-success',
   needs_review: 'badge-neutral',
+  booked: 'badge-success',
+  companion_confirmed: 'badge-success',
+  admin_fallback: 'badge-neutral',
 };
 
 const HISTORY_LABELS: Record<string, string> = {
@@ -66,6 +71,9 @@ const HISTORY_LABELS: Record<string, string> = {
   cancelled: 'Cancelled',
   completed: 'Completed — confirmed by both sides',
   needs_review: 'Flagged for review',
+  booked: 'Booked',
+  companion_confirmed: 'Confirmed by the companion',
+  admin_fallback: 'Passed to the Apricoti team',
 };
 
 export default function BookingDetail() {
@@ -521,6 +529,16 @@ export default function BookingDetail() {
                   </button>
                 )}
               </>
+            )}
+            {/* Credit-model calls: the companion confirms before the deadline
+                (20 min before start) or the call passes to the Apricoti team. */}
+            {isCompanionSide && booking.status === 'booked' && (
+              <button className="btn btn-primary" disabled={busy} onClick={run(() => confirmBooking(booking.id))}>
+                Confirm I’ll take this call
+              </button>
+            )}
+            {isCompanionSide && booking.status === 'companion_confirmed' && (
+              <span className="badge badge-success">You’ve confirmed this call</span>
             )}
           </div>
           {/* Section 3 — held-payout notice: accepting is allowed; the payout

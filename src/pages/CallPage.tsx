@@ -30,6 +30,7 @@ import {
   type ActiveVideoCall, type DeviceOption, type VideoConnectionState, type VideoQuality,
 } from '../calls/videoCall';
 import { connectMockVideoCall, type MockVideoCall } from '../calls/mockVideoCall';
+import { markCompanionJoined } from '../repositories/bookingConfirmRepository';
 
 type Phase = 'loading' | 'ineligible' | 'prejoin' | 'in_call' | 'left';
 type Permission = 'unknown' | 'granted' | 'denied' | 'missing';
@@ -258,6 +259,9 @@ export default function CallPage() {
         },
         handlers,
       );
+      // Record attendance for credit-model calls. Only succeeds for the
+      // companion (the RPC checks ownership); a no-op for anyone else.
+      void markCompanionJoined(bookingId);
     } catch (e) {
       setPhase('prejoin'); setCameraOn(false);
       setJoinError(e instanceof Error ? e.message : 'We couldn’t join the call. Please try again.');
