@@ -34,7 +34,7 @@ import SignupWizard from './signup/SignupWizard';
 import { hasSeenSignup } from './signup/storage';
 import { EmptyState } from './components/ui';
 import PaymentResumeNotice from './components/PaymentResumeNotice';
-import { AgreementGate } from './components/MembershipAgreement';
+import { RoleAgreementGate } from './components/RoleAgreementGate';
 import { isSupabaseMode } from './config/dataMode';
 import { AuthProvider, useAuth } from './auth/AuthProvider';
 import { AccessProvider, useAccess, AccessLoading } from './state/access';
@@ -138,7 +138,7 @@ function Protected({ children }: { children: ReactNode }) {
     }
     // Membership Agreement gate: authorised app content is withheld until the
     // current combined Agreement (Terms + Safeguarding + Data Protection) is signed.
-    return <AgreementGate>{children}</AgreementGate>;
+    return <RoleAgreementGate>{children}</RoleAgreementGate>;
   }
   return <>{children}</>;
 }
