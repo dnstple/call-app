@@ -48,7 +48,11 @@ export default function LandingPage() {
   const c = landingCopy;
   // Account creation starts registration in hosted mode; the local preview
   // opens the sign-up wizard.
-  const startTo = isSupabaseMode() ? '/register' : '/signup';
+  // Member-first: the homepage's primary CTAs lead into Member onboarding; the
+  // Companion route is the secondary path.
+  const memberTo = isSupabaseMode() ? '/register?role=member' : '/signup?role=member';
+  const companionTo = isSupabaseMode() ? '/register?role=companion' : '/signup?role=companion';
+  const startTo = memberTo;
   // The homepage looks and behaves normally (all roles can sign up); the only
   // launch-mode effect is a single pilot flag shown while we're not fully public.
   const inPilot = useLaunchMode() !== 'public';
@@ -64,7 +68,7 @@ export default function LandingPage() {
           </Link>
           <nav className="landing-header-actions" aria-label="Account">
             <Link to="/login" className="btn btn-ghost">Sign in</Link>
-            <Link to={startTo} className="btn btn-primary">Find a Companion</Link>
+            <Link to={memberTo} className="btn btn-primary">Start your first week — £25</Link>
           </nav>
         </div>
       </header>
@@ -84,8 +88,8 @@ export default function LandingPage() {
             )}
 
             <div className="landing-cta-row">
-              <Link to={startTo} className="btn btn-primary btn-large">Find a Companion</Link>
-              <Link to={startTo} className="btn btn-secondary btn-large">Become a Companion</Link>
+              <Link to={memberTo} className="btn btn-primary btn-large">Start your first week — £25</Link>
+              <Link to={companionTo} className="btn btn-secondary btn-large">Become a Companion</Link>
             </div>
             <p className="landing-fineprint">{c.hero.fineprint}</p>
           </div>
@@ -219,7 +223,7 @@ export default function LandingPage() {
                 <li key={t}><CheckCircle2 size={18} aria-hidden="true" /> {t}</li>
               ))}
             </ul>
-            <Link to={startTo} className="btn btn-primary btn-large">{c.companion.cta}</Link>
+            <Link to={companionTo} className="btn btn-primary btn-large">{c.companion.cta}</Link>
           </div>
         </div>
       </section>
@@ -263,8 +267,8 @@ export default function LandingPage() {
           <h2>Start with one conversation.</h2>
           <p className="landing-center-lede">Explore Companions, choose who feels right, and arrange a friendly video conversation at a time that works. No pressure to continue — the first conversation is simply a chance to see how it feels.</p>
           <div className="landing-cta-row landing-cta-center">
-            <Link to={startTo} className="btn btn-primary btn-large">Find a Companion</Link>
-            <Link to={startTo} className="btn btn-secondary btn-large">Become a Companion</Link>
+            <Link to={memberTo} className="btn btn-primary btn-large">Start your first week — £25</Link>
+            <Link to={companionTo} className="btn btn-secondary btn-large">Become a Companion</Link>
           </div>
         </div>
       </section>
@@ -295,8 +299,8 @@ export default function LandingPage() {
               <span className="landing-brand-name">{APP_NAME}</span>
             </Link>
             <nav className="landing-footer-links" aria-label="Footer">
-              <Link to={startTo}>Find a Companion</Link>
-              <Link to={startTo}>Become a Companion</Link>
+              <Link to={memberTo}>Start membership</Link>
+              <Link to={companionTo}>Become a Companion</Link>
               <a href="#contact">Contact</a>
               <Link to="/login">Sign in</Link>
               <Link to="/terms">Terms</Link>
