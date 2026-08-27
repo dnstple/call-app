@@ -45,6 +45,7 @@ import {
 import { COUNTRIES } from '../domain/countries';
 import { clearDraft, demoData, loadDraft, markSignupSeen, saveDraft } from './storage';
 import { createAccountsFromSignup, type CreatedAccounts } from './complete';
+import { beginMembership } from '../repositories/membershipRepository';
 import { completeSupabaseSignup, saveSignupSource } from './completeSupabase';
 import { isSupabaseMode } from '../config/dataMode';
 import { useAuth } from '../auth/AuthProvider';
@@ -1284,6 +1285,31 @@ function HeardAboutCard() {
 
 /* ---------------- Success step ---------------- */
 
+function StartMembershipButton({ created, role }: { created: CreatedAccounts | null; role: Role }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const memberProfileId = role === 'member' ? created?.primaryId : created?.memberId;
+
+  const start = async () => {
+    if (!memberProfileId) { setErr('We couldn’t find the member to set up. Please go to your dashboard and start membership there.'); return; }
+    setBusy(true); setErr(null);
+    const r = await beginMembership(memberProfileId);   // redirects to Stripe on success
+    if (!r.ok) { setBusy(false); setErr(r.error ?? 'Checkout could not be started.'); }
+  };
+
+  return (
+    <>
+      <button className="btn btn-primary btn-block" disabled={busy} onClick={start}>
+        {busy ? 'Starting…' : 'Start your first week — £25'}
+      </button>
+      <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+        £25 for your first 3 credits. Your monthly membership begins 7 days later. Each credit books one 45-minute call; credits expire 3 months after they’re issued.
+      </p>
+      {err && <p style={{ margin: 0, color: 'var(--deep-apricot, #C8643D)', fontSize: 13 }}>{err}</p>}
+    </>
+  );
+}
+
 function SuccessStep({ data, created }: { data: SignupData; created: CreatedAccounts | null }) {
   const navigate = useNavigate();
   const role = data.role as Role;
@@ -1332,11 +1358,12 @@ function SuccessStep({ data, created }: { data: SignupData; created: CreatedAcco
       <div className="col" style={{ gap: 10, maxWidth: 320, margin: '8px auto 0', width: '100%' }}>
         {isSupabaseMode() ? (
           <>
-            <button className="btn btn-primary btn-block" onClick={() => navigate('/', { replace: true })}>
-              Go to my dashboard
+            {(role === 'member' || role === 'coordinator') && <StartMembershipButton created={created} role={role} />}
+            <button className="btn btn-secondary btn-block" onClick={() => navigate('/verify-phone')}>
+              Verify my mobile
             </button>
-            <button className="btn btn-secondary btn-block" onClick={() => navigate('/settings?open=authStatus')}>
-              View my account status
+            <button className="btn btn-ghost btn-block" onClick={() => navigate('/', { replace: true })}>
+              Go to my dashboard
             </button>
           </>
         ) : null}
