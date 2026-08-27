@@ -15,18 +15,6 @@ import { landingCopy, SUPPORT_EMAIL } from '../content/landingContent';
  * keep working throughout. The public homepage is indexable (index.html sets
  * robots index,follow) so it appears in search results.
  */
-function useLaunchMode(): LaunchMode {
-  // Local preview (mock mode) has no pilot — show the open experience.
-  const [mode, setMode] = useState<LaunchMode>(isSupabaseMode() ? 'companion_waitlist' : 'public');
-  useEffect(() => {
-    if (!isSupabaseMode()) return;
-    let live = true;
-    publicLaunchMode().then((m) => live && m && setMode(m)).catch(() => {});
-    return () => { live = false; };
-  }, []);
-  return mode;
-}
-
 /**
  * Public landing page (Block 12 + closeout Sections 9–10).
  *
@@ -53,9 +41,6 @@ export default function LandingPage() {
   const memberTo = isSupabaseMode() ? '/register?role=member' : '/signup?role=member';
   const companionTo = isSupabaseMode() ? '/register?role=companion' : '/signup?role=companion';
   const startTo = memberTo;
-  // The homepage looks and behaves normally (all roles can sign up); the only
-  // launch-mode effect is a single pilot flag shown while we're not fully public.
-  const inPilot = useLaunchMode() !== 'public';
 
   return (
     <div className="landing">
@@ -80,20 +65,13 @@ export default function LandingPage() {
             <h1>{c.hero.title}</h1>
             <p className="landing-lede">{c.hero.lede}</p>
 
-            {inPilot && (
-              <div className="landing-launch-note" role="note">
-                Apricoti is currently in a pilot. Please set up your profile while we roll out full
-                access gradually.
-              </div>
-            )}
-
             <div className="landing-cta-row">
               <Link to={memberTo} className="btn btn-primary btn-large">Start your first week — £25</Link>
               <Link to={companionTo} className="btn btn-secondary btn-large">Become a Companion</Link>
             </div>
             <p className="landing-fineprint">{c.hero.fineprint}</p>
           </div>
-          <img src="/landing-hero.png" alt="A younger Companion and an older Member talking on the phone" loading="eager" className="landing-hero-photo landing-illus" />
+          <img src="/landing-hero.svg" alt="Two friends having a friendly video conversation" loading="eager" className="landing-hero-photo landing-illus" />
         </div>
       </section>
 

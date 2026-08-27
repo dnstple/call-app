@@ -68,18 +68,18 @@ export type LandingImageKey = keyof typeof landingImages;
 export const landingCopy = {
   // Hero. The brand line lives in the band beneath (trust), not repeated here.
   hero: {
-    title: 'Companionship for your loved ones',
+    title: 'Companionship for Everyone',
     lede:
-      'Apricoti helps you arrange friendly video conversations for someone you care about, ' +
-      'with a Companion they choose.',
-    fineprint: 'Start with one conversation. Continue if it feels right.',
+      'Apricoti helps you arrange friendly video conversations to talk about anything and ' +
+      'everything with a companion that you choose.',
+    fineprint: 'Start with one week of 3 calls. Continue if it feels right.',
   },
   // Feature / USP strip beneath the hero.
   trust: [
     'Friendly video conversations',
     'Choose your own Companion',
-    'Start with a trial',
-    'Clear prices before booking',
+    'Talk about anything you like',
+    '45-minute calls, whenever suits you',
   ],
   // For families and trusted Coordinators (§5.7), verbatim heading + body.
   coordinator: {
