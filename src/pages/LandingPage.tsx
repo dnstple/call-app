@@ -71,7 +71,7 @@ export default function LandingPage() {
             </div>
             <p className="landing-fineprint">{c.hero.fineprint}</p>
           </div>
-          <img src="/landing-hero.svg" alt="Two friends having a friendly video conversation" loading="eager" className="landing-hero-photo landing-illus" />
+          <img src="/landing-hero.png" alt="Two friends having a friendly video conversation" loading="eager" className="landing-hero-photo landing-illus" />
         </div>
       </section>
 
