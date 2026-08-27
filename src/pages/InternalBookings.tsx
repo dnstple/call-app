@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Loader2, RefreshCw, ArrowUp, ArrowDown } from 'lucide-react';
-import { adminListBookings, type AdminBookingRow } from '../repositories/bookingsAdminRepository';
+import { adminListBookings, getFallbackQueue, acceptFallback, type AdminBookingRow, type FallbackCall } from '../repositories/bookingsAdminRepository';
 
 type SortKey = 'starts_at' | 'member_name' | 'companion_name' | 'kind' | 'status' | 'price_minor';
 
@@ -43,14 +43,23 @@ export default function InternalBookings() {
   const [loading, setLoading] = useState(true);
   const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'starts_at', dir: 'desc' });
 
+  const [fallbacks, setFallbacks] = useState<FallbackCall[]>([]);
+  const loadFallbacks = useCallback(() => { getFallbackQueue().then(setFallbacks).catch(() => setFallbacks([])); }, []);
+
   const load = useCallback(() => {
     setLoading(true);
+    loadFallbacks();
     adminListBookings(2000)
       .then((r) => { setRows(r.rows); setCurrency(r.currency); })
       .catch(() => setRows([]))
       .finally(() => setLoading(false));
-  }, []);
+  }, [loadFallbacks]);
   useEffect(() => { load(); }, [load]);
+
+  const onAccept = async (id: string) => {
+    const r = await acceptFallback(id);
+    if (r.ok) loadFallbacks();
+  };
 
   const sorted = useMemo(() => {
     const dir = sort.dir === 'asc' ? 1 : -1;
@@ -90,6 +99,27 @@ export default function InternalBookings() {
           <button className="btn btn-ghost btn-small" onClick={load}><RefreshCw size={16} aria-hidden="true" /> Refresh</button>
         </div>
       </header>
+
+      {fallbacks.length > 0 && (
+        <section className="card col" style={{ gap: 10, borderColor: 'var(--deep-apricot, #C8643D)' }} aria-label="Calls awaiting an admin">
+          <h2 className="section-label" style={{ margin: 0, color: 'var(--deep-apricot, #C8643D)' }}>
+            Calls awaiting an admin ({fallbacks.length})
+          </h2>
+          <ul className="access-mini-list" style={{ margin: 0 }}>
+            {fallbacks.map((f) => (
+              <li key={f.id} className="row between" style={{ gap: 8, alignItems: 'center' }}>
+                <span>
+                  <strong>{when(f.starts_at, 'Europe/London')}</strong> — {f.member_name ?? 'Member'} with {f.companion_name ?? 'Companion'}
+                  {f.handled_by_admin_id ? <span className="text-secondary"> · accepted</span> : null}
+                </span>
+                {!f.handled_by_admin_id && (
+                  <button className="btn btn-primary btn-small" onClick={() => onAccept(f.id)}>Accept call</button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section className="card" style={{ overflowX: 'auto' }}>
         {loading ? (

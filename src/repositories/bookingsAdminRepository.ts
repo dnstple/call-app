@@ -31,6 +31,36 @@ export interface AdminBookingsResult {
   currency: string;
 }
 
+export interface FallbackCall {
+  id: string;
+  starts_at: string;
+  admin_fallback_at: string | null;
+  handled_by_admin_id: string | null;
+  member_name: string | null;
+  companion_name: string | null;
+}
+
+/** Calls that transferred to admin fallback and await someone to accept them. */
+export async function getFallbackQueue(): Promise<FallbackCall[]> {
+  const client = getSupabaseClient() as unknown as {
+    rpc: (fn: string) => Promise<{ data: unknown; error: unknown }>;
+  };
+  const { data, error } = await client.rpc('admin_fallback_queue');
+  if (error || !data) return [];
+  return (data as FallbackCall[]) ?? [];
+}
+
+/** Accept a fallback call (first available admin wins). */
+export async function acceptFallback(bookingId: string): Promise<{ ok: boolean; already: boolean }> {
+  const client = getSupabaseClient() as unknown as {
+    rpc: (fn: string, p: Record<string, unknown>) => Promise<{ data: unknown; error: unknown }>;
+  };
+  const { data, error } = await client.rpc('admin_accept_fallback', { p_booking: bookingId });
+  if (error) return { ok: false, already: false };
+  const r = (data ?? {}) as { ok?: boolean; already?: boolean };
+  return { ok: Boolean(r.ok), already: Boolean(r.already) };
+}
+
 export async function adminListBookings(limit = 500): Promise<AdminBookingsResult> {
   const client = getSupabaseClient() as unknown as {
     rpc: (fn: string, params?: Record<string, unknown>) => Promise<{ data: unknown; error: unknown }>;
