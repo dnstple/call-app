@@ -7,7 +7,6 @@ import { isFavourite } from '../state/selectors';
 import { toggleFavourite } from '../state/actions';
 import { overallRating } from '../domain/ratings';
 import { generateSlots, nextAvailableLabel } from '../domain/availability';
-import { formatPence } from '../domain/commission';
 import { ProfilePhoto, RatingStars } from './ui';
 import { CardRatingSummary } from './CompanionReviews';
 import { isSupabaseMode } from '../config/dataMode';
@@ -76,7 +75,6 @@ export function ProfileCard({ user }: { user: User }) {
   const state = useAppState();
   const navigate = useNavigate();
   const rating = overallRating(state.ratings, user.id);
-  const trial = state.offers.find((o) => o.companionId === user.id && o.kind === 'trial' && o.active);
   const slots =
     user.role === 'companion'
       ? generateSlots(state.availabilityRules, state.availabilityExceptions, state.bookings, user.id, 30, new Date(), 14)
@@ -126,12 +124,6 @@ export function ProfileCard({ user }: { user: User }) {
         )}
         {user.role === 'companion' && !isSupabaseMode() && (
           <p className="small" style={{ margin: 0 }}>
-            {trial && (
-              <>
-                <strong>Trial {formatPence(trial.pricePence)}</strong>
-                <span className="muted"> · </span>
-              </>
-            )}
             <span className="muted">{nextAvailableLabel(slots, new Date())}</span>
           </p>
         )}

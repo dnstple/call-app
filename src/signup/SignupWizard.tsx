@@ -1359,10 +1359,7 @@ function SuccessStep({ data, created }: { data: SignupData; created: CreatedAcco
         {isSupabaseMode() ? (
           <>
             {(role === 'member' || role === 'coordinator') && <StartMembershipButton created={created} role={role} />}
-            <button className="btn btn-secondary btn-block" onClick={() => navigate('/verify-phone')}>
-              Verify my mobile
-            </button>
-            <button className="btn btn-ghost btn-block" onClick={() => navigate('/', { replace: true })}>
+            <button className="btn btn-primary btn-block" onClick={() => navigate('/', { replace: true })}>
               Go to my dashboard
             </button>
           </>
