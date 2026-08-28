@@ -120,7 +120,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     (async () => {
       try {
-        const initial = await svc.getCurrentSession();
+        // Never let a hung getSession freeze the app on a spinner — time out and
+        // treat as no session (the landing/login still renders; a real session
+        // will arrive via the auth-change subscription below).
+        const initial = await Promise.race([
+          svc.getCurrentSession(),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000)),
+        ]);
         if (!cancelled) await applySession(initial);
       } catch {
         if (!cancelled) setStatus('unauthenticated');

@@ -52,6 +52,12 @@ export function getSupabaseClient(): TypedSupabaseClient {
       autoRefreshToken: true,
       detectSessionInUrl: true,
       flowType: 'pkce',
+      // Bypass the default Web Locks (navigator.locks) auth lock, which can
+      // DEADLOCK in some browsers / in-app webviews and freeze getSession /
+      // updateUser — leaving the whole app stuck on a spinner and phone
+      // verification unable to send. This in-tab no-op lock just runs the
+      // operation immediately, which is safe for a single tab.
+      lock: async <R>(_name: string, _acquireTimeout: number, fn: () => Promise<R>): Promise<R> => fn(),
     },
   });
   // DEV-only: expose the client for console diagnostics (never in builds).
