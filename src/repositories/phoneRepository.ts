@@ -5,6 +5,14 @@
  */
 import { getSupabaseClient } from '../supabase/client';
 
+/** Race a promise against a timeout so a hung auth call can never freeze the UI. */
+function withTimeout<T>(p: Promise<T>, ms = 15000): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error('request_timeout')), ms)),
+  ]);
+}
+
 /** Normalise UK input (07…, 447…, +447…) to +44 E.164, or null if not a UK mobile. */
 export function toUkE164(input: string): string | null {
   const digits = input.replace(/[^\d+]/g, '');
@@ -18,15 +26,23 @@ export function toUkE164(input: string): string | null {
 }
 
 export async function sendPhoneOtp(phoneE164: string): Promise<{ ok: boolean; error?: string }> {
-  const { error } = await getSupabaseClient().auth.updateUser({ phone: phoneE164 });
-  if (error) return { ok: false, error: friendly(error.message) };
-  return { ok: true };
+  try {
+    const { error } = await withTimeout(getSupabaseClient().auth.updateUser({ phone: phoneE164 }));
+    if (error) return { ok: false, error: friendly(error.message) };
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'That took too long. Close any other Apricoti tabs and try again.' };
+  }
 }
 
 export async function verifyPhoneOtp(phoneE164: string, code: string): Promise<{ ok: boolean; error?: string }> {
   const client = getSupabaseClient();
-  const { error } = await client.auth.verifyOtp({ phone: phoneE164, token: code.trim(), type: 'phone_change' });
-  if (error) return { ok: false, error: friendly(error.message) };
+  try {
+    const { error } = await withTimeout(client.auth.verifyOtp({ phone: phoneE164, token: code.trim(), type: 'phone_change' }));
+    if (error) return { ok: false, error: friendly(error.message) };
+  } catch {
+    return { ok: false, error: 'That took too long. Close any other Apricoti tabs and try again.' };
+  }
   try {
     await (client as unknown as { rpc: (fn: string) => Promise<unknown> }).rpc('confirm_my_phone');
   } catch { /* the account sync is best-effort; auth is already confirmed */ }
