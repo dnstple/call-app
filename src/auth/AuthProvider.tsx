@@ -30,6 +30,14 @@ import type { AccessibleProfile, AuthContextValue, AuthStatus } from './authType
 
 const ACTIVE_PROFILE_KEY = (userId: string) => `companionship-active-profile-${userId}`;
 
+/** Reject a hung bootstrap call so sign-in surfaces a retry instead of spinning forever. */
+function withTimeout<T>(p: Promise<T>, ms = 12000): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error('bootstrap_timeout')), ms)),
+  ]);
+}
+
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 const IDLE: Pick<AuthContextValue, 'status' | 'session' | 'user' | 'account' | 'profiles' | 'activeProfileId' | 'error'> = {
@@ -79,9 +87,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     bootstrapping.current = userId;
     setStatus('setup_pending');
     try {
-      const acct = await svc.ensureAccount(next.user.email ?? undefined);
+      const acct = await withTimeout(svc.ensureAccount(next.user.email ?? undefined));
       setAccount(acct);
-      const accessible = await svc.loadAccessibleProfiles();
+      const accessible = await withTimeout(svc.loadAccessibleProfiles());
       setProfiles(accessible);
 
       // Validate any cached active-profile id against the permitted set.

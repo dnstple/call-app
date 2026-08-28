@@ -1,8 +1,9 @@
 import { HashRouter, Link, Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import { useAccountRole } from './state/managedMember';
 import { useIsSupport } from './state/support';
-import { lazy, Suspense, useEffect, type ReactNode } from 'react';
+import { Suspense, useEffect, type ReactNode } from 'react';
 import { Loader2 } from 'lucide-react';
+import { lazyWithReload as lazy, ChunkErrorBoundary } from './utils/lazyWithReload';
 import { Shell } from './components/Shell';
 import Home from './pages/Home';
 import Explore from './pages/Explore';
@@ -272,7 +273,17 @@ function AppRoutes() {
                   session survived a redirect/reload/app restart. */}
               <PaymentResumeNotice />
               {/* Heavy routes (LiveKit, messaging, plans, notifications)
-                  load as separate chunks so the shell paints promptly. */}
+                  load as separate chunks so the shell paints promptly. A stale
+                  chunk after a deploy self-heals via a one-time reload rather
+                  than hanging on the spinner. */}
+              <ChunkErrorBoundary
+                fallback={
+                  <div className="row" style={{ justifyContent: 'center', padding: 48 }}>
+                    <Loader2 size={22} aria-hidden="true" />
+                    <span className="visually-hidden">Reloading</span>
+                  </div>
+                }
+              >
               <Suspense
                 fallback={
                   <div className="row" style={{ justifyContent: 'center', padding: 48 }}>
@@ -344,6 +355,7 @@ function AppRoutes() {
                 />
               </Routes>
               </Suspense>
+              </ChunkErrorBoundary>
             </Shell>
           </Protected>
         }
