@@ -1358,8 +1358,14 @@ function SuccessStep({ data, created }: { data: SignupData; created: CreatedAcco
       <div className="col" style={{ gap: 10, maxWidth: 320, margin: '8px auto 0', width: '100%' }}>
         {isSupabaseMode() ? (
           <>
+            <button className="btn btn-primary btn-block" onClick={() => navigate('/verify-phone')}>
+              Verify your mobile
+            </button>
+            <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+              We ask everyone to confirm a UK mobile number — it keeps your account secure and lets us send essential call alerts.
+            </p>
             {(role === 'member' || role === 'coordinator') && <StartMembershipButton created={created} role={role} />}
-            <button className="btn btn-primary btn-block" onClick={() => navigate('/', { replace: true })}>
+            <button className="btn btn-ghost btn-block" onClick={() => navigate('/', { replace: true })}>
               Go to my dashboard
             </button>
           </>

@@ -37,6 +37,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
 
+  try {
   const secretKey = Deno.env.get('STRIPE_SECRET_KEY') ?? '';
   if (!stripeKeyAllowed(secretKey)) return json({ error: 'stripe_not_configured' }, 503);
   const monthlyPrice = Deno.env.get('STRIPE_PRICE_MONTHLY') ?? '';
@@ -110,7 +111,13 @@ Deno.serve(async (req) => {
     payment_intent_data: { metadata: { kind: 'membership_starter', member_profile_id: memberProfile } },
     success_url: `${origin}/#/?membership=started`,
     cancel_url: `${origin}/#/?membership=cancelled`,
-  }, { idempotencyKey: `membership-starter-${memberProfile}` });
+    // Per-attempt idempotency key: a stable key collides once a session exists,
+    // so each checkout attempt gets a fresh one (creating a new session is safe).
+  }, { idempotencyKey: `membership-starter-${memberProfile}-${Date.now()}` });
 
   return json({ ok: true, url: session.url, session_id: session.id });
+  } catch (e) {
+    // Always return with CORS headers so the browser sees a real error, not a CORS failure.
+    return json({ error: 'checkout_failed', detail: (e as Error).message }, 500);
+  }
 });
