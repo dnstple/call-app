@@ -53,7 +53,7 @@ export default function LandingPage() {
           </Link>
           <nav className="landing-header-actions" aria-label="Account">
             <Link to="/login" className="btn btn-ghost">Sign in</Link>
-            <Link to={memberTo} className="btn btn-primary">Start your first week — £25</Link>
+            <Link to={memberTo} className="btn btn-primary">Get started</Link>
           </nav>
         </div>
       </header>

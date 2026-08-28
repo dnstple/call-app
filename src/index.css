@@ -1329,12 +1329,12 @@ svg.lucide-loader-circle, svg.lucide-loader-2, svg.lucide-loader {
 .landing-eyebrow { text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.78em; font-weight: 700; color: var(--color-brand-strong); margin: 0 0 var(--space-3); }
 .landing-hero h1 { font-size: clamp(2em, 1.3em + 3vw, 3.1em); }
 .landing-lede { font-size: clamp(1.05em, 1em + 0.4vw, 1.2em); color: var(--color-text-secondary); max-width: 620px; margin: var(--space-4) auto var(--space-5); }
-.landing-cta-row { display: flex; flex-wrap: nowrap; gap: var(--space-3); align-items: stretch; }
-/* Two CTAs always on one row, each label always on one line. */
+.landing-cta-row { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: stretch; }
 .landing-cta-row .btn { white-space: nowrap; }
-@media (max-width: 480px) {
+@media (max-width: 560px) {
   .landing-cta-row { gap: var(--space-2); }
-  .landing-cta-row .btn.btn-large { padding: 12px 14px; font-size: 0.9rem; }
+  /* Stack the CTAs full-width on small screens so long labels never overflow. */
+  .landing-cta-row .btn.btn-large { flex: 1 1 100%; padding: 12px 14px; font-size: 0.95rem; }
 }
 .landing-hero-inner .landing-cta-row, .landing-cta-center { justify-content: center; }
 .landing-trust-tagline { margin: 0; text-align: center; font-weight: 700; font-size: clamp(1.05rem, 0.95rem + 0.8vw, 1.4rem); color: var(--color-brand-strong); }
@@ -1404,7 +1404,7 @@ svg.lucide-loader-circle, svg.lucide-loader-2, svg.lucide-loader {
    larger CTAs, alternating layout, reduced-motion. ─────────────────────── */
 .btn-large { padding: 14px 22px; font-size: 1.05rem; border-radius: var(--radius-m); }
 /* CTAs stay side-by-side on one row (they shrink rather than wrap). */
-.landing-cta-row { flex-wrap: nowrap; gap: var(--space-3); }
+.landing-cta-row { flex-wrap: wrap; gap: var(--space-3); }
 .landing-cta-row .btn { min-width: 0; }
 
 .landing-hero-grid { display: grid; grid-template-columns: 1fr; gap: var(--space-6); align-items: center; }
