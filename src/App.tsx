@@ -42,7 +42,6 @@ const PilotHub = lazy(() => import('./pages/PilotHub'));
 const AccountStatus = lazy(() => import('./pages/AccountStatus'));
 const InternalAccess = lazy(() => import('./pages/InternalAccess'));
 const InternalBookings = lazy(() => import('./pages/InternalBookings'));
-const VerifyPhone = lazy(() => import('./pages/VerifyPhone'));
 const InternalProfilePreview = lazy(() => import('./pages/InternalProfilePreview'));
 const InternalVerification = lazy(() => import('./pages/InternalVerification'));
 const InternalContact = lazy(() => import('./pages/InternalContact'));
@@ -307,7 +306,6 @@ function AppRoutes() {
                 <Route path="/conversations/plans/:planId/member" element={<PlanMemberProfile />} />
                 <Route path="/plans/:planId/member" element={<PlanMemberRedirect />} />
                 <Route path="/notifications" element={<Notifications />} />
-                <Route path="/verify-phone" element={<VerifyPhone />} />
                 {/* Internal support queue — DB-role protected, not in normal nav. */}
                 <Route path="/internal/issues" element={<SupportOnly><InternalIssues /></SupportOnly>} />
                 <Route path="/internal/issues/:issueId" element={<SupportOnly><InternalIssueDetail /></SupportOnly>} />

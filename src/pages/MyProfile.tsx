@@ -26,7 +26,6 @@ import { ChipGroup, Modal, ProfilePhoto, RatingStars, VerificationBadge } from '
 import { roleLabel } from '../components/Shell';
 import { CompanionCompletionChecklist } from '../components/CompletionChecklist';
 import { VideoVerification } from '../components/VideoVerification';
-import { VerifiedBadge } from '../components/VerifiedBadge';
 import type { Medium, User } from '../types';
 
 const INTEREST_OPTIONS = [
@@ -111,7 +110,6 @@ export default function MyProfile() {
           <div className="row wrap" style={{ gap: 16 }}>
             {me.role === 'companion' && <RatingStars average={rating.average} reviewerCount={rating.reviewerCount} />}
             <VerificationBadge state={me.verification} />
-            <VerifiedBadge profileId={me.id} />
           </div>
           {editable ? (
             <div className="row wrap mt-2" style={{ gap: 8 }}>

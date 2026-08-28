@@ -11,7 +11,6 @@ import { ProfilePhoto, RatingStars } from './ui';
 import { CardRatingSummary } from './CompanionReviews';
 import { isSupabaseMode } from '../config/dataMode';
 import { getMarketMeta } from '../repositories/profileRepository';
-import { VerifiedBadge } from './VerifiedBadge';
 import {
   ensureFavouritesLoaded,
   toggleFavouriteSupabase,
@@ -116,7 +115,6 @@ export function ProfileCard({ user }: { user: User }) {
           )}
         </div>
         <p className="muted" style={{ margin: 0 }}>{user.headline}</p>
-        <VerifiedBadge profileId={user.id} />
         {user.region && <p className="faint small" style={{ margin: 0 }}>{user.region}</p>}
         {bioExcerpt && <p className="faint small simple-hide" style={{ margin: 0 }}>{bioExcerpt}</p>}
         {interests.length > 0 && (
