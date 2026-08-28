@@ -291,7 +291,7 @@ export default function InternalAccess() {
         ) : list && list.rows.length > 0 ? (
           <>
             <table className="access-table">
-              <thead><tr><th>Name</th><th>Role</th><th>Application</th><th>Access</th><th>Cohort</th><th>Registered</th><th></th></tr></thead>
+              <thead><tr><th>Name</th><th>Role</th><th>Country</th><th>Application</th><th>Access</th><th>Cohort</th><th>Registered</th><th></th></tr></thead>
               <tbody>
                 {list.rows.map((r: AdminListRow) => (
                   <tr key={r.account_id}>
@@ -303,6 +303,7 @@ export default function InternalAccess() {
                           ? <span title="Chosen at sign-up; profile not created yet">{pretty(r.intended_role)} <span className="text-secondary" style={{ fontSize: '0.72rem' }}>(intended)</span></span>
                           : '—'}
                     </td>
+                    <td>{r.country_of_residence ?? '—'}</td>
                     <td><span className={`access-badge s-${r.application_status}`}>{pretty(r.application_status)}</span></td>
                     <td><span className={`access-badge a-${r.access_level}`}>{pretty(r.access_level)}</span></td>
                     <td>{r.cohort_name ?? '—'}</td>

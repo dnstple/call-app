@@ -100,6 +100,7 @@ export interface AdminListRow {
   application_status: ApplicationStatus;
   access_level: AccessLevel; cohort_name: string | null;
   first_name: string | null; last_name: string | null; email: string | null;
+  country_of_residence: string | null;
   registered: string; last_active: string;
 }
 export interface AdminListResult { total: number; limit: number; offset: number; rows: AdminListRow[]; }
