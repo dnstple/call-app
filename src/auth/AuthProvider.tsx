@@ -59,6 +59,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const bootstrapping = useRef<string | null>(null); // guards duplicate bootstrap per user
+  const bootstrappedUser = useRef<string | null>(null); // user id already fully set up
 
   // Publish the account's accessible profiles to the mode-aware view state
   // (fresh-account rule: Supabase mode renders only this — never mock data).
@@ -79,10 +80,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setAccount(null);
       setProfiles([]);
       setActiveProfileId(null);
+      bootstrappedUser.current = null;
       setStatus('unauthenticated');
       return;
     }
     const userId = next.user.id;
+    // Already fully set up for this user (e.g. USER_UPDATED after a phone change,
+    // or a background TOKEN_REFRESHED): adopt the new token silently. Re-running
+    // the bootstrap here would flip status to 'setup_pending' and momentarily
+    // unmount the current page — which is what wiped the OTP code-entry screen.
+    if (bootstrappedUser.current === userId) return;
     if (bootstrapping.current === userId) return; // already bootstrapping this user
     bootstrapping.current = userId;
     setStatus('setup_pending');
@@ -112,6 +119,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       setActiveProfileId(active);
       setError(null);
+      bootstrappedUser.current = userId;
       setStatus('authenticated');
     } catch (e) {
       setError(e instanceof AuthAppError ? e.message : 'We couldn’t finish setting up your account.');
