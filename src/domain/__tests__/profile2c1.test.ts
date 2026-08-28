@@ -114,6 +114,7 @@ describe('public companion mapping omits private fields', () => {
     timezone: 'Europe/London',
     minimum_notice_hours: 24,
     booking_horizon_days: 60,
+    owner_verified: false,
     interest_names: ['Sport'],
     trial_price_minor: null,
     trial_duration_minutes: null,

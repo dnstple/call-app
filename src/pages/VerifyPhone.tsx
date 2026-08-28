@@ -9,9 +9,11 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Loader2, Check } from 'lucide-react';
 import { toUkE164, sendPhoneOtp, verifyPhoneOtp } from '../repositories/phoneRepository';
+import { useAuth } from '../auth/AuthProvider';
 
 export default function VerifyPhone() {
   const navigate = useNavigate();
+  const { refreshAccount } = useAuth();
   const [input, setInput] = useState('');
   const [e164, setE164] = useState('');
   const [code, setCode] = useState('');
@@ -38,7 +40,13 @@ export default function VerifyPhone() {
     setBusy(true); setErr(null);
     const r = await verifyPhoneOtp(e164, code);
     setBusy(false);
-    if (r.ok) { setDone(true); return; }
+    if (r.ok) {
+      setDone(true);
+      // Pull the freshly-verified account so the Home prompt + badge update
+      // without needing a page reload.
+      void refreshAccount();
+      return;
+    }
     setErr(r.error ?? 'That code wasn’t right — check it, or press “Resend code”.');
   };
 

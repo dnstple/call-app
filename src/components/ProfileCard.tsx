@@ -8,6 +8,7 @@ import { toggleFavourite } from '../state/actions';
 import { overallRating } from '../domain/ratings';
 import { generateSlots, nextAvailableLabel } from '../domain/availability';
 import { ProfilePhoto, RatingStars } from './ui';
+import { VerifiedBadge } from './VerifiedBadge';
 import { CardRatingSummary } from './CompanionReviews';
 import { isSupabaseMode } from '../config/dataMode';
 import { getMarketMeta } from '../repositories/profileRepository';
@@ -115,6 +116,7 @@ export function ProfileCard({ user }: { user: User }) {
           )}
         </div>
         <p className="muted" style={{ margin: 0 }}>{user.headline}</p>
+        <VerifiedBadge verified={user.phoneVerified} />
         {user.region && <p className="faint small" style={{ margin: 0 }}>{user.region}</p>}
         {bioExcerpt && <p className="faint small simple-hide" style={{ margin: 0 }}>{bioExcerpt}</p>}
         {interests.length > 0 && (

@@ -28,6 +28,12 @@ export type AccountRow = {
   onboarding_complete: boolean;
   created_at: string;
   updated_at: string;
+  // Phone verification (0164). Returned by ensure_current_account, so the app's
+  // bootstrap already carries these — the verify prompt/badge read them from
+  // state instead of firing their own request.
+  phone_e164: string | null;
+  phone_verified: boolean;
+  phone_verified_at: string | null;
 };
 
 export type ProfileRow = {
@@ -297,6 +303,8 @@ export type DiscoverableCompanionRow = {
   timezone: string | null;
   minimum_notice_hours: number | null;
   booking_horizon_days: number | null;
+  /** True when the profile owner has a verified phone number (0172). */
+  owner_verified: boolean | null;
   interest_names: string[];
   trial_price_minor: number | null;
   trial_duration_minutes: number | null;

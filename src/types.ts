@@ -58,6 +58,8 @@ export interface User {
   avatarColor: string; // fallback initials background
   photoUrl?: string; // placeholder portrait (prototype only, loads from randomuser.me)
   verification: VerificationState;
+  /** Blue "Verified" badge — true when the profile owner's phone is verified. */
+  phoneVerified?: boolean;
   accessibilityNeeds?: string;
   preferredTimes?: string; // Members: free-text preferred days/times
   boundaries?: string;     // Companions

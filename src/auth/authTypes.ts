@@ -32,6 +32,9 @@ export interface AuthActions {
   updatePassword(newPassword: string): Promise<void>;
   resendConfirmation(email: string): Promise<void>;
   refreshProfiles(): Promise<void>;
+  /** Re-load the signed-in account row (e.g. after phone verification) so the
+   *  verify prompt and own-profile badge update without a full reload. */
+  refreshAccount(): Promise<void>;
   setActiveProfile(profileId: string): void;
   markOnboardingComplete(): Promise<void>;
 }

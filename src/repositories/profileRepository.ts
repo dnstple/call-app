@@ -238,6 +238,7 @@ export function companionRowToUser(row: DiscoverableCompanionRow): User & { avat
     avatarColor: '#c8643d',
     photoUrl: row.photo_url ?? undefined,
     verification: row.verification_status === 'verified' ? 'verified' : 'pending',
+    phoneVerified: row.owner_verified ?? false,
     joinedAt: row.joined_at,
     avatarPath: row.avatar_path,
   };

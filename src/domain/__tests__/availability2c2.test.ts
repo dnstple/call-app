@@ -209,6 +209,7 @@ describe('marketplace mapping exposes real pricing fields safely', () => {
     timezone: 'Europe/London',
     minimum_notice_hours: 24,
     booking_horizon_days: 60,
+    owner_verified: false,
     interest_names: ['Sport'],
     trial_price_minor: 500,
     trial_duration_minutes: 30,

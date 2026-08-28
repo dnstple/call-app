@@ -190,6 +190,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setActiveProfileId(accessible[0]?.profile.id ?? null);
         }
       },
+      async refreshAccount() {
+        if (!session?.user) return;
+        try {
+          const acct = await withTimeout(svc.ensureAccount(session.user.email ?? undefined));
+          setAccount(acct);
+        } catch {
+          /* best-effort refresh — leave the existing account in place on failure */
+        }
+      },
       setActiveProfile(profileId) {
         // Only ever accept ids from the database-derived permitted set.
         if (!profiles.some((p) => p.profile.id === profileId)) return;

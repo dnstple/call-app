@@ -37,6 +37,7 @@ import {
   type MenuItem,
 } from '../components/ui';
 import { BookingWizard, PackagePurchaseDialog } from '../components/BookingWizard';
+import { VerifiedBadge } from '../components/VerifiedBadge';
 import { SupabaseBookingWizard } from '../components/SupabaseBookingWizard';
 import { CreditBookingWizard } from '../components/CreditBookingWizard';
 import { useManagedMember } from '../state/managedMember';
@@ -251,6 +252,7 @@ export default function ProfileDetail() {
           )}
           <div className="row wrap" style={{ gap: 16 }}>
             <VerificationBadge state={user.verification} />
+            <VerifiedBadge verified={user.phoneVerified} />
             {/* Ratings sit with the reviews, not beside the badge, so an
                 unrated companion never reads as "New — Not verified". */}
             {(!supabase || user.role !== 'companion') && (

@@ -24,6 +24,7 @@ import { ConversationRow, NextConversationCard } from '../components/Conversatio
 import { ManagingContext } from '../components/ManagingContext';
 import { ReferralProgrammeCard } from '../components/ReferralProgrammeCard';
 import { CreditsCard } from '../components/CreditsCard';
+import { PhoneVerifyPrompt } from '../components/PhoneVerifyPrompt';
 import { ProfileAvatar } from '../components/ProfileAvatar';
 import { useProfileAvatars } from '../state/avatars';
 import { ProfileCardCompact } from '../components/ProfileCard';
@@ -201,6 +202,8 @@ export default function Home() {
           <h1>{greeting}, {me.firstName}</h1>
           <ManagingContext />
         </header>
+
+        {isSupabaseConfigured() && <PhoneVerifyPrompt />}
 
         {/* Needs attention — hidden entirely when nothing needs action. */}
         {attention.length > 0 && (
