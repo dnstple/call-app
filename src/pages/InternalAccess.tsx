@@ -19,6 +19,7 @@ import {
   syncMarketingAudience, sendMarketingTest, sendMarketingCampaign,
   nudgeIncompleteCompanions, nudgeIncompleteOnboarding, resendConfirmations,
   recruitCompanionsInApp, sendCompanionRecruitEmail,
+  sendVerifyPhoneTest, sendVerifyPhoneCampaign,
   getOnboardingNudgeConfig, setOnboardingNudgeConfig, type OnboardingNudgeConfig,
 } from '../repositories/emailRepository';
 
@@ -131,6 +132,15 @@ export default function InternalAccess() {
     return runMkt('Send', () => sendMarketingCampaign(mktSubject));
   };
 
+  const [vpSubject, setVpSubject] = useState('Please verify your mobile number on Apricoti');
+  const onVerifyPhoneTest = () => runMkt('Verify-phone test', () => sendVerifyPhoneTest(vpSubject));
+  const onVerifyPhoneSend = () => {
+    const typed = window.prompt(
+      'Email the “verify your mobile” reminder to EVERY unverified user (members, coordinators and companions).\nType SEND to confirm:', '');
+    if (typed !== 'SEND') { setMktMsg('Cancelled — you must type SEND exactly.'); return; }
+    return runMkt('Verify-phone send', () => sendVerifyPhoneCampaign(vpSubject));
+  };
+
   const dashCount = (group: string, key: string): number => {
     const g = (dash?.[group] as Record<string, number>) ?? {};
     return Number(g[key] ?? 0);
@@ -212,6 +222,28 @@ export default function InternalAccess() {
                 Email all companions…
               </button>
               <span className="muted small">Pushes the “invite people you know and earn from calls with them” prompt to every active companion. In-app is once per day; email (type SEND) is once per companion per day and includes unsubscribe.</span>
+            </div>
+          </div>
+
+          <div style={{ borderTop: '1px solid var(--border, #FBE9DE)', margin: '6px 0', paddingTop: 10 }}>
+            <h2 className="section-label" style={{ margin: '0 0 6px' }}>Verify your mobile — reminder to unverified users</h2>
+            <label className="col" style={{ gap: 4, fontSize: 13, marginBottom: 8 }}>
+              Subject line
+              <input
+                className="input"
+                value={vpSubject}
+                onChange={(e) => setVpSubject(e.target.value)}
+                style={{ maxWidth: 420 }}
+              />
+            </label>
+            <div className="row wrap" style={{ gap: 8, alignItems: 'center' }}>
+              <button className="btn btn-secondary btn-small" disabled={mktBusy} onClick={onVerifyPhoneTest}>
+                Send test to me
+              </button>
+              <button className="btn btn-primary btn-small" disabled={mktBusy} onClick={onVerifyPhoneSend}>
+                Email unverified users…
+              </button>
+              <span className="muted small">Sends a test to your configured test address first, then “Email unverified users” (type SEND) emails everyone whose mobile isn’t verified — members, coordinators and companions. Once per person per day, with one-click unsubscribe.</span>
             </div>
           </div>
         </div>

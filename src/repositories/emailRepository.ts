@@ -96,6 +96,29 @@ export async function sendCompanionRecruitEmail(): Promise<MarketingResult> {
   return { ok: true, message: `Recruitment email — ${r.sent ?? 0} sent, ${r.skipped ?? 0} skipped, ${r.failed ?? 0} failed.` };
 }
 
+/* -------- Verify-phone reminder (admin-only, via campaign-verify-phone fn) ---- */
+
+async function callVerifyPhone(body: Record<string, unknown>): Promise<{ ok: boolean; data: Record<string, unknown> }> {
+  const { data, error } = await getSupabaseClient().functions.invoke('campaign-verify-phone', { body });
+  if (error) return { ok: false, data: { error: 'request_failed' } };
+  const r = (data ?? {}) as Record<string, unknown>;
+  return { ok: Boolean(r.ok), data: r };
+}
+
+/** Preview the verify-your-mobile reminder to the configured test recipient only. */
+export async function sendVerifyPhoneTest(subject?: string): Promise<MarketingResult> {
+  const { ok, data } = await callVerifyPhone({ action: 'test', subject });
+  if (!ok) return { ok: false, message: String(data.detail ?? data.error ?? 'Test send failed.') };
+  return { ok: true, message: `Test sent to ${data.recipient}.` };
+}
+
+/** Email the verify-your-mobile reminder to every unverified account. Requires SEND. */
+export async function sendVerifyPhoneCampaign(subject?: string): Promise<MarketingResult> {
+  const { ok, data } = await callVerifyPhone({ action: 'send', subject, confirm: 'SEND' });
+  if (!ok) return { ok: false, message: String(data.detail ?? data.error ?? 'Campaign send failed.') };
+  return { ok: true, message: `Reminder sent — ${data.sent ?? 0} sent, ${data.skipped ?? 0} skipped, ${data.failed ?? 0} failed (of ${data.total ?? 0} unverified).` };
+}
+
 export interface OnboardingNudgeConfig {
   enabled: boolean;
   cadence_days: number;
