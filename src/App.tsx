@@ -4,6 +4,7 @@ import { useIsSupport } from './state/support';
 import { Suspense, useEffect, type ReactNode } from 'react';
 import { Loader2 } from 'lucide-react';
 import { lazyWithReload as lazy, ChunkErrorBoundary } from './utils/lazyWithReload';
+import { Analytics } from '@vercel/analytics/react';
 import { Shell } from './components/Shell';
 import Home from './pages/Home';
 import Explore from './pages/Explore';
@@ -375,6 +376,9 @@ export default function App() {
           <AppRoutes />
         </AccessProvider>
       </AuthProvider>
+      {/* Vercel Web Analytics — page views + custom events. Uses the /react
+          entry (this is a Vite SPA, not Next.js). */}
+      <Analytics />
     </HashRouter>
   );
 }
