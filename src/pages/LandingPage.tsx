@@ -1,11 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { CheckCircle2, Mail, Shield, Sparkles, Tag, UserRound, Video } from 'lucide-react';
 import { APP_NAME } from '../config/branding';
 import { isSupabaseMode } from '../config/dataMode';
 import { publicLaunchMode, type LaunchMode } from '../repositories/accessRepository';
 import { ContactForm } from '../components/ContactForm';
+import { LeadCaptureModal } from '../components/LeadCaptureModal';
 import { landingCopy, SUPPORT_EMAIL } from '../content/landingContent';
+
+const LEAD_POPUP_SEEN_KEY = 'apricoti-lead-popup-seen';
 
 /**
  * The signed-out landing page adapts to the authoritative launch mode
@@ -41,6 +44,27 @@ export default function LandingPage() {
   const memberTo = isSupabaseMode() ? '/register?role=member' : '/signup?role=member';
   const companionTo = isSupabaseMode() ? '/register?role=companion' : '/signup?role=companion';
   const startTo = memberTo;
+
+  // Lead-capture popup: fires once per session when the visitor scrolls to the
+  // "For Members" section. sessionStorage guard keeps it from re-nagging.
+  const membersRef = useRef<HTMLElement>(null);
+  const [showLead, setShowLead] = useState(false);
+  useEffect(() => {
+    let seen = false;
+    try { seen = sessionStorage.getItem(LEAD_POPUP_SEEN_KEY) === '1'; } catch { /* ignore */ }
+    if (seen) return;
+    const el = membersRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const obs = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) {
+        try { sessionStorage.setItem(LEAD_POPUP_SEEN_KEY, '1'); } catch { /* ignore */ }
+        setShowLead(true);
+        obs.disconnect();
+      }
+    }, { threshold: 0.4 });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
 
   return (
     <div className="landing">
@@ -133,7 +157,7 @@ export default function LandingPage() {
       </section>
 
       {/* For self — text only (image removed) */}
-      <section className="landing-section">
+      <section className="landing-section" ref={membersRef}>
         <div className="landing-container">
           <div className="landing-split-text landing-solo-text landing-solo-center">
             <span className="section-label">{c.self.label}</span>
@@ -294,6 +318,8 @@ export default function LandingPage() {
           <p className="landing-footer-copy">© {new Date().getFullYear()} {APP_NAME}</p>
         </div>
       </footer>
+
+      {showLead && <LeadCaptureModal onClose={() => setShowLead(false)} />}
     </div>
   );
 }
