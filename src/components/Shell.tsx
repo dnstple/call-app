@@ -57,7 +57,6 @@ const EXPLORE = { to: '/explore', label: 'Explore', Icon: Compass } as const;
 const MESSAGES = { to: '/messages', label: 'Messages', Icon: MessageCircle } as const;
 const CONVERSATIONS = { to: '/conversations', label: 'Conversations', Icon: CalendarHeart } as const;
 const PROFILE = { to: '/profile', label: 'Profile', Icon: UserRound } as const;
-const AVAILABILITY = { to: '/availability', label: 'Availability & rates', Icon: CalendarHeart } as const;
 const SETTINGS = { to: '/settings', label: 'Settings', Icon: SettingsIcon } as const;
 
 /**
@@ -66,7 +65,7 @@ const SETTINGS = { to: '/settings', label: 'Settings', Icon: SettingsIcon } as c
  * set up their profile (Settings is always rendered separately).
  */
 export function waitlistNavForRole(role: string): NavItem[] {
-  if (role === 'companion') return [HOME, PROFILE, AVAILABILITY];
+  if (role === 'companion') return [HOME, PROFILE];
   return [HOME, PROFILE];
 }
 

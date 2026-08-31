@@ -70,7 +70,7 @@ export function ManualBackupManager() {
             className={`btn btn-small ${selected === c.booking_id ? 'btn-primary' : 'btn-ghost'}`}
             style={{ justifyContent: 'flex-start', textAlign: 'left' }}
             onClick={() => select(c.booking_id)}>
-            {when(c.starts_at)} · {c.member_first ?? 'Member'} with {c.companion_first ?? 'companion'}
+            [{c.kind}] {when(c.starts_at)} · {c.member_first ?? 'Member'} with {c.companion_first ?? 'companion'}
             {' · '}
             {c.reassigned ? 'reassigned' : c.primary_confirmed ? 'confirmed' : 'awaiting confirmation'}
             {c.available_count > 0 ? ` · ${c.available_count} backup(s) accepted` : ''}

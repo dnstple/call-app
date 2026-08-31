@@ -107,6 +107,7 @@ export interface UpcomingCreditCall {
   starts_at: string;
   duration_minutes: number;
   status: string;
+  kind: string;
   backup_state: string | null;
   confirmation_deadline_at: string | null;
   member_first: string | null;

@@ -50,22 +50,6 @@ function Countdown({ to }: { to: string }) {
   return <strong>in {Math.round(hours / 24)} days</strong>;
 }
 
-/** Companion Home: compact availability snapshot — no giant cards. */
-function CompanionAvailabilitySnapshot() {
-  return (
-    <section className="section-tight" aria-label="Your availability">
-      <div className="row between wrap" style={{ gap: 8 }}>
-        <h2 className="section-label">Availability</h2>
-        <Link to="/availability" className="btn btn-ghost btn-small">Edit availability</Link>
-      </div>
-      <p className="muted small" style={{ margin: 0 }}>
-        Your weekly hours, notice period and whether you’re accepting new Members
-        are managed in Availability &amp; rates.
-      </p>
-    </section>
-  );
-}
-
 export default function Home() {
   const state = useAppState();
   const me = currentUser(state);
@@ -198,12 +182,12 @@ export default function Home() {
 
     return (
       <div>
+        {isSupabaseConfigured() && <PhoneVerifyPrompt />}
+
         <header className="page-header">
           <h1>{greeting}, {me.firstName}</h1>
           <ManagingContext />
         </header>
-
-        {isSupabaseConfigured() && <PhoneVerifyPrompt />}
 
         {/* Needs attention — hidden entirely when nothing needs action. */}
         {attention.length > 0 && (
@@ -368,7 +352,6 @@ export default function Home() {
 
         {/* Role-specific supporting info */}
         {isSupabaseConfigured() && me.role !== 'companion' && planActivity > 0 && <ConversationPlans />}
-        {me.role === 'companion' && <CompanionAvailabilitySnapshot />}
         {isSupabaseConfigured() && accountRole === 'companion' && <CompanionInterestedPanel />}
       </div>
     );

@@ -22,7 +22,7 @@ import { EmptyState } from '../components/ui';
 import { RedeemInviteCard } from '../components/Referral';
 
 const SECTION_ROUTE: Record<string, string> = {
-  profile: '/profile', availability: '/availability', settings: '/settings',
+  profile: '/profile', settings: '/settings',
 };
 
 /** Waiting portal for non-Companion roles (Coordinator / Member). */

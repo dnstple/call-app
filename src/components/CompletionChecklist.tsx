@@ -47,8 +47,6 @@ export function CompanionCompletionChecklist({ profileId }: { profileId: string 
     { key: 'headline', label: 'A short headline' },
     { key: 'description', label: `A meaningful description (120–1,000 characters — currently ${list.description_length})` },
     { key: 'interests', label: 'At least one interest' },
-    { key: 'availability', label: 'Weekly availability' },
-    { key: 'pricing', label: 'Conversation pricing' },
   ];
 
   const activate = async () => {

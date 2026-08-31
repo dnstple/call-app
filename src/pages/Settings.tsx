@@ -160,14 +160,6 @@ export default function Settings() {
               description="Methods and contact sharing"
               onClick={() => open('privacy')}
             />
-            {me.role === 'companion' && (
-              <SettingsRow
-                icon={<CalendarClock size={20} aria-hidden="true" />}
-                label={isSupabaseMode() ? 'Availability & rates' : 'Availability'}
-                description={isSupabaseMode() ? 'Weekly hours, time off and prices' : 'Weekly hours and booking notice'}
-                onClick={() => (isSupabaseMode() ? navigate('/availability') : open('availability'))}
-              />
-            )}
           </div>
         </section>
 

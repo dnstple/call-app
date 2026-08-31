@@ -21,20 +21,24 @@ returns jsonb language plpgsql stable security definer set search_path = '' as $
 declare v jsonb;
 begin
   perform app_private.require_support();
+  -- Both credit calls (offer_id null) AND legacy offer/trial/paid bookings, so an
+  -- admin can arrange a backup for any upcoming call. Only the AUTOMATIC engine
+  -- stays credit-only; manual selection covers everything.
   select coalesce(jsonb_agg(to_jsonb(x) order by x.starts_at), '[]'::jsonb) into v from (
     select b.id as booking_id, b.starts_at, b.duration_minutes, b.status, b.backup_state,
            b.confirmation_deadline_at,
+           case when b.offer_id is null then 'Credit' when b.is_trial then 'Trial' else 'Paid' end as kind,
            m.first_name as member_first,
            c.first_name as companion_first, c.last_name as companion_last,
-           (b.status = 'companion_confirmed' and b.reassigned_at is null) as primary_confirmed,
+           (b.status in ('confirmed','companion_confirmed') and b.reassigned_at is null) as primary_confirmed,
            (b.reassigned_at is not null) as reassigned,
            (select count(*) from public.backup_offers o where o.booking_id = b.id and o.status in ('offered','available')) as offers_live,
            (select count(*) from public.backup_offers o where o.booking_id = b.id and o.status = 'available') as available_count
     from public.bookings b
     join public.profiles m on m.id = b.member_profile_id
     join public.profiles c on c.id = b.companion_profile_id
-    where b.offer_id is null and b.starts_at > now()
-      and b.status in ('booked','companion_confirmed')
+    where b.starts_at > now()
+      and b.status in ('requested','confirmed','change_proposed','booked','companion_confirmed')
     order by b.starts_at
     limit 100
   ) x;
@@ -83,8 +87,12 @@ declare b record; v_existing uuid; v_offer uuid; v_account uuid;
 begin
   perform app_private.require_support();
   select * into b from public.bookings where id = p_booking for update;
-  if not found or b.offer_id is not null then return jsonb_build_object('ok', false, 'error', 'not_credit'); end if;
-  if b.status <> 'booked' then return jsonb_build_object('ok', false, 'error', b.status); end if;
+  if not found then return jsonb_build_object('ok', false, 'error', 'not_found'); end if;
+  -- Credit ('booked') and offer/trial/paid ('requested'/'confirmed'/'change_proposed')
+  -- calls can all take a manual backup; terminal states cannot.
+  if b.status not in ('booked','requested','confirmed','change_proposed') then
+    return jsonb_build_object('ok', false, 'error', b.status);
+  end if;
   if b.starts_at <= now() then return jsonb_build_object('ok', false, 'error', 'too_late'); end if;
   if p_companion = b.companion_profile_id then return jsonb_build_object('ok', false, 'error', 'is_primary'); end if;
 
@@ -112,6 +120,60 @@ end;
 $$;
 revoke all on function public.admin_offer_backup(uuid, uuid) from public, anon;
 grant execute on function public.admin_offer_backup(uuid, uuid) to authenticated;
+
+-- Status-aware transfer (supersedes 0178's admin_assign_companion): works for
+-- credit calls AND offer/trial/paid bookings. Sets the correct confirmed status
+-- per booking type ('companion_confirmed' for credit, 'confirmed' for offer
+-- bookings), re-checks availability so no double-booking, records the transition
+-- and notifies everyone. Payout follows the booking's companion at completion
+-- (0134/0163), so the backup — not the original — earns.
+create or replace function public.admin_assign_companion(p_booking uuid, p_companion uuid)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare b record; v_orig uuid; v_orig_account uuid; v_new_status text;
+begin
+  perform app_private.require_support();
+  select * into b from public.bookings where id = p_booking for update;
+  if not found then return jsonb_build_object('outcome','not_found'); end if;
+  if b.status not in ('booked','companion_confirmed','requested','confirmed','change_proposed') then
+    return jsonb_build_object('outcome', b.status);
+  end if;
+  if b.starts_at <= now() then return jsonb_build_object('outcome','too_late'); end if;
+  if not app_private.companion_free_at(p_companion, b.starts_at, b.ends_at, p_booking) then
+    return jsonb_build_object('outcome','companion_unavailable');
+  end if;
+
+  v_orig := b.companion_profile_id;
+  v_orig_account := app_private.profile_owner_account(v_orig);
+  v_new_status := case when b.offer_id is null then 'companion_confirmed' else 'confirmed' end;
+
+  update public.bookings set
+    original_companion_profile_id = coalesce(original_companion_profile_id, companion_profile_id),
+    companion_profile_id = p_companion,
+    status = v_new_status,
+    companion_confirmed_at = case when b.offer_id is null then now() else companion_confirmed_at end,
+    reassigned_at = now(), backup_state = null, updated_at = now()
+  where id = p_booking;
+
+  update public.backup_offers
+     set status = case when companion_profile_id = p_companion then 'selected' else 'released' end, updated_at = now()
+   where booking_id = p_booking and status in ('offered','available');
+
+  if b.status is distinct from v_new_status then
+    perform app_private.record_transition(p_booking, b.status, v_new_status, 'reassigned to backup companion (admin)');
+  end if;
+  perform app_private.log_failover(p_booking, 'ADMIN_OVERRIDE',
+          jsonb_build_object('assigned_profile', p_companion, 'from_profile', v_orig), auth.uid(), p_companion);
+
+  if v_orig <> p_companion then
+    perform app_private.enqueue_reassignment_notices(p_booking, p_companion,
+      app_private.profile_owner_account(p_companion), v_orig, v_orig_account,
+      b.booked_by_account_id, b.starts_at, b.duration_minutes, b.timezone);
+  end if;
+  return jsonb_build_object('outcome','assigned','companion', p_companion);
+end;
+$$;
+revoke all on function public.admin_assign_companion(uuid, uuid) from public, anon;
+grant execute on function public.admin_assign_companion(uuid, uuid) to authenticated;
 
 -- Add the companion profile id to each offer in the overview so the admin UI can
 -- assign directly from an accepted offer. Mirrors 0178 plus 'companion_profile'.

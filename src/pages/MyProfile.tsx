@@ -4,7 +4,6 @@ import { Settings as SettingsIcon } from 'lucide-react';
 import { useAppState, pushToast } from '../state/store';
 import { currentUser, managedMembers } from '../state/selectors';
 import { isSupabaseMode } from '../config/dataMode';
-import { needsCompanionSetup } from '../signup/completeSupabase';
 import { useAuth } from '../auth/AuthProvider';
 import {
   getInterests,
@@ -24,6 +23,7 @@ import { MEDIUM_LABELS } from '../domain/format';
 import { formatPence } from '../domain/commission';
 import { ChipGroup, Modal, ProfilePhoto, RatingStars, VerificationBadge } from '../components/ui';
 import { VerifiedBadge } from '../components/VerifiedBadge';
+import { PhoneVerifyPrompt } from '../components/PhoneVerifyPrompt';
 import { roleLabel } from '../components/Shell';
 import { CompanionCompletionChecklist } from '../components/CompletionChecklist';
 import { VideoVerification } from '../components/VideoVerification';
@@ -86,6 +86,8 @@ export default function MyProfile() {
 
   return (
     <div>
+      {isSupabaseMode() && <PhoneVerifyPrompt />}
+
       <div className="row between mb-4" style={{ justifyContent: 'flex-end' }}>
         <Link to="/settings" className="icon-btn" aria-label="Settings">
           <SettingsIcon size={22} aria-hidden="true" />
@@ -136,24 +138,6 @@ export default function MyProfile() {
           )}
         </div>
       </header>
-
-      {supabase && editable && me.role === 'companion' && (
-        <section className="section-tight">
-          <h2>Availability & rates</h2>
-          {needsCompanionSetup(me.id) && (
-            <div className="banner banner-danger mb-4">
-              Your availability and rates didn’t finish saving during sign-up — pick up where you
-              left off below.
-            </div>
-          )}
-          <div className="card card-tight row between wrap">
-            <span className="muted">Weekly availability, time off and conversation prices.</span>
-            <Link to="/availability" className="btn btn-secondary btn-small">
-              Manage availability & rates
-            </Link>
-          </div>
-        </section>
-      )}
 
       <section className="section-tight">
         <div className="row between">
