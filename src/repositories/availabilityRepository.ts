@@ -13,6 +13,22 @@ import type {
 import { RepoError } from './profileRepository';
 import { toHHMM, type WindowInput } from '../domain/timezones';
 
+type NoticeRpc = { rpc: (fn: string, p?: Record<string, unknown>) => Promise<{ data: unknown; error: unknown }> };
+
+/** Read the signed-in companion's current minimum-notice window (hours). */
+export async function getMyMinimumNotice(): Promise<number | null> {
+  const { data, error } = await (getSupabaseClient() as unknown as NoticeRpc).rpc('my_companion_notice', { p_hours: null });
+  if (error || data == null) return null;
+  return Number(data);
+}
+
+/** Set the companion's minimum-notice window (hours); returns the saved value. */
+export async function setMyMinimumNotice(hours: number): Promise<number | null> {
+  const { data, error } = await (getSupabaseClient() as unknown as NoticeRpc).rpc('my_companion_notice', { p_hours: hours });
+  if (error || data == null) return null;
+  return Number(data);
+}
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 function mapError(e: any, fallback = 'Something went wrong. Please try again.'): RepoError {
   const msg = String(e?.message ?? '').toLowerCase();
