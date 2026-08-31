@@ -260,7 +260,7 @@ export default function BookingDetail() {
   const eligibleForCompletion = booking.status === 'confirmed';
   // Once a conversation has ended, reschedule/cancel no longer make sense —
   // the completion panel takes over.
-  const active = ['requested', 'confirmed', 'change_proposed'].includes(booking.status) && !ended;
+  const active = ['requested', 'confirmed', 'change_proposed', 'booked', 'companion_confirmed'].includes(booking.status) && !ended;
   const iProposed = proposal?.proposed_by_account_id === auth.userId;
 
   const run = (fn: () => Promise<unknown>) => async () => {
