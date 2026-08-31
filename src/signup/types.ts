@@ -142,7 +142,7 @@ export const STEP_SEQUENCES: Record<Role, string[]> = {
   // Pricing and packages are set in the Companion dashboard AFTER approval —
   // they are deliberately NOT part of signup (motivation, style and verification
   // matter more during onboarding than asking an unapproved Companion to price).
-  companion: ['role', 'details', 'intro', 'interests', 'languages', 'availability', 'trust', 'review', 'success'],
+  companion: ['role', 'verify', 'details', 'intro', 'interests', 'languages', 'availability', 'trust', 'review', 'success'],
   coordinator: ['role', 'about', 'memberDetails', 'permission', 'interests', 'prefs', 'availability', 'matching', 'notifRouting', 'review', 'success'],
 };
 

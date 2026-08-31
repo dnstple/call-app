@@ -47,6 +47,7 @@ import { clearDraft, demoData, loadDraft, markSignupSeen, saveDraft } from './st
 import { createAccountsFromSignup, type CreatedAccounts } from './complete';
 import { beginMembership } from '../repositories/membershipRepository';
 import { completeSupabaseSignup, saveSignupSource } from './completeSupabase';
+import { CompanionVerifyStep } from './CompanionVerifyStep';
 import { isSupabaseMode } from '../config/dataMode';
 import { useAuth } from '../auth/AuthProvider';
 import { AuthAppError } from '../auth/authErrors';
@@ -89,6 +90,7 @@ export default function SignupWizard() {
   const [error, setError] = useState<string | null>(null);
   const [attempted, setAttempted] = useState(false);
   const [created, setCreated] = useState<CreatedAccounts | null>(null);
+  const [phoneVerifiedLocal, setPhoneVerifiedLocal] = useState(false);
   const [showCustomInterest, setShowCustomInterest] = useState(() => Boolean(loadDraft()?.data.customInterest));
   const [showSpecificTimes, setShowSpecificTimes] = useState(false);
   const [showCustomPackage, setShowCustomPackage] = useState(false);
@@ -97,10 +99,13 @@ export default function SignupWizard() {
   // Supabase mode inserts a real account step after role selection when the
   // visitor has no session yet.
   const baseSteps = stepsFor(data.role);
-  const steps =
+  let steps =
     supabase && data.role && auth.status !== 'authenticated'
       ? [baseSteps[0], 'account', ...baseSteps.slice(1)]
       : baseSteps;
+  // Phone verification needs a real (authenticated) account — only in Supabase mode.
+  if (!supabase) steps = steps.filter((s) => s !== 'verify');
+  const phoneVerified = Boolean(auth.account?.phone_verified) || phoneVerifiedLocal;
   const step = steps[Math.min(stepIndex, steps.length - 1)];
   const progressTotal = Math.max(steps.length - 1, 1); // exclude success, never 0
   const progressCurrent = Math.max(Math.min(stepIndex + 1, progressTotal), 1);
@@ -174,6 +179,8 @@ export default function SignupWizard() {
     switch (step) {
       case 'role':
         return data.role ? null : 'Choose the option that fits you best.';
+      case 'verify':
+        return phoneVerified ? null : 'Please verify your UK mobile number to continue.';
       case 'details':
         if (!data.firstName.trim()) return 'Please add a first name.';
         if (data.role === 'companion') {
@@ -589,6 +596,10 @@ export default function SignupWizard() {
               );
             })()}
           </SignupStep>
+        )}
+
+        {step === 'verify' && (
+          <CompanionVerifyStep verified={phoneVerified} onVerified={() => setPhoneVerifiedLocal(true)} />
         )}
 
         {step === 'intro' && (
