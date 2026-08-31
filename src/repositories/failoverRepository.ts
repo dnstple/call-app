@@ -166,3 +166,17 @@ export async function offerBackup(bookingId: string, companionProfileId: string)
   const r = (data ?? {}) as Record<string, unknown>;
   return { ok: Boolean(r.ok), error: r.error ? String(r.error) : undefined };
 }
+
+/** Send a custom message (in-app + SMS) to the member who booked the call. */
+export async function messageMember(bookingId: string, body: string): Promise<{ ok: boolean; detail: string }> {
+  const { data, error } = await client().rpc('admin_message_member', { p_booking: bookingId, p_body: body });
+  if (error) return { ok: false, detail: 'Could not send the message.' };
+  const r = (data ?? {}) as Record<string, unknown>;
+  if (!r.ok) return { ok: false, detail: r.error === 'no_member' ? 'No member is attached to this call.' : 'Could not send the message.' };
+  // Flush the queued SMS immediately (in-app is already delivered).
+  const flush = await flushPendingSms();
+  const smsNote = r.has_phone
+    ? (flush.ok ? ' Text sent.' : ` (In-app sent; text pending — ${flush.detail})`)
+    : ' In-app only — the member has no verified mobile.';
+  return { ok: true, detail: `Message sent to the member.${smsNote}` };
+}

@@ -8,7 +8,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Loader2, RefreshCw, Check, X, Phone, UserPlus } from 'lucide-react';
 import {
   getUpcomingCreditCalls, getCandidateCompanions, offerBackup, getFailoverOverview,
-  assignCompanion, keepPrimary,
+  assignCompanion, keepPrimary, messageMember,
   type UpcomingCreditCall, type CandidateCompanion,
 } from '../repositories/failoverRepository';
 
@@ -31,6 +31,7 @@ export function ManualBackupManager() {
   const [candidates, setCandidates] = useState<CandidateCompanion[]>([]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [memberMsg, setMemberMsg] = useState('');
 
   const loadCalls = useCallback(() => { getUpcomingCreditCalls().then(setCalls).catch(() => setCalls([])); }, []);
   useEffect(() => { loadCalls(); }, [loadCalls]);
@@ -49,6 +50,14 @@ export function ManualBackupManager() {
     setBusy(false);
     if (selected) loadCall(selected);
     loadCalls();
+  };
+
+  const sendMemberMessage = async () => {
+    if (!selected || !memberMsg.trim()) return;
+    setBusy(true); setMsg(null);
+    const r = await messageMember(selected, memberMsg.trim());
+    setBusy(false); setMsg(r.detail);
+    if (r.ok) setMemberMsg('');
   };
 
   const offers = (overview?.offers as OfferRow[] | undefined) ?? [];
@@ -118,6 +127,27 @@ export function ManualBackupManager() {
                 Transferring notifies the member, the new companion and the original companion automatically.
               </p>
             )}
+          </div>
+
+          {/* Message the member who booked the call */}
+          <div>
+            <h3 className="section-label" style={{ margin: '0 0 6px' }}>Message the member</h3>
+            <textarea
+              className="input"
+              rows={2}
+              maxLength={500}
+              placeholder="e.g. We’re arranging cover for your call — it will still go ahead as planned."
+              value={memberMsg}
+              disabled={busy}
+              onChange={(e) => setMemberMsg(e.target.value)}
+              style={{ width: '100%', resize: 'vertical' }}
+            />
+            <div className="row between" style={{ alignItems: 'center', marginTop: 6 }}>
+              <span className="muted small">Sends an in-app note and a text to whoever booked the call.</span>
+              <button className="btn btn-secondary btn-small" disabled={busy || !memberMsg.trim()} onClick={sendMemberMessage}>
+                Send to member
+              </button>
+            </div>
           </div>
 
           {/* Candidate picker → invite */}
