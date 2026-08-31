@@ -44,6 +44,26 @@ export async function setFailoverConfig(patch: {
   return mapConfig(data as Record<string, unknown>);
 }
 
+/**
+ * Invoke the call-failover transport (SMS worker) directly with the admin's own
+ * session — bypasses the cron/Vault wiring. Surfaces the real outcome so a Twilio
+ * misconfiguration is visible instead of silent.
+ */
+export async function flushPendingSms(): Promise<{ ok: boolean; detail: string }> {
+  const { data, error } = await getSupabaseClient().functions.invoke('call-failover', { body: {} });
+  if (error) return { ok: false, detail: 'Could not reach the SMS worker — is the call-failover function deployed?' };
+  const r = (data ?? {}) as Record<string, unknown>;
+  if (r.skipped === 'sms_disabled') return { ok: false, detail: 'SMS is disabled — turn on “Enable SMS” first.' };
+  if (r.error === 'twilio_not_configured') return { ok: false, detail: 'Twilio isn’t configured — set TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_FROM_NUMBER.' };
+  if (r.error) return { ok: false, detail: `Worker error: ${String(r.error)}` };
+  const sent = Number(r.sent_offers ?? 0) + Number(r.sent_notices ?? 0);
+  const failed = Number(r.failed ?? 0);
+  const skipped = Number(r.skipped ?? 0);
+  if (sent === 0 && failed > 0) return { ok: false, detail: `Twilio rejected ${failed} message(s) — check the from-number is an SMS-capable Twilio number. See twilio_status on the offer.` };
+  if (sent === 0 && skipped > 0) return { ok: false, detail: `${skipped} skipped — recipients have no verified phone.` };
+  return { ok: true, detail: `Sent ${sent} message(s); ${failed} failed, ${skipped} skipped.` };
+}
+
 /** Run the window-aware backfill/tick now (idempotent). */
 export async function runBackfill(): Promise<{ ok: boolean; detail: string }> {
   const { data, error } = await client().rpc('backfill_backup_failover');

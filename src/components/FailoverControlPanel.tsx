@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Loader2, ShieldAlert, RefreshCw } from 'lucide-react';
 import {
-  getFailoverConfig, setFailoverConfig, runBackfill,
+  getFailoverConfig, setFailoverConfig, runBackfill, flushPendingSms,
   getActiveFailovers, switchNow, keepPrimary, startBackupSearch,
   type ActiveFailoverCall,
 } from '../repositories/failoverRepository';
@@ -43,6 +43,11 @@ export function FailoverControlPanel() {
   const onBackfill = async () => {
     setBusy(true); setMsg(null);
     const r = await runBackfill();
+    setBusy(false); setMsg(r.detail); load();
+  };
+  const onFlush = async () => {
+    setBusy(true); setMsg(null);
+    const r = await flushPendingSms();
     setBusy(false); setMsg(r.detail); load();
   };
   const act = async (fn: () => Promise<unknown>, label: string) => {
@@ -84,6 +89,9 @@ export function FailoverControlPanel() {
         </button>
         <button className="btn btn-ghost btn-small" disabled={busy} onClick={onBackfill}>
           {busy ? <Loader2 size={15} className="spin" aria-hidden="true" /> : null} Run backfill now
+        </button>
+        <button className="btn btn-ghost btn-small" disabled={busy} onClick={onFlush}>
+          {busy ? <Loader2 size={15} className="spin" aria-hidden="true" /> : null} Send pending texts now
         </button>
       </div>
       <p className="muted small" style={{ margin: 0 }}>
