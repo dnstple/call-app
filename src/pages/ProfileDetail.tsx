@@ -38,7 +38,6 @@ import {
 } from '../components/ui';
 import { BookingWizard, PackagePurchaseDialog } from '../components/BookingWizard';
 import { VerifiedBadge } from '../components/VerifiedBadge';
-import { SupabaseBookingWizard } from '../components/SupabaseBookingWizard';
 import { CreditBookingWizard } from '../components/CreditBookingWizard';
 import { useManagedMember } from '../state/managedMember';
 import { getBillingStatus } from '../repositories/billingRepository';
@@ -70,7 +69,8 @@ export default function ProfileDetail() {
   const readOnly = supabase && !stateUser;
   // Acting member for credit bookings (membership model). When present, booking
   // spends a call credit instead of using the old offer/price flow.
-  const creditMemberProfileId = useManagedMember().selected?.profileId ?? null;
+  const managed = useManagedMember();
+  const creditMemberProfileId = managed.selected?.profileId ?? null;
   const [booking, setBooking] = useState(false);
   const [buyPackage, setBuyPackage] = useState<PackageOffer | null>(null);
   const [reporting, setReporting] = useState(false);
@@ -448,12 +448,31 @@ export default function ProfileDetail() {
             onClose={() => setRealBooking(false)}
           />
         ) : (
-          <SupabaseBookingWizard
-            companion={user}
-            offers={realOffers}
-            resume={resumeDraft}
-            onClose={() => { setRealBooking(false); setResumeDraft(null); }}
-          />
+          // Credit-only model: no conversation offers. If no member is selected
+          // yet (a coordinator with several members), ask who the call is for and
+          // book with their credits — never the old offer flow.
+          <div role="dialog" aria-modal="true" aria-label="Who is this call for?"
+            onClick={() => setRealBooking(false)}
+            style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(32,28,25,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+            <div className="card col" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420, width: '100%', gap: 12, padding: 24, borderRadius: 16 }}>
+              <h2 style={{ margin: 0, fontSize: '1.15rem' }}>Who is this call for?</h2>
+              {managed.members.length > 0 ? (
+                <>
+                  <p className="muted" style={{ margin: 0, fontSize: 14 }}>Choose the member — the call uses their membership credits.</p>
+                  <div className="col" style={{ gap: 8 }}>
+                    {managed.members.map((m) => (
+                      <button key={m.profileId} className="btn btn-secondary btn-block" onClick={() => managed.select(m.profileId)}>
+                        {m.name}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <p className="muted" style={{ margin: 0 }}>No member is set up to book for yet.</p>
+              )}
+              <button className="btn btn-ghost btn-small" onClick={() => setRealBooking(false)}>Cancel</button>
+            </div>
+          </div>
         )
       )}
       {buyPackage && <PackagePurchaseDialog offer={buyPackage} companion={user} onClose={() => setBuyPackage(null)} />}
