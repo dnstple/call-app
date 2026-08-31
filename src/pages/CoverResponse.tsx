@@ -122,7 +122,7 @@ export default function CoverResponse() {
           {!offer.isOpen ? (
             <p className="banner banner-danger" role="alert" style={{ margin: 0 }}>This call is no longer open for cover.</p>
           ) : (
-            <div className="row" style={{ gap: 8 }}>
+            <div className="col" style={{ gap: 8 }}>
               <button className="btn btn-primary btn-block" disabled={busy} onClick={() => respond(true)}>
                 {busy ? <Loader2 size={16} className="spin" aria-hidden="true" /> : null} {emergency ? 'Yes, I’ll take it' : 'I’m available'}
               </button>
