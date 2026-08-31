@@ -89,6 +89,7 @@ export default function CoverResponse() {
   }
 
   const emergency = offer.batch === 'emergency';
+  const onStandby = offer.state === 'available';
   return shell(
     <div className="card col" style={{ gap: 14 }}>
       <div className="row" style={{ gap: 10, alignItems: 'center' }}>
@@ -99,22 +100,38 @@ export default function CoverResponse() {
         </div>
       </div>
       <div className="banner" role="status" style={{ margin: 0 }}>{fmtDate(offer.startsAt, offer.timezone)}</div>
-      <p className="muted" style={{ margin: 0, fontSize: 14 }}>
-        {emergency
-          ? 'If you can take this call, confirm below and it’s yours right away.'
-          : 'Let us know if you could step in if the original companion doesn’t confirm. You’re not committed until we let you know you’re needed.'}
-      </p>
-      {!offer.isOpen ? (
-        <p className="banner banner-danger" role="alert" style={{ margin: 0 }}>This call is no longer open for cover.</p>
+
+      {onStandby ? (
+        <>
+          <p className="banner" role="status" style={{ margin: 0 }}>
+            You’re on standby for this call. We’ll let you know if you’re needed.
+          </p>
+          {offer.isOpen && (
+            <button className="btn btn-secondary btn-block" disabled={busy} onClick={() => respond(false)}>
+              {busy ? <Loader2 size={16} className="spin" aria-hidden="true" /> : null} Cancel — I can’t after all
+            </button>
+          )}
+        </>
       ) : (
-        <div className="row" style={{ gap: 8 }}>
-          <button className="btn btn-primary btn-block" disabled={busy} onClick={() => respond(true)}>
-            {busy ? <Loader2 size={16} className="spin" aria-hidden="true" /> : null} {emergency ? 'Yes, I’ll take it' : 'I’m available'}
-          </button>
-          <button className="btn btn-secondary btn-block" disabled={busy} onClick={() => respond(false)}>
-            Not available
-          </button>
-        </div>
+        <>
+          <p className="muted" style={{ margin: 0, fontSize: 14 }}>
+            {emergency
+              ? 'If you can take this call, confirm below and it’s yours right away.'
+              : 'Let us know if you could step in if the original companion doesn’t confirm. You’re not committed until we let you know you’re needed.'}
+          </p>
+          {!offer.isOpen ? (
+            <p className="banner banner-danger" role="alert" style={{ margin: 0 }}>This call is no longer open for cover.</p>
+          ) : (
+            <div className="row" style={{ gap: 8 }}>
+              <button className="btn btn-primary btn-block" disabled={busy} onClick={() => respond(true)}>
+                {busy ? <Loader2 size={16} className="spin" aria-hidden="true" /> : null} {emergency ? 'Yes, I’ll take it' : 'I’m available'}
+              </button>
+              <button className="btn btn-secondary btn-block" disabled={busy} onClick={() => respond(false)}>
+                Not available
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>,
   );

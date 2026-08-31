@@ -99,3 +99,49 @@ export async function assignCompanion(bookingId: string, companionProfileId: str
   if (error) return { ok: false, outcome: 'error' };
   return { ok: true, outcome: String((data as Record<string, unknown>)?.outcome ?? 'unknown') };
 }
+
+/* ---------------- Manual (hand-picked) backups (0180) ---------------- */
+
+export interface UpcomingCreditCall {
+  booking_id: string;
+  starts_at: string;
+  duration_minutes: number;
+  status: string;
+  backup_state: string | null;
+  confirmation_deadline_at: string | null;
+  member_first: string | null;
+  companion_first: string | null;
+  companion_last: string | null;
+  primary_confirmed: boolean;
+  reassigned: boolean;
+  offers_live: number;
+  available_count: number;
+}
+
+export async function getUpcomingCreditCalls(): Promise<UpcomingCreditCall[]> {
+  const { data, error } = await client().rpc('admin_upcoming_credit_calls');
+  if (error || !data) return [];
+  return (data as UpcomingCreditCall[]) ?? [];
+}
+
+export interface CandidateCompanion {
+  profile_id: string;
+  first_name: string | null;
+  last_name: string | null;
+  is_free: boolean;
+  has_phone: boolean;
+  already_invited: boolean;
+}
+
+export async function getCandidateCompanions(bookingId: string): Promise<CandidateCompanion[]> {
+  const { data, error } = await client().rpc('admin_candidate_companions', { p_booking: bookingId });
+  if (error || !data) return [];
+  return (data as CandidateCompanion[]) ?? [];
+}
+
+export async function offerBackup(bookingId: string, companionProfileId: string): Promise<{ ok: boolean; error?: string }> {
+  const { data, error } = await client().rpc('admin_offer_backup', { p_booking: bookingId, p_companion: companionProfileId });
+  if (error) return { ok: false, error: 'request_failed' };
+  const r = (data ?? {}) as Record<string, unknown>;
+  return { ok: Boolean(r.ok), error: r.error ? String(r.error) : undefined };
+}
