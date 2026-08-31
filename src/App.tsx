@@ -51,6 +51,7 @@ const InternalHome = lazy(() => import('./pages/InternalHome'));
 const ContactPage = lazy(() => import('./pages/ContactPage'));
 const VerifyPhone = lazy(() => import('./pages/VerifyPhone'));
 const CoverResponse = lazy(() => import('./pages/CoverResponse'));
+const FeedbackPage = lazy(() => import('./pages/FeedbackPage'));
 import {
   AuthCallbackPage,
   ForgotPasswordPage,
@@ -332,6 +333,7 @@ function AppRoutes() {
                 <Route path="/plans/:planId/member" element={<PlanMemberRedirect />} />
                 <Route path="/notifications" element={<Notifications />} />
                 <Route path="/verify-phone" element={<VerifyPhone />} />
+                <Route path="/feedback/:bookingId" element={<FeedbackPage />} />
                 {/* Internal support queue — DB-role protected, not in normal nav. */}
                 <Route path="/internal/issues" element={<SupportOnly><InternalIssues /></SupportOnly>} />
                 <Route path="/internal/issues/:issueId" element={<SupportOnly><InternalIssueDetail /></SupportOnly>} />
