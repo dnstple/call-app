@@ -31,8 +31,22 @@
  *   supabase functions deploy livekit-token
  */
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { AccessToken, RoomServiceClient, TrackSource } from 'npm:livekit-server-sdk@2';
-import { buildCallGrant, participantIdentity, TOKEN_TTL_SECONDS } from '../_shared/callToken.ts';
+// PINNED: the unpinned `@2` range let a newer, Deno-incompatible patch load and
+// crash the function at boot (502 on every request, incl. the CORS preflight).
+import { AccessToken, RoomServiceClient, TrackSource } from 'npm:livekit-server-sdk@2.17.0';
+
+// --- inlined from _shared/callToken.ts so this function is self-contained and
+//     deployable from the dashboard editor (no cross-folder import). ---
+const TOKEN_TTL_SECONDS = 10 * 60;
+function participantIdentity(accountId: string): string { return `account:${accountId}`; }
+function buildCallGrant(roomName: string) {
+  return {
+    roomJoin: true, room: roomName, canSubscribe: true, canPublish: true,
+    canPublishData: false, canPublishSources: ['microphone', 'camera'],
+    canUpdateOwnMetadata: false, roomCreate: false, roomList: false,
+    roomAdmin: false, roomRecord: false, ingressAdmin: false,
+  };
+}
 
 /** LiveKit's admin URL is https(s); our LIVEKIT_URL is the wss client URL. */
 function roomServiceUrl(wsUrl: string): string {

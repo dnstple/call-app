@@ -334,7 +334,7 @@ export function myOutcomeConfirmed(
  * 'booked' (companion not yet confirmed but within the window) and
  * 'companion_confirmed'. Keep this in sync with that RPC.
  */
-export const JOINABLE_STATUSES = ['confirmed', 'booked', 'companion_confirmed'] as const;
+export const JOINABLE_STATUSES = ['confirmed', 'booked', 'companion_confirmed', 'admin_fallback'] as const;
 export function isJoinableStatus(status: string): boolean {
   return (JOINABLE_STATUSES as readonly string[]).includes(status);
 }

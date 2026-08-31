@@ -19,7 +19,8 @@
  *   supabase functions deploy livekit-webhook --no-verify-jwt
  */
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { TrackSource, WebhookReceiver } from 'npm:livekit-server-sdk@2';
+// PINNED: unpinned `@2` let a Deno-incompatible patch load and crash boot.
+import { TrackSource, WebhookReceiver } from 'npm:livekit-server-sdk@2.17.0';
 
 const log = (fields: Record<string, unknown>) => console.log(JSON.stringify(fields));
 const ok = (extra: Record<string, unknown> = {}) =>
