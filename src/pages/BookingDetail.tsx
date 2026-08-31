@@ -18,6 +18,7 @@ import {
   canRescheduleBooking,
   declineBooking,
   derivedStatusLabel,
+  isJoinableStatus,
   RESCHEDULE_CLOSED_COPY,
   RESCHEDULE_OPEN_COPY,
   getBookingById,
@@ -354,7 +355,7 @@ export default function BookingDetail() {
           {/* Stage 3A: the way into the secure audio call. Admission (window +
               participant check) is decided by the server; the page opens the
               pre-join screen and the server issues a short-lived token. */}
-          {booking.status === 'confirmed' && !ended && (
+          {isJoinableStatus(booking.status) && !ended && (
             <div className="col" style={{ gap: 4 }}>
               <Link to={`/conversations/${booking.id}/call`} className="btn btn-primary" style={{ alignSelf: 'flex-start' }}>
                 <Phone size={18} aria-hidden="true" /> Join the audio call

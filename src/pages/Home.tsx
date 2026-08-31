@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Compass, Phone, UserRound } from 'lucide-react';
 import { isSupabaseMode } from '../config/dataMode';
 import type { MyBookingRow } from '../supabase/database.types';
-import { canConfirmCompletion, listMyBookings, splitBookings } from '../repositories/bookingRepository';
+import { canConfirmCompletion, isJoinableStatus, listMyBookings, splitBookings } from '../repositories/bookingRepository';
 import { listMyPlans } from '../repositories/planRepository';
 import { SupabaseBookingRow } from './Conversations';
 import { isSupabaseConfigured } from '../supabase/client';
@@ -90,7 +90,7 @@ export default function Home() {
     return {
       requests: upcoming.filter((b) => b.status === 'requested'),
       proposed: upcoming.filter((b) => b.status === 'change_proposed'),
-      confirmed: upcoming.filter((b) => b.status === 'confirmed'),
+      confirmed: upcoming.filter((b) => isJoinableStatus(b.status)),
       // Ended conversations still waiting for this account's outcome (2E1B).
       needsConfirmation: mine.filter((b) => canConfirmCompletion(b)),
     };

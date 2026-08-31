@@ -28,6 +28,7 @@ import type { MyBookingRow } from '../supabase/database.types';
 import {
   canConfirmCompletion,
   derivedStatusLabel,
+  isJoinableStatus,
   listMyBookings,
   splitBookings,
 } from '../repositories/bookingRepository';
@@ -73,7 +74,7 @@ function typeLabel(b: MyBookingRow): string {
 
 /** Ready-to-join window mirrors the call room: 10 min before → end. */
 function readyToJoin(b: MyBookingRow, now = Date.now()): boolean {
-  return b.status === 'confirmed'
+  return isJoinableStatus(b.status)
     && now >= new Date(b.starts_at).getTime() - 10 * 60_000
     && now <= new Date(b.ends_at).getTime();
 }

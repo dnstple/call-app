@@ -328,6 +328,17 @@ export function myOutcomeConfirmed(
   return false; // read-only viewer / unknown side: nothing for this user to confirm
 }
 
+/**
+ * Statuses from which a call can be joined. Mirrors the server-side
+ * call_join_eligibility gate (0169): the legacy 'confirmed' plus the credit-model
+ * 'booked' (companion not yet confirmed but within the window) and
+ * 'companion_confirmed'. Keep this in sync with that RPC.
+ */
+export const JOINABLE_STATUSES = ['confirmed', 'booked', 'companion_confirmed'] as const;
+export function isJoinableStatus(status: string): boolean {
+  return (JOINABLE_STATUSES as readonly string[]).includes(status);
+}
+
 export function derivedStatusLabel(b: MyBookingRow, now = new Date()): string {
   if (b.status === 'confirmed' && new Date(b.ends_at).getTime() <= now.getTime()) {
     // Derive from the authoritative per-side confirmations, never status alone.
