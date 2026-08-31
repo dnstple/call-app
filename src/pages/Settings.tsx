@@ -39,6 +39,7 @@ import { BillingPanel } from '../components/BillingPanel';
 import { ConnectPanel } from '../components/ConnectPanel';
 import { EarningsPanel } from '../components/EarningsPanel';
 import { MinimumNoticePanel } from '../components/MinimumNoticePanel';
+import { AvailabilityHoursPanel } from '../components/AvailabilityHoursPanel';
 import { useAuth } from '../auth/AuthProvider';
 import { KeyRound, LogOut, ShieldCheck } from 'lucide-react';
 import { roleLabel } from '../components/Shell';
@@ -97,6 +98,8 @@ export default function Settings() {
         {isSupabaseMode() && me.role === 'companion' && <ConnectPanel />}
         {/* 3E-G: Companion earnings (read-only 0085 projections). */}
         {isSupabaseMode() && me.role === 'companion' && <EarningsPanel />}
+        {/* Companion weekly hours (self-service). */}
+        {isSupabaseMode() && me.role === 'companion' && <AvailabilityHoursPanel />}
         {/* Companion minimum booking notice (self-service). */}
         {isSupabaseMode() && me.role === 'companion' && <MinimumNoticePanel />}
 
