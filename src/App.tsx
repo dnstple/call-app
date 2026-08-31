@@ -50,6 +50,7 @@ const InternalContact = lazy(() => import('./pages/InternalContact'));
 const InternalHome = lazy(() => import('./pages/InternalHome'));
 const ContactPage = lazy(() => import('./pages/ContactPage'));
 const VerifyPhone = lazy(() => import('./pages/VerifyPhone'));
+const CoverResponse = lazy(() => import('./pages/CoverResponse'));
 import {
   AuthCallbackPage,
   ForgotPasswordPage,
@@ -238,6 +239,17 @@ function AppRoutes() {
             }
           >
             <GuestJoin />
+          </Suspense>
+        }
+      />
+
+      {/* Companion backup-cover response (from the SMS link). Public: it works
+          via a single-purpose token, no login required. Isolated from the shell. */}
+      <Route
+        path="/cover"
+        element={
+          <Suspense fallback={<div className="row" style={{ justifyContent: 'center', padding: 48 }}><Loader2 size={22} aria-hidden="true" /><span className="visually-hidden">Loading</span></div>}>
+            <CoverResponse />
           </Suspense>
         }
       />

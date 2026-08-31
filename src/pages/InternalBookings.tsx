@@ -10,6 +10,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Loader2, RefreshCw, ArrowUp, ArrowDown } from 'lucide-react';
 import { adminListBookings, getFallbackQueue, acceptFallback, type AdminBookingRow, type FallbackCall } from '../repositories/bookingsAdminRepository';
+import { FailoverControlPanel } from '../components/FailoverControlPanel';
 
 type SortKey = 'starts_at' | 'member_name' | 'companion_name' | 'kind' | 'status' | 'price_minor';
 
@@ -99,6 +100,8 @@ export default function InternalBookings() {
           <button className="btn btn-ghost btn-small" onClick={load}><RefreshCw size={16} aria-hidden="true" /> Refresh</button>
         </div>
       </header>
+
+      <FailoverControlPanel />
 
       {fallbacks.length > 0 && (
         <section className="card col" style={{ gap: 10, borderColor: 'var(--deep-apricot, #C8643D)' }} aria-label="Calls awaiting an admin">
