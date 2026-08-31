@@ -346,8 +346,14 @@ export function derivedStatusLabel(b: MyBookingRow, now = new Date()): string {
     cancelled: 'Cancelled',
     completed: 'Completed — confirmed by both sides',
     needs_review: 'Being looked into by the platform',
+    // Credit-model statuses.
+    booked: 'Booked',
+    companion_confirmed: 'Companion confirmed',
+    admin_fallback: 'Passed to the Apricoti team',
   };
-  return labels[b.status] ?? b.status;
+  // Fall back to a prettified label (never raw snake_case) for any status.
+  return labels[b.status]
+    ?? b.status.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
 }
 
 export async function getBookingHistory(bookingId: string): Promise<BookingHistoryRow[]> {

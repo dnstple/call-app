@@ -90,6 +90,10 @@ function statusPill(b: MyBookingRow): { text: string; cls: string } | null {
   if (b.status === 'confirmed') return { text: 'Confirmed', cls: 'pill-ready' };
   if (b.status === 'cancelled' || b.status === 'declined') return { text: 'Cancelled', cls: 'pill-blocked' };
   if (b.status === 'completed') return { text: 'Completed', cls: 'pill-ready' };
+  // Credit-model statuses.
+  if (b.status === 'booked') return { text: 'Booked', cls: 'pill-info' };
+  if (b.status === 'companion_confirmed') return { text: 'Companion confirmed', cls: 'pill-ready' };
+  if (b.status === 'admin_fallback') return { text: 'With the Apricoti team', cls: 'pill-attention' };
   return null;
 }
 
