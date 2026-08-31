@@ -52,6 +52,26 @@ export function ManualBackupManager() {
     loadCalls();
   };
 
+  const transferMessage = (outcome: string): string => ({
+    assigned: 'Transferred — the member, new companion and original have all been notified.',
+    conflict: 'That companion already has a call at this time.',
+    no_consent: 'That companion hasn’t accepted the platform terms yet, so they couldn’t join. Pick someone else.',
+    not_approved: 'That companion isn’t approved yet.',
+    suspended: 'That companion is suspended.',
+    blocked_with_member: 'That companion and this member have blocked each other.',
+    too_late: 'This call has already started.',
+    not_found: 'Booking not found.',
+  } as Record<string, string>)[outcome] ?? `Couldn’t transfer (${outcome}).`;
+
+  const doTransfer = async (companionProfileId: string) => {
+    if (!selected) return;
+    setBusy(true); setMsg(null);
+    const r = await assignCompanion(selected, companionProfileId);
+    setBusy(false);
+    setMsg(r.ok ? transferMessage(r.outcome) : 'Transfer failed — please try again.');
+    loadCall(selected); loadCalls();
+  };
+
   const sendMemberMessage = async () => {
     if (!selected || !memberMsg.trim()) return;
     setBusy(true); setMsg(null);
@@ -114,7 +134,7 @@ export function ManualBackupManager() {
                     </span>
                     {o.status === 'available' && (
                       <button className="btn btn-primary btn-small" disabled={busy}
-                        onClick={() => act(() => assignCompanion(selected, o.companion_profile), 'Transfer')}>
+                        onClick={() => doTransfer(o.companion_profile)}>
                         Transfer call to them
                       </button>
                     )}
@@ -161,10 +181,17 @@ export function ManualBackupManager() {
                     {c.is_free ? <Check size={13} aria-label="free" style={{ color: 'green' }} /> : <X size={13} aria-label="busy" style={{ color: '#b45309' }} />}
                     {c.has_phone ? <Phone size={12} aria-label="has phone" style={{ marginLeft: 4, opacity: 0.6 }} /> : <span className="muted small"> no phone</span>}
                   </span>
-                  <button className="btn btn-secondary btn-small" disabled={busy || c.already_invited}
-                    onClick={() => act(() => offerBackup(selected, c.profile_id), `Invite ${c.first_name ?? ''}`)}>
-                    <UserPlus size={13} aria-hidden="true" /> {c.already_invited ? 'Invited' : 'Invite'}
-                  </button>
+                  <div className="row" style={{ gap: 6 }}>
+                    <button className="btn btn-ghost btn-small" disabled={busy || c.already_invited}
+                      onClick={() => act(() => offerBackup(selected, c.profile_id), `Invite ${c.first_name ?? ''}`)}>
+                      <UserPlus size={13} aria-hidden="true" /> {c.already_invited ? 'Invited' : 'Invite'}
+                    </button>
+                    <button className="btn btn-primary btn-small" disabled={busy}
+                      onClick={() => doTransfer(c.profile_id)}
+                      title="Assign this call to them now (no need to wait for them to accept)">
+                      Transfer now
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>

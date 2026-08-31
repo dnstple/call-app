@@ -870,10 +870,16 @@ html.chat-viewport .page { min-height: 0; padding: 0; max-width: none; overflow:
   font-weight: 800; font-size: 1.05em; color: var(--color-text-primary); line-height: 1.15;
 }
 .agenda-duration { font-size: 0.7em; font-weight: 500; color: var(--color-text-muted); }
-.agenda-person { flex: 1 1 auto; }
-.agenda-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* Status + Join stay together, pinned to the right, never cramping the name. */
-.agenda-end { display: inline-flex; align-items: center; gap: 8px; flex: none; margin-left: auto; }
+.agenda-person { flex: 1 1 auto; min-width: 0; overflow: hidden; }
+/* Both the name and the type line truncate with an ellipsis rather than ever
+   breaking a word onto its own line (which produced vertical single-letter text
+   when the column was squeezed on narrow screens). */
+.agenda-name,
+.agenda-type { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+/* Status + Join stay together on the right. They may shrink, and the status pill
+   truncates instead of forcing the person column to collapse. */
+.agenda-end { display: inline-flex; align-items: center; gap: 8px; flex: 0 1 auto; margin-left: auto; min-width: 0; }
+.agenda-end .pill { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 11rem; }
 .date-strip { display: flex; gap: 6px; width: 100%; overflow-x: auto; padding-bottom: 4px; }
 .date-strip-day {
   display: flex; flex-direction: column; align-items: center; gap: 2px;

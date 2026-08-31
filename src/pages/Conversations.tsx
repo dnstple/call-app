@@ -11,7 +11,7 @@
  * Mock mode keeps the Stage 1 fictional experience with the same
  * unified structure (no separate Plans navigation anywhere).
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type MouseEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { AlertCircle, ChevronLeft, ChevronRight, Loader2, Phone } from 'lucide-react';
 import { attentionItems, type ViewerRole } from '../domain/conversationAttention';
@@ -26,12 +26,14 @@ import { EmptyState, PageHeader } from '../components/ui';
 import type { Booking } from '../types';
 import type { MyBookingRow } from '../supabase/database.types';
 import {
+  acceptBooking,
   canConfirmCompletion,
   derivedStatusLabel,
   isJoinableStatus,
   listMyBookings,
   splitBookings,
 } from '../repositories/bookingRepository';
+import { confirmBooking } from '../repositories/bookingConfirmRepository';
 import { listMyPlans } from '../repositories/planRepository';
 import type { ConversationPlanRow } from '../supabase/database.types';
 import { browserTimezone } from '../domain/timezones';
@@ -94,13 +96,13 @@ function statusPill(b: MyBookingRow): { text: string; cls: string } | null {
   // Credit-model statuses.
   if (b.status === 'booked') return { text: 'Booked', cls: 'pill-info' };
   if (b.status === 'companion_confirmed') return { text: 'Companion confirmed', cls: 'pill-ready' };
-  if (b.status === 'admin_fallback') return { text: 'With the Apricoti team', cls: 'pill-attention' };
+  if (b.status === 'admin_fallback') return { text: 'With the team', cls: 'pill-attention' };
   return null;
 }
 
 /* ---------------- agenda row ---------------- */
 
-export function AgendaRow({ booking, viewerRole, needsAction, highlight, softened }: {
+export function AgendaRow({ booking, viewerRole, needsAction, highlight, softened, onChanged }: {
   booking: MyBookingRow;
   viewerRole: string;
   /** Item also appears in the attention panel: compact "Needs action" marker. */
@@ -109,11 +111,28 @@ export function AgendaRow({ booking, viewerRole, needsAction, highlight, softene
   highlight?: boolean;
   /** Earlier today, already over — visually softened. */
   softened?: boolean;
+  /** Called after an inline accept/confirm so the list can refresh. */
+  onChanged?: () => void;
 }) {
   const navigate = useNavigate();
   const viewerTz = browserTimezone();
   const pill = statusPill(booking);
   const joinable = readyToJoin(booking);
+  const [confirming, setConfirming] = useState(false);
+  // The companion still needs to accept this call (credit: 'booked'; offer: 'requested').
+  const needsCompanionConfirm = viewerRole === 'companion'
+    && (booking.status === 'booked' || booking.status === 'requested');
+  const confirm = async (e: MouseEvent) => {
+    e.stopPropagation();
+    if (confirming) return;
+    setConfirming(true);
+    try {
+      if (booking.status === 'booked') await confirmBooking(booking.id);
+      else await acceptBooking(booking.id);
+      onChanged?.();
+    } catch { /* surfaced on the detail page if it fails */ }
+    setConfirming(false);
+  };
   // Role-aware counterpart: Coordinators see the Companion's image; the
   // Companion sees the managed Member's image.
   const counterpartId = viewerRole === 'companion'
@@ -137,14 +156,24 @@ export function AgendaRow({ booking, viewerRole, needsAction, highlight, softene
       <ProfileAvatar name={counterpart} url={avatarOf(counterpartId)} size="sm" alt="" statusDot={joinable} />
       <span className="col grow agenda-person" style={{ gap: 2, minWidth: 0, textAlign: 'left' }}>
         <span className="bold agenda-name">{counterpart}</span>
-        <span className="faint small">
+        <span className="faint small agenda-type">
           {viewerRole !== 'companion' && `For ${booking.member_first_name} · `}
           {typeLabel(booking)}
         </span>
       </span>
       <span className="agenda-end">
-        {needsAction && <span className="pill pill-attention">Needs action</span>}
-        {!needsAction && pill && <span className={`pill ${pill.cls}`}>{pill.text}</span>}
+        {needsCompanionConfirm && (
+          <span
+            className="btn btn-primary btn-small"
+            role="button"
+            aria-label="Accept this call"
+            onClick={confirm}
+          >
+            {confirming ? '…' : 'Accept'}
+          </span>
+        )}
+        {!needsCompanionConfirm && needsAction && <span className="pill pill-attention">Needs action</span>}
+        {!needsCompanionConfirm && !needsAction && pill && <span className={`pill ${pill.cls}`}>{pill.text}</span>}
         {joinable && (
           <span
             className="btn btn-primary btn-small"
@@ -241,6 +270,7 @@ function SupabaseConversations() {
   const [rows, setRows] = useState<MyBookingRow[] | null>(null);
   const [plans, setPlans] = useState<ConversationPlanRow[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let live = true;
@@ -260,7 +290,7 @@ function SupabaseConversations() {
     return () => {
       live = false;
     };
-  }, []);
+  }, [reloadKey]);
 
   const { upcoming, past } = useMemo(() => splitBookings(rows ?? []), [rows]);
 
@@ -506,6 +536,7 @@ function SupabaseConversations() {
                   needsAction={attentionIds.has(b.id)}
                   highlight={isToday && b.id === nextTodayId}
                   softened={isToday && new Date(b.ends_at).getTime() < Date.now() && b.id !== nextTodayId}
+                  onChanged={() => setReloadKey((k) => k + 1)}
                 />
               ));
               return isToday ? (
@@ -620,7 +651,7 @@ function SupabaseConversations() {
                 <h2 className="section-label">{month}</h2>
                 <div className="stack-list">
                   {monthBookings.map((b) => (
-                    <AgendaRow key={b.id} booking={b} viewerRole={role} />
+                    <AgendaRow key={b.id} booking={b} viewerRole={role} onChanged={() => setReloadKey((k) => k + 1)} />
                   ))}
                 </div>
               </section>

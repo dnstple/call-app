@@ -327,6 +327,32 @@ export default function BookingDetail() {
         </span>
       </header>
 
+      {/* Prominent confirm call-to-action at the TOP for the companion when the
+          call still needs their acceptance. */}
+      {isCompanionSide && !ended && (booking.status === 'booked' || booking.status === 'requested') && (
+        <section className="card mt-4" style={{ borderColor: 'var(--deep-apricot, #C8643D)', display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', justifyContent: 'space-between' }}>
+          <div>
+            <strong style={{ fontSize: '1.05em' }}>
+              {booking.status === 'booked' ? 'Please confirm you’ll take this call' : 'You have a new call request'}
+            </strong>
+            <div className="muted small">
+              {booking.status === 'booked'
+                ? 'Confirm ahead of the call, or it may be passed to another companion.'
+                : 'Let the member know you’ll be there.'}
+            </div>
+          </div>
+          <div className="row" style={{ gap: 8 }}>
+            <button className="btn btn-primary" disabled={busy}
+              onClick={run(() => (booking.status === 'booked' ? confirmBooking(booking.id) : acceptBooking(booking.id)))}>
+              Confirm I’ll take this call
+            </button>
+            {booking.status === 'requested' && (
+              <button className="btn btn-secondary" disabled={busy} onClick={() => setDeclining(true)}>Decline</button>
+            )}
+          </div>
+        </section>
+      )}
+
       {actionError && (
         <p role="alert" className="badge badge-danger mt-4" style={{ display: 'block' }}>{actionError}</p>
       )}
