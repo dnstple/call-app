@@ -10,6 +10,7 @@ import { Loader2, RefreshCw, CheckCircle2, XCircle } from 'lucide-react';
 import {
   adminListVerificationVideos,
   adminReviewVerificationVideo,
+  purgeAllVerificationVideos,
   verificationVideoUrl,
   type VerificationVideoRow,
 } from '../repositories/verificationRepository';
@@ -31,6 +32,9 @@ export default function InternalVerification() {
   const [rows, setRows] = useState<VerificationVideoRow[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const [purging, setPurging] = useState(false);
+  const [purgeMsg, setPurgeMsg] = useState<string | null>(null);
+
   const load = useCallback(() => {
     setLoading(true);
     adminListVerificationVideos(filter || undefined)
@@ -40,6 +44,20 @@ export default function InternalVerification() {
   }, [filter]);
   useEffect(() => { load(); }, [load]);
 
+  const purgeAll = useCallback(async () => {
+    if (!window.confirm('Delete ALL verification videos permanently (files and records)? This cannot be undone.')) return;
+    setPurging(true); setPurgeMsg(null);
+    try {
+      const r = await purgeAllVerificationVideos();
+      setPurgeMsg(`Deleted ${r.files} file(s) and ${r.rows} record(s).`);
+      load();
+    } catch {
+      setPurgeMsg('Could not delete the videos. Please try again.');
+    } finally {
+      setPurging(false);
+    }
+  }, [load]);
+
   return (
     <div className="col" style={{ gap: 18 }}>
       <header className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
@@ -47,8 +65,14 @@ export default function InternalVerification() {
           <span className="section-label">Support</span>
           <h1 style={{ margin: 0 }}>Video verification</h1>
         </div>
-        <button className="btn btn-ghost btn-small" onClick={load}><RefreshCw size={16} aria-hidden="true" /> Refresh</button>
+        <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+          <button className="btn btn-danger btn-small" disabled={purging} onClick={() => void purgeAll()}>
+            {purging ? <Loader2 size={16} className="spin" aria-hidden="true" /> : <XCircle size={16} aria-hidden="true" />} Delete all videos
+          </button>
+          <button className="btn btn-ghost btn-small" onClick={load}><RefreshCw size={16} aria-hidden="true" /> Refresh</button>
+        </div>
       </header>
+      {purgeMsg && <p className="muted small" style={{ margin: 0 }}>{purgeMsg}</p>}
 
       <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
         {FILTERS.map((f) => (

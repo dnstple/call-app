@@ -115,6 +115,26 @@ export async function adminReviewVerificationVideo(
   }
 }
 
+/**
+ * Support-only bulk purge: delete EVERY verification video. Removes the files
+ * through the Storage API (the support session has a delete policy on the bucket)
+ * then clears the metadata rows. Returns how many files and rows were removed.
+ */
+export async function purgeAllVerificationVideos(): Promise<{ files: number; rows: number }> {
+  const { data: paths, error: pathErr } = await client().rpc('admin_all_verification_video_paths');
+  if (pathErr) throw pathErr;
+  const list = ((paths ?? []) as string[]).filter(Boolean);
+  let files = 0;
+  for (let i = 0; i < list.length; i += 100) {
+    const chunk = list.slice(i, i + 100);
+    const { data, error } = await client().storage.from(VERIFICATION_BUCKET).remove(chunk);
+    if (!error) files += (data as unknown[] | null)?.length ?? chunk.length;
+  }
+  const { data: rows, error: rowErr } = await client().rpc('admin_purge_verification_video_rows');
+  if (rowErr) throw rowErr;
+  return { files, rows: (rows as number) ?? 0 };
+}
+
 /** A short-lived signed URL for playing a submitted video (support & owner). */
 export async function verificationVideoUrl(path: string): Promise<string | undefined> {
   const { data, error } = await client()

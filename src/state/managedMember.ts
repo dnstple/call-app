@@ -88,8 +88,13 @@ export function useManagedMember(): ManagedMemberContext {
   }
 
   const accountId = auth.userId ?? '';
+  // Bookable members = the account's OWN member profile (a self-member, access
+  // role 'owner') AND any member profiles it coordinates ('coordinator'). Both
+  // book with the member's own credits. Previously only 'coordinator' rows were
+  // counted, so a self-member saw an empty list and "No member is set up to book
+  // for yet" — even with an active, verified profile.
   const members: ManagedMemberOption[] = auth.profiles
-    .filter((p) => p.access.access_role === 'coordinator'
+    .filter((p) => (p.access.access_role === 'coordinator' || p.access.access_role === 'owner')
       && p.profile.role === 'member'
       && p.access.consent_status !== 'withdrawn')
     .map((p) => ({
