@@ -18,6 +18,7 @@ import {
   sendTestEmail,
   syncMarketingAudience, sendMarketingTest, sendMarketingCampaign,
   nudgeIncompleteCompanions, nudgeIncompleteOnboarding, resendConfirmations,
+  previewFirstCallNudge, sendFirstCallNudge,
   recruitCompanionsInApp, sendCompanionRecruitEmail,
   sendVerifyPhoneTest, sendVerifyPhoneCampaign,
   getOnboardingNudgeConfig, setOnboardingNudgeConfig, type OnboardingNudgeConfig,
@@ -116,6 +117,12 @@ export default function InternalAccess() {
     if (!window.confirm('Email people who signed up but never confirmed their email? Each gets a magic link that confirms them and signs them in. Runs daily; this triggers a run now.')) return;
     return runMkt('Confirmation resend', () => resendConfirmations());
   };
+  const onFirstCallPreview = () => runMkt('First-call preview', () => previewFirstCallNudge());
+  const onFirstCallSend = () => {
+    const typed = window.prompt('Send the “book your first call” nudge (in-app, email AND text) to every member without an active membership.\nType SEND to confirm:', '');
+    if (typed !== 'SEND') { setMktMsg('Cancelled — you must type SEND exactly.'); return; }
+    return runMkt('First-call nudge', () => sendFirstCallNudge());
+  };
   const onRecruitInApp = () => {
     if (!window.confirm('Post the “invite people you know and earn” message to every active companion (in-app, once per day)?')) return;
     return runMkt('Recruit message', () => recruitCompanionsInApp());
@@ -209,6 +216,15 @@ export default function InternalAccess() {
               Resend email confirmations
             </button>
             <span className="muted small">For people who signed up but never confirmed their email (no account yet). Sends a magic link that confirms them and signs them in. Runs daily; same cadence &amp; cap.</span>
+          </div>
+          <div className="row wrap" style={{ gap: 8, alignItems: 'center', marginTop: 8 }}>
+            <button className="btn btn-ghost btn-small" disabled={mktBusy} onClick={onFirstCallPreview}>
+              Preview first-call nudge
+            </button>
+            <button className="btn btn-secondary btn-small" disabled={mktBusy} onClick={onFirstCallSend}>
+              Send first-call nudge
+            </button>
+            <span className="muted small">Prompts members with no active membership to book their first call — in-app, email, and text (verified mobiles only). Preview shows the audience first; Send is one-off (skips anyone already nudged, type SEND to confirm).</span>
           </div>
           <OnboardingCadencePanel />
 

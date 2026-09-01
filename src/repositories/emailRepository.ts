@@ -169,6 +169,35 @@ export async function nudgeIncompleteOnboarding(): Promise<MarketingResult> {
 }
 
 /**
+ * Preview the "book your first call" nudge audience WITHOUT sending — members
+ * with no active membership. Returns how many would get email vs text.
+ */
+export async function previewFirstCallNudge(): Promise<MarketingResult> {
+  const { data, error } = await getSupabaseClient().functions.invoke('nudge-book-first-call', { body: { dryRun: true } });
+  if (error) return { ok: false, message: 'Could not check the first-call audience. Please try again.' };
+  const r = (data ?? {}) as { ok?: boolean; audience?: number; would_email?: number; would_sms?: number };
+  if (!r.ok) return { ok: false, message: 'Could not check the first-call audience.' };
+  return { ok: true, message: `${r.audience ?? 0} member(s) would be nudged — ${r.would_email ?? 0} by email, ${r.would_sms ?? 0} by text. Nothing sent yet.` };
+}
+
+/**
+ * Send the one-off "book your first call" nudge to members without an active
+ * membership: in-app + email + SMS (verified mobiles only). Skips anyone already nudged.
+ */
+export async function sendFirstCallNudge(): Promise<MarketingResult> {
+  const { data, error } = await getSupabaseClient().functions.invoke('nudge-book-first-call', { body: { limit: 1000 } });
+  if (error) return { ok: false, message: 'Could not run the first-call nudge. Please try again.' };
+  const r = (data ?? {}) as { ok?: boolean; audience?: number; in_app?: number; emails?: number; texts?: number; email_failed?: number; sms_failed?: number };
+  if (!r.ok) return { ok: false, message: 'The first-call nudge did not run.' };
+  const fails = (r.email_failed ?? 0) + (r.sms_failed ?? 0);
+  return {
+    ok: true,
+    message: `First-call nudge complete — ${r.in_app ?? 0} in-app, ${r.emails ?? 0} email, ${r.texts ?? 0} text sent`
+      + (fails > 0 ? ` (${r.email_failed ?? 0} email / ${r.sms_failed ?? 0} sms failed).` : '.'),
+  };
+}
+
+/**
  * Trigger the "confirm your email" resend for people who signed up but never
  * confirmed (also runs daily). Sends a magic link that confirms + signs them in.
  */
