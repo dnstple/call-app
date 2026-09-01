@@ -102,16 +102,22 @@ function pickVideoTier(): { resolution: typeof VideoPresets.h720.resolution; enc
     : 9999;
   const mobileish = coarsePointer && shortEdge <= 900;
 
-  // Low-power device → 540p, minimal extra layer.
+  // Tiers are deliberately conservative: real trial calls ran on shaky
+  // connections and a lower publish resolution/bitrate means less uplink to
+  // sustain, so brief network dips degrade gracefully instead of dropping. The
+  // simulcast ladder still lets a strong downlink pull a sharper layer; we just
+  // stop asking every sender to push 1080p by default.
+  //
+  // Low-power device → 360p, minimal extra layer.
   if ((mem !== undefined && mem <= 2) || cores <= 2) {
+    return { resolution: VideoPresets.h360.resolution, encoding: VideoPresets.h360.encoding, layers: [VideoPresets.h180] };
+  }
+  // Modest laptop / any phone or tablet → 540p.
+  if ((mem !== undefined && mem <= 4) || cores <= 4 || mobileish) {
     return { resolution: VideoPresets.h540.resolution, encoding: VideoPresets.h540.encoding, layers: [VideoPresets.h180] };
   }
-  // Modest laptop / any phone or tablet → 720p.
-  if ((mem !== undefined && mem <= 4) || cores <= 4 || mobileish) {
-    return { resolution: VideoPresets.h720.resolution, encoding: VideoPresets.h720.encoding, layers: [VideoPresets.h360] };
-  }
-  // Capable desktop → 1080p with a full simulcast ladder.
-  return { resolution: VideoPresets.h1080.resolution, encoding: VideoPresets.h1080.encoding, layers: [VideoPresets.h360, VideoPresets.h720] };
+  // Capable desktop → 720p with a two-step simulcast ladder (down from 1080p).
+  return { resolution: VideoPresets.h720.resolution, encoding: VideoPresets.h720.encoding, layers: [VideoPresets.h180, VideoPresets.h360] };
 }
 
 /**

@@ -37,7 +37,21 @@ import { AccessToken, RoomServiceClient, TrackSource } from 'npm:livekit-server-
 
 // --- inlined from _shared/callToken.ts so this function is self-contained and
 //     deployable from the dashboard editor (no cross-folder import). ---
-const TOKEN_TTL_SECONDS = 10 * 60;
+// The token must stay valid for the WHOLE call, not just the first few minutes:
+// a 10-minute TTL meant a brief network blip after minute 10 forced a full
+// reconnect whose (now-expired) token LiveKit rejected, turning a recoverable
+// hiccup into a hard drop. We now size the TTL to cover from now until the
+// call's scheduled end plus a generous overrun buffer, clamped to a sane
+// [15min, 4h] range. Reconnects within the call therefore always re-auth.
+const TOKEN_MIN_TTL_SECONDS = 15 * 60;
+const TOKEN_MAX_TTL_SECONDS = 4 * 60 * 60;
+const TOKEN_OVERRUN_BUFFER_SECONDS = 45 * 60;
+function ttlForCall(scheduledEnd?: string): number {
+  const endMs = scheduledEnd ? Date.parse(scheduledEnd) : NaN;
+  if (!Number.isFinite(endMs)) return TOKEN_MAX_TTL_SECONDS; // unknown end → be generous
+  const secs = Math.ceil((endMs - Date.now()) / 1000) + TOKEN_OVERRUN_BUFFER_SECONDS;
+  return Math.min(TOKEN_MAX_TTL_SECONDS, Math.max(TOKEN_MIN_TTL_SECONDS, secs));
+}
 function participantIdentity(accountId: string): string { return `account:${accountId}`; }
 function buildCallGrant(roomName: string) {
   return {
@@ -97,7 +111,8 @@ async function companionIdentityFor(
 // Legacy guest-branch window (Redesign-C invitation flow; unchanged).
 const GUEST_OPEN_MINUTES = 15;
 const GUEST_CLOSE_AFTER_END_MINUTES = 30;
-const GUEST_TTL_SECONDS = 15 * 60;
+// Cover the whole guest-eligible window (until close) rather than a flat 15 min,
+// so a mid-call reconnect isn't rejected on an expired token. Clamped for safety.
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -189,10 +204,11 @@ async function handleGuestJoin(body: Record<string, unknown>): Promise<Response>
     return json({ state: 'seat_taken' }, 200);
   }
 
+  const guestTtlSeconds = ttlForCall(new Date(closesAt).toISOString());
   const token = new AccessToken(apiKey, apiSecret, {
     identity: guestIdentity,
     name: guestName,
-    ttl: GUEST_TTL_SECONDS,
+    ttl: guestTtlSeconds,
   });
   // The validated managed-Member guest joins the SAME two-person video call as
   // any signed-in participant: microphone AND camera, and nothing else. The
@@ -315,11 +331,12 @@ Deno.serve(async (req) => {
   //    whether to actually enable the camera (join audio-only vs with video).
   //    No screen-share, no data channel, no recording/egress, no room admin.
   let jwt: string;
-  const expiresAt = new Date(Date.now() + TOKEN_TTL_SECONDS * 1000).toISOString();
+  const ttlSeconds = ttlForCall(e.scheduled_end);
+  const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
   try {
     const at = new AccessToken(apiKey, apiSecret, {
       identity: participantIdentity(accountId),
-      ttl: TOKEN_TTL_SECONDS,
+      ttl: ttlSeconds,
     });
     const grant = buildCallGrant(session.room_name);
     at.addGrant({ ...grant, canPublishSources: [TrackSource.MICROPHONE, TrackSource.CAMERA] });

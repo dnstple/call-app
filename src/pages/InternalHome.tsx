@@ -7,7 +7,7 @@
  */
 import { NavLink } from 'react-router-dom';
 import {
-  Users, Mail, ClipboardList, Scale, Calculator, SlidersHorizontal, ShieldCheck, Video, CalendarClock,
+  Users, Mail, ClipboardList, Scale, Calculator, SlidersHorizontal, ShieldCheck, Video, CalendarClock, Banknote,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -30,6 +30,8 @@ const TOOLS: Tool[] = [
     body: 'Financial reconciliation findings.' },
   { to: '/support/operations', title: 'Operations', Icon: SlidersHorizontal,
     body: 'Financial operations control plane — readiness and previews.' },
+  { to: '/support/payouts', title: 'Payouts to release', Icon: Banknote,
+    body: 'Approve the daily-prepared companion payout batches.' },
   { to: '/internal/trust', title: 'Trust & safety', Icon: ShieldCheck,
     body: 'Trust and safety review.' },
 ];

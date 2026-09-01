@@ -27,6 +27,7 @@ const InternalDisputeDetail = lazy(() => import('./pages/InternalDisputeDetail')
 const InternalReconciliation = lazy(() => import('./pages/InternalReconciliation'));
 const InternalReconciliationDetail = lazy(() => import('./pages/InternalReconciliationDetail'));
 const InternalOperations = lazy(() => import('./pages/InternalOperations'));
+const InternalPayouts = lazy(() => import('./pages/InternalPayouts'));
 const InternalTrust = lazy(() => import('./pages/InternalTrust'));
 import Settings from './pages/Settings';
 import AvailabilityRates from './pages/AvailabilityRates';
@@ -346,6 +347,7 @@ function AppRoutes() {
                 {/* Stage 3C1 — financial operations control plane (readiness + previews),
                     DB-role protected, absent from normal navigation. */}
                 <Route path="/support/operations" element={<SupportOnly><InternalOperations /></SupportOnly>} />
+                <Route path="/support/payouts" element={<SupportOnly><InternalPayouts /></SupportOnly>} />
                 <Route path="/internal/trust" element={<SupportOnly><InternalTrust /></SupportOnly>} />
                 {/* Pilot registration, cohorts & access management console. */}
                 <Route path="/internal" element={<SupportOnly><InternalHome /></SupportOnly>} />

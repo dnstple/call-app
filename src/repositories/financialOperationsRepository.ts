@@ -160,6 +160,94 @@ export async function executeOperationRun(runId: string, token: string): Promise
   };
 }
 
+// ---------------------------------------------------------------------------
+// Payouts-to-release panel (0194 scheduler + 0195 read model). A support admin
+// reviews the auto-prepared transfer_finalise runs and releases them; release
+// walks the SAME audited saga a manual operator would: preview -> confirm ->
+// execute (authorise) -> run the scoped-stripe-transfers provider saga. No money
+// logic lives here; every gate (control state, ceiling, livemode, live-execution
+// block) is enforced server-side and simply surfaces as a blockedCode/message.
+// ---------------------------------------------------------------------------
+export interface PayoutRunSummary {
+  runId: string;
+  confirmationToken: string;
+  state: string;
+  reason: string;
+  requestedAt: string;
+  expiresAt: string;
+  earningCount: number;
+  totalMinor: number;
+  companions: Array<{ name: string | null; amountMinor: number }>;
+}
+export async function listPayoutRuns(): Promise<PayoutRunSummary[]> {
+  const { data, error } = await db().rpc('support_list_payout_runs');
+  if (error) throw mapError(error);
+  return ((data ?? []) as any[]).map((r) => ({
+    runId: r.run_id,
+    confirmationToken: r.confirmation_token,
+    state: r.state,
+    reason: r.reason,
+    requestedAt: r.requested_at,
+    expiresAt: r.expires_at,
+    earningCount: r.earning_count ?? 0,
+    totalMinor: r.total_minor ?? 0,
+    companions: ((r.companions ?? []) as any[]).map((c) => ({
+      name: c.name ?? null,
+      amountMinor: c.amount_minor ?? 0,
+    })),
+  }));
+}
+
+export interface ReleaseResult {
+  ok: boolean;
+  /** Server refused for an EXPECTED reason (control disabled, ceiling unconfigured,
+   *  live execution not yet enabled). Surface, don't treat as a crash. */
+  blockedCode?: string;
+  blockedMessage?: string;
+  finalized: number;
+  reconciliation: number;
+  failed: number;
+  skipped: number;
+  requested: number;
+}
+/** Release one prepared payout run through the full audited saga. */
+export async function releasePayoutRun(runId: string, token: string): Promise<ReleaseResult> {
+  // 1. Preview (requested -> previewed) and 2. confirm (previewed -> confirmed).
+  //    Both are idempotent server-side if the run is already further along.
+  await previewOperationRun(runId);
+  await confirmOperationRun(runId, token);
+
+  // 3. Authorise provider execution. For transfer_finalise this does NOT move
+  //    money — it returns provider_execution_required, or a structured block.
+  const exec = await executeOperationRun(runId, token);
+  if (exec.ok === false && exec.blockedCode) {
+    return { ok: false, blockedCode: exec.blockedCode, finalized: 0, reconciliation: 0, failed: 0, skipped: 0, requested: 0 };
+  }
+
+  // 4. Run the scoped provider saga (the only step that talks to Stripe).
+  const { data, error } = await getSupabaseClient().functions.invoke('scoped-stripe-transfers', {
+    body: { run_id: runId, confirmation_token: token },
+  });
+  if (error) throw mapError(error);
+  const d = (data ?? {}) as any;
+  if (d.error) {
+    return {
+      ok: false,
+      blockedCode: String(d.error),
+      blockedMessage: typeof d.error === 'string' ? d.error : undefined,
+      finalized: 0, reconciliation: 0, failed: 0, skipped: 0, requested: 0,
+    };
+  }
+  return {
+    ok: d.ok !== false,
+    finalized: d.finalized_count ?? 0,
+    reconciliation: d.reconciliation_count ?? 0,
+    failed: d.failed_count ?? 0,
+    skipped: d.skipped_count ?? 0,
+    requested: d.requested_count ?? 0,
+  };
+}
+
 // 0075/0076 — per-record execution ledger (support-only, no secrets).
 export type ItemOutcome =
   | 'released' | 'already_payable' | 'not_found' | 'not_yet_eligible' | 'issue_held'
