@@ -9,7 +9,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { CreditCard, Loader2, PiggyBank } from 'lucide-react';
+import { CreditCard, Loader2, PiggyBank, RefreshCw } from 'lucide-react';
 import {
   createSetupSession,
   getBillingStatus,
@@ -18,13 +18,19 @@ import {
   type BillingStatus,
   type CreditSummary,
 } from '../repositories/billingRepository';
+import { getMyMembership, type MyMembership } from '../repositories/membershipRepository';
+import { CancellationFlow } from './CancellationFlow';
 import { formatMinor } from '../repositories/availabilityRepository';
+
+const ACTIVE_MEMBERSHIP = new Set(['pending', 'starter', 'active', 'past_due', 'paused']);
 
 type SetupPhase = 'idle' | 'redirecting' | 'completed' | 'cancelled' | 'failed';
 
 export function BillingPanel() {
   const [status, setStatus] = useState<BillingStatus | null>(null);
   const [credit, setCredit] = useState<CreditSummary | null>(null);
+  const [membership, setMembership] = useState<MyMembership | null>(null);
+  const [cancelling, setCancelling] = useState(false);
   const [phase, setPhase] = useState<SetupPhase>('idle');
   const [busy, setBusy] = useState(false);
   const [params, setParams] = useSearchParams();
@@ -32,6 +38,7 @@ export function BillingPanel() {
   const refresh = useCallback(() => {
     getBillingStatus().then(setStatus);
     getCreditSummary().then(setCredit);
+    getMyMembership().then(setMembership).catch(() => setMembership(null));
   }, []);
 
   useEffect(() => {
@@ -157,11 +164,44 @@ export function BillingPanel() {
           )}
         </span>
       </div>
+      {membership?.hasMembership && membership.status && ACTIVE_MEMBERSHIP.has(membership.status) && (
+        <div className="col" style={{ gap: 8, borderTop: '1px solid var(--border, #E5E0DA)', paddingTop: 12, marginTop: 4 }}>
+          <div className="row between wrap" style={{ gap: 8, alignItems: 'center' }}>
+            <span className="small bold">Membership</span>
+          </div>
+          {membership.cancelAtPeriodEnd ? (
+            <p className="small muted" style={{ margin: 0 }}>
+              Your subscription is set to end{membership.currentPeriodEnd
+                ? ` on ${new Date(membership.currentPeriodEnd).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}`
+                : ' at the end of the current period'}. You keep any credits you already have until they expire.
+            </p>
+          ) : (
+            <>
+              <p className="small muted" style={{ margin: 0 }}>
+                Your subscription is active. You can manage or cancel it at any time — cancelling stops
+                future renewals and you keep the credits you already have until they expire.
+              </p>
+              {membership.hasStripeCustomer && (
+                <div className="row wrap" style={{ gap: 8 }}>
+                  <button className="btn btn-ghost btn-small" onClick={() => setCancelling(true)}>
+                    <RefreshCw size={14} aria-hidden="true" /> Manage or cancel subscription
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
       <p className="faint small" style={{ margin: 0 }}>
         Cards are entered on Stripe’s secure page — we never see or store your
         card number. Credit is applied automatically before your card, works
         for any of your Members with any Companion, and lasts 12 months.
       </p>
+
+      {cancelling && membership && (
+        <CancellationFlow membership={membership} onClose={() => { setCancelling(false); refresh(); }} />
+      )}
     </section>
   );
 }

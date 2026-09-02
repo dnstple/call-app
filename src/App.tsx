@@ -28,6 +28,7 @@ const InternalReconciliation = lazy(() => import('./pages/InternalReconciliation
 const InternalReconciliationDetail = lazy(() => import('./pages/InternalReconciliationDetail'));
 const InternalOperations = lazy(() => import('./pages/InternalOperations'));
 const InternalPayouts = lazy(() => import('./pages/InternalPayouts'));
+const RecommendedCompanions = lazy(() => import('./pages/RecommendedCompanions'));
 const InternalTrust = lazy(() => import('./pages/InternalTrust'));
 import Settings from './pages/Settings';
 import AvailabilityRates from './pages/AvailabilityRates';
@@ -316,6 +317,7 @@ function AppRoutes() {
                 {/* Explore is Coordinator-only: Companions get a neutral redirect. */}
                 <Route path="/explore" element={<Gated><CoordinatorOnly><Explore /></CoordinatorOnly></Gated>} />
                 <Route path="/people/:id" element={<Gated><ProfileDetail /></Gated>} />
+                <Route path="/recommended" element={<Gated><RecommendedCompanions /></Gated>} />
                 <Route path="/profile" element={<MyProfile />} />
                 <Route path="/members" element={<Gated><MembersPage /></Gated>} />
                 <Route path="/conversations" element={<Gated><Conversations /></Gated>} />
