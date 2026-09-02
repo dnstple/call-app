@@ -1,51 +1,59 @@
 /**
- * Backup-cover response (companion side of the call-failover feature). Reached
- * from the SMS link with an offer id + single-purpose token, so it works without
- * a login. All logic is server-side (get_backup_offer / respond_backup_offer);
- * before assignment we only ever expose date/time/duration — never member info.
+ * Member cover-selection data path. Backs the /cover/:bookingId page where a
+ * member picks a replacement companion (from those who accepted the admin's
+ * invite), reschedules, or cancels. Server RPCs (0203) are authoritative.
  */
-import { getSupabaseClient, isSupabaseConfigured } from '../supabase/client';
+import { getSupabaseClient } from '../supabase/client';
 
-export interface BackupOfferView {
-  ok: boolean;
-  state: string; // offered / available / declined / expired / released / selected / not_found / forbidden
-  batch?: 'initial' | 'emergency';
-  startsAt?: string;
-  durationMinutes?: number;
-  timezone?: string;
-  isOpen?: boolean;
+/* eslint-disable @typescript-eslint/no-explicit-any */
+function db(): { rpc: (fn: string, args?: Record<string, unknown>) => Promise<{ data: any; error: unknown }> } {
+  return getSupabaseClient() as any;
 }
 
-type Rpc = { rpc: (fn: string, p: Record<string, unknown>) => Promise<{ data: unknown; error: { message?: string } | null }> };
+export interface CoverOption {
+  offer_id: string;
+  companion_profile_id: string;
+  first_name: string;
+  last_name: string | null;
+  photo_url: string | null;
+  bio: string | null;
+}
 
-export async function getBackupOffer(offerId: string, token: string): Promise<BackupOfferView> {
-  if (!isSupabaseConfigured()) return { ok: false, state: 'not_found' };
-  const client = getSupabaseClient() as unknown as Rpc;
-  const { data, error } = await client.rpc('get_backup_offer', { p_offer: offerId, p_token: token });
-  if (error) return { ok: false, state: 'error' };
-  const d = (data ?? {}) as Record<string, unknown>;
+export interface CoverInfo {
+  bookingId: string;
+  startsAt: string;
+  endsAt: string;
+  timezone: string;
+  status: string;
+  backupState: string | null;
+  originalCompanion: string | null;
+  options: CoverOption[];
+}
+
+export async function getMyCoverOptions(bookingId: string): Promise<CoverInfo | null> {
+  const { data, error } = await db().rpc('my_cover_options', { p_booking: bookingId });
+  if (error || !data) return null;
+  const r = data as any;
   return {
-    ok: Boolean(d.ok),
-    state: String(d.state ?? 'error'),
-    batch: d.batch as 'initial' | 'emergency' | undefined,
-    startsAt: d.starts_at as string | undefined,
-    durationMinutes: d.duration_minutes as number | undefined,
-    timezone: d.timezone as string | undefined,
-    isOpen: Boolean(d.is_open),
+    bookingId: r.booking_id,
+    startsAt: r.starts_at,
+    endsAt: r.ends_at,
+    timezone: r.timezone,
+    status: r.status,
+    backupState: r.backup_state ?? null,
+    originalCompanion: r.original_companion ?? null,
+    options: (r.options ?? []) as CoverOption[],
   };
 }
 
-export async function respondBackupOffer(
-  offerId: string,
-  token: string,
-  available: boolean,
-): Promise<{ ok: boolean; state: string }> {
-  if (!isSupabaseConfigured()) return { ok: false, state: 'error' };
-  const client = getSupabaseClient() as unknown as Rpc;
-  const { data, error } = await client.rpc('respond_backup_offer', {
-    p_offer: offerId, p_token: token, p_available: available,
-  });
-  if (error) return { ok: false, state: 'error' };
-  const d = (data ?? {}) as Record<string, unknown>;
-  return { ok: Boolean(d.ok), state: String(d.state ?? 'error') };
+export async function selectCover(bookingId: string, offerId: string): Promise<{ ok: boolean; outcome?: string }> {
+  const { data, error } = await db().rpc('member_select_cover', { p_booking: bookingId, p_offer: offerId });
+  if (error) return { ok: false };
+  const r = (data ?? {}) as any;
+  return { ok: !!r.ok, outcome: r.outcome };
+}
+
+export async function cancelMyBooking(bookingId: string, reason: string): Promise<{ ok: boolean }> {
+  const { error } = await db().rpc('cancel_booking', { p_booking: bookingId, p_reason: reason });
+  return { ok: !error };
 }

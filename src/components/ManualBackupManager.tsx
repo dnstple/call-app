@@ -8,7 +8,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Loader2, RefreshCw, Check, X, Phone, UserPlus } from 'lucide-react';
 import {
   getUpcomingCreditCalls, getCandidateCompanions, offerBackup, getFailoverOverview,
-  assignCompanion, keepPrimary, messageMember,
+  assignCompanion, keepPrimary, messageMember, notifyMemberOfCover,
   type UpcomingCreditCall, type CandidateCompanion,
 } from '../repositories/failoverRepository';
 
@@ -43,6 +43,15 @@ export function ManualBackupManager() {
 
   const select = (id: string) => { setSelected(id); setMsg(null); loadCall(id); };
   const refresh = () => { loadCalls(); if (selected) loadCall(selected); };
+
+  const notifyCover = async () => {
+    if (!selected) return;
+    setBusy(true); setMsg(null);
+    const r = await notifyMemberOfCover(selected);
+    setMsg(r.detail);
+    setBusy(false);
+    loadCall(selected);
+  };
 
   const act = async (fn: () => Promise<unknown>, label: string) => {
     setBusy(true); setMsg(null);
@@ -143,9 +152,16 @@ export function ManualBackupManager() {
               </div>
             )}
             {available.length > 0 && (
-              <p className="muted small" style={{ margin: '6px 0 0' }}>
-                Transferring notifies the member, the new companion and the original companion automatically.
-              </p>
+              <div className="col" style={{ gap: 6, marginTop: 8 }}>
+                <button className="btn btn-primary btn-small" disabled={busy} onClick={notifyCover} style={{ alignSelf: 'flex-start' }}>
+                  <UserPlus size={14} aria-hidden="true" /> Send options to member to choose
+                </button>
+                <p className="muted small" style={{ margin: 0 }}>
+                  Texts the member a link to pick from the companions who accepted. If they don’t pick,
+                  the call auto-assigns to the first-invited accepted companion 5 hours before it starts.
+                  You can still transfer directly above if you’d rather choose for them.
+                </p>
+              </div>
             )}
           </div>
 

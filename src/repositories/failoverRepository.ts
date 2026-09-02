@@ -167,6 +167,21 @@ export async function offerBackup(bookingId: string, companionProfileId: string)
   return { ok: Boolean(r.ok), error: r.error ? String(r.error) : undefined };
 }
 
+/**
+ * Notify the member of the companions who accepted the backup invite, with a
+ * link to the cover-selection page. Manual admin action; sends in-app + SMS.
+ */
+export async function notifyMemberOfCover(bookingId: string): Promise<{ ok: boolean; detail: string }> {
+  const { data, error } = await client().rpc('admin_notify_member_of_cover', { p_booking: bookingId });
+  if (error) return { ok: false, detail: 'Could not notify the member.' };
+  const r = (data ?? {}) as Record<string, unknown>;
+  if (!r.ok) {
+    return { ok: false, detail: r.reason === 'no_accepted' ? 'No companions have accepted the invite yet.' : 'Could not notify the member.' };
+  }
+  const flush = await flushPendingSms();
+  return { ok: true, detail: `Member notified with ${r.accepted} option(s).${flush.ok ? ' Text sent.' : ' Text pending.'}` };
+}
+
 /** Send a custom message (in-app + SMS) to the member who booked the call. */
 export async function messageMember(bookingId: string, body: string): Promise<{ ok: boolean; detail: string }> {
   const { data, error } = await client().rpc('admin_message_member', { p_booking: bookingId, p_body: body });
