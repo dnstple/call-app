@@ -6,9 +6,9 @@
  * <SupportOnly> in the router AND by app_private.require_support() inside the
  * admin_list_bookings RPC. Sortable client-side; no actions, no writes.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Loader2, RefreshCw, ArrowUp, ArrowDown } from 'lucide-react';
+import { Loader2, RefreshCw, ArrowUp, ArrowDown, ChevronRight, ChevronDown, Copy, Check } from 'lucide-react';
 import { adminListBookings, getFallbackQueue, acceptFallback, type AdminBookingRow, type FallbackCall } from '../repositories/bookingsAdminRepository';
 import { FailoverControlPanel } from '../components/FailoverControlPanel';
 import { ManualBackupManager } from '../components/ManualBackupManager';
@@ -47,6 +47,18 @@ export default function InternalBookings() {
 
   const [fallbacks, setFallbacks] = useState<FallbackCall[]>([]);
   const loadFallbacks = useCallback(() => { getFallbackQueue().then(setFallbacks).catch(() => setFallbacks([])); }, []);
+
+  // Expanded rows reveal a bar with the booking id (+ copy).
+  const [openIds, setOpenIds] = useState<Set<string>>(new Set());
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const toggleOpen = (id: string) =>
+    setOpenIds((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const copyId = (id: string) => {
+    navigator.clipboard?.writeText(id).then(() => {
+      setCopiedId(id);
+      setTimeout(() => setCopiedId((c) => (c === id ? null : c)), 1500);
+    }).catch(() => { /* clipboard unavailable */ });
+  };
 
   const load = useCallback(() => {
     setLoading(true);
@@ -149,23 +161,52 @@ export default function InternalBookings() {
                 </tr>
               </thead>
               <tbody>
-                {sorted.map((b) => (
-                  <tr key={b.id}>
-                    <td>{b.member_name ?? '—'}</td>
-                    <td>{b.companion_name ?? '—'}</td>
-                    <td>
-                      <span className="access-badge">{b.kind}</span>
-                      {b.offer_type && b.offer_type !== 'trial' ? <span className="text-secondary" style={{ fontSize: '0.75rem' }}> · {pretty(b.offer_type)}</span> : null}
-                    </td>
-                    <td style={{ whiteSpace: 'nowrap' }}>{when(b.starts_at, b.timezone)}</td>
-                    <td style={{ textAlign: 'right' }}>{b.duration_minutes}</td>
-                    <td>{pretty(b.communication_method)}</td>
-                    <td><span className={`access-badge s-${b.status}`}>{pretty(b.status)}</span></td>
-                    <td style={{ textAlign: 'right' }}>{money(b.price_minor, b.currency ?? currency)}</td>
-                    <td style={{ textAlign: 'right' }}>{money(b.platform_fee_minor, b.currency ?? currency)}</td>
-                    <td style={{ textAlign: 'right' }}>{money(b.companion_amount_minor, b.currency ?? currency)}</td>
-                  </tr>
-                ))}
+                {sorted.map((b) => {
+                  const open = openIds.has(b.id);
+                  return (
+                  <Fragment key={b.id}>
+                    <tr onClick={() => toggleOpen(b.id)} style={{ cursor: 'pointer' }}
+                        aria-expanded={open} title="Click to show booking ID">
+                      <td>
+                        <span className="row" style={{ gap: 6, alignItems: 'center' }}>
+                          {open ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}
+                          {b.member_name ?? '—'}
+                        </span>
+                      </td>
+                      <td>{b.companion_name ?? '—'}</td>
+                      <td>
+                        <span className="access-badge">{b.kind}</span>
+                        {b.offer_type && b.offer_type !== 'trial' ? <span className="text-secondary" style={{ fontSize: '0.75rem' }}> · {pretty(b.offer_type)}</span> : null}
+                      </td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{when(b.starts_at, b.timezone)}</td>
+                      <td style={{ textAlign: 'right' }}>{b.duration_minutes}</td>
+                      <td>{pretty(b.communication_method)}</td>
+                      <td><span className={`access-badge s-${b.status}`}>{pretty(b.status)}</span></td>
+                      <td style={{ textAlign: 'right' }}>{money(b.price_minor, b.currency ?? currency)}</td>
+                      <td style={{ textAlign: 'right' }}>{money(b.platform_fee_minor, b.currency ?? currency)}</td>
+                      <td style={{ textAlign: 'right' }}>{money(b.companion_amount_minor, b.currency ?? currency)}</td>
+                    </tr>
+                    {open && (
+                      <tr>
+                        <td colSpan={10} style={{ background: 'var(--surface-2, #FBF3EE)', padding: '8px 12px' }}>
+                          <span className="row" style={{ gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                            <span className="text-secondary" style={{ fontSize: '0.8rem' }}>Booking ID</span>
+                            <code style={{ fontSize: '0.8rem', userSelect: 'all' }}>{b.id}</code>
+                            <button
+                              className="btn btn-ghost btn-small"
+                              onClick={(e) => { e.stopPropagation(); copyId(b.id); }}
+                            >
+                              {copiedId === b.id
+                                ? <><Check size={13} aria-hidden="true" /> Copied</>
+                                : <><Copy size={13} aria-hidden="true" /> Copy</>}
+                            </button>
+                          </span>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                  );
+                })}
               </tbody>
             </table>
             <p className="text-secondary" style={{ marginTop: 10 }}>{sorted.length} booking{sorted.length === 1 ? '' : 's'}</p>
