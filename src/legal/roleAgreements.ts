@@ -59,7 +59,7 @@ const COMPANION_TERMS: AgreementSection = {
   title: 'How you are paid as a Companion',
   body: [
     'Companions do not set their own prices. Every call is a 45-minute companionship conversation funded by one member credit.',
-    'For each completed call you are paid the credit allocation (£8.33) less the payment processing fee and Apricoti’s 15% commission, paid out to your connected payout account in the usual way.',
+    'For each completed call, Apricoti retains a 30% commission of the call fee (the £8.33 credit allocation). The payment processing fee is then deducted from the remainder, and you are paid whatever is left, paid out to your connected payout account in the usual way.',
     'You are asked to confirm each booked call at least 20 minutes before it starts. If you do not confirm in time, or you confirm but do not attend, the call is passed to the Apricoti team and you are not paid for that call.',
     'You must attend confirmed calls reliably and treat every Member with warmth and respect.',
   ],
@@ -89,8 +89,8 @@ export const COMPANION_AGREEMENT: RoleAgreement = {
   key: 'apricoti_companion_agreement',
   role: 'companion',
   title: 'Apricoti Companion Agreement',
-  version: 1,
-  effective: 'Version 1 — 2026',
+  version: 2,
+  effective: 'Version 2 — 2026',
   sections: [COMPANION_TERMS, BOOKING_TERMS, ...AGREEMENT_SECTIONS],
 };
 
