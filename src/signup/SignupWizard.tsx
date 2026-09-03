@@ -187,6 +187,7 @@ export default function SignupWizard() {
           if (!data.lastName.trim()) return 'Please add a last name — only your last initial is shown publicly.';
           if (!data.dob) return 'Please add a date of birth.';
           if (!isAdult(data.dob)) return 'Companions must be at least 18 years old.';
+          if (!data.photoDataUrl) return 'Please add a profile photo to continue.';
         } else if (!data.dob && !data.ageRange) {
           return 'Please add a date of birth or choose an age range.';
         }
@@ -475,7 +476,7 @@ export default function SignupWizard() {
               <span className="hint">Add countries, regions or cultures that have been part of your life. Separate with commas.</span>
             </div>
             <div className="field" style={{ marginBottom: 0 }}>
-              <label htmlFor="su-photo">Profile photo (optional)</label>
+              <label htmlFor="su-photo">Profile photo</label>
               <div className="row" style={{ gap: 16 }}>
                 {data.photoDataUrl ? (
                   <img src={data.photoDataUrl} alt="Your chosen profile photo" width={72} height={72} style={{ borderRadius: '50%', objectFit: 'cover' }} />
@@ -498,7 +499,7 @@ export default function SignupWizard() {
                       reader.readAsDataURL(file);
                     }}
                   />
-                  <span className="hint">Optional now — a profile photo is required before your profile can be approved. Kept on this device until you finish signing up.</span>
+                  <span className="hint">Required — a clear photo of your face, shown on your companion profile. Kept on this device until you finish signing up.</span>
                   {data.photoDataUrl && (
                     <button className="btn btn-ghost btn-small" style={{ alignSelf: 'flex-start' }} onClick={() => patch({ photoDataUrl: '' })}>
                       Remove photo
