@@ -5,7 +5,7 @@
  * Companions are shown alphabetically with no ranking exposed.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { CalendarClock, Loader2, RotateCcw, XCircle } from 'lucide-react';
 import { PageHeader } from '../components/ui';
 import { getMyCoverOptions, selectCover, cancelMyBooking, type CoverInfo } from '../repositories/coverRepository';
@@ -101,10 +101,15 @@ export default function CoverSelection() {
                     <strong>{c.first_name}{c.last_name ? ` ${c.last_name.charAt(0)}.` : ''}</strong>
                   </div>
                   {c.bio && <span className="muted small" style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{c.bio}</span>}
-                  <button className="btn btn-primary btn-small" style={{ alignSelf: 'flex-start', marginTop: 4 }}
-                          disabled={busy !== null} onClick={() => void pick(c.offer_id)}>
-                    {busy === c.offer_id ? <Loader2 size={14} className="spin" aria-hidden="true" /> : null} Choose {c.first_name}
-                  </button>
+                  <div className="row wrap" style={{ gap: 8, marginTop: 4, alignItems: 'center' }}>
+                    <button className="btn btn-primary btn-small"
+                            disabled={busy !== null} onClick={() => void pick(c.offer_id)}>
+                      {busy === c.offer_id ? <Loader2 size={14} className="spin" aria-hidden="true" /> : null} Choose {c.first_name}
+                    </button>
+                    <Link className="btn btn-ghost btn-small" to={`/people/${c.companion_profile_id}`}>
+                      View full profile
+                    </Link>
+                  </div>
                 </div>
               ))}
             </div>
