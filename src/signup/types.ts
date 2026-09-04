@@ -138,12 +138,14 @@ export const NOTIF_CHANNEL_OPTIONS = ['In-app notification', 'Email', 'Text mess
 
 /** Steps per role. 'role' is always first; 'success' is always last. */
 export const STEP_SEQUENCES: Record<Role, string[]> = {
-  member: ['role', 'details', 'interests', 'prefs', 'availability', 'comfort', 'notifications', 'review', 'success'],
+  // Phone verification ('verify') is mandatory for EVERY role and sits at the END
+  // of the flow, just before the review/summary step.
+  member: ['role', 'details', 'interests', 'prefs', 'availability', 'comfort', 'notifications', 'verify', 'review', 'success'],
   // Pricing and packages are set in the Companion dashboard AFTER approval —
   // they are deliberately NOT part of signup (motivation, style and verification
   // matter more during onboarding than asking an unapproved Companion to price).
-  companion: ['role', 'verify', 'details', 'intro', 'interests', 'languages', 'availability', 'trust', 'review', 'success'],
-  coordinator: ['role', 'about', 'memberDetails', 'permission', 'interests', 'prefs', 'availability', 'matching', 'notifRouting', 'review', 'success'],
+  companion: ['role', 'details', 'intro', 'interests', 'languages', 'availability', 'trust', 'verify', 'review', 'success'],
+  coordinator: ['role', 'about', 'memberDetails', 'permission', 'interests', 'prefs', 'availability', 'matching', 'notifRouting', 'verify', 'review', 'success'],
 };
 
 export function stepsFor(role: Role | undefined): string[] {
