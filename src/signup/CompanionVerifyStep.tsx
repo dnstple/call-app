@@ -9,7 +9,9 @@ import { Loader2, Check } from 'lucide-react';
 import { toUkE164, sendPhoneOtp, verifyPhoneOtp } from '../repositories/phoneRepository';
 import { useAuth } from '../auth/AuthProvider';
 
-export function CompanionVerifyStep({ verified, onVerified }: { verified: boolean; onVerified: () => void }) {
+export function CompanionVerifyStep({ verified, onVerified, onBack, onNext }: {
+  verified: boolean; onVerified: () => void; onBack?: () => void; onNext?: () => void;
+}) {
   const { refreshAccount } = useAuth();
   const [input, setInput] = useState('');
   const [e164, setE164] = useState('');
@@ -26,6 +28,10 @@ export function CompanionVerifyStep({ verified, onVerified }: { verified: boolea
         <div className="card col" style={{ gap: 10, alignItems: 'center', textAlign: 'center', padding: '20px' }}>
           <Check size={30} aria-hidden="true" style={{ color: 'var(--deep-apricot, #C8643D)' }} />
           <strong>You’re all set — continue to the next step.</strong>
+        </div>
+        <div className="row" style={{ gap: 8, marginTop: 16, justifyContent: 'space-between' }}>
+          {onBack ? <button type="button" className="btn btn-ghost" onClick={onBack}>Back</button> : <span />}
+          {onNext ? <button type="button" className="btn btn-primary" onClick={onNext}>Continue</button> : null}
         </div>
       </div>
     );
@@ -95,6 +101,12 @@ export function CompanionVerifyStep({ verified, onVerified }: { verified: boolea
           </>
         )}
       </div>
+
+      {onBack && (
+        <div className="row" style={{ gap: 8, marginTop: 16 }}>
+          <button type="button" className="btn btn-ghost" disabled={busy} onClick={onBack}>Back</button>
+        </div>
+      )}
     </div>
   );
 }

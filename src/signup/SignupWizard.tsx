@@ -610,7 +610,7 @@ export default function SignupWizard() {
         )}
 
         {step === 'verify' && (
-          <CompanionVerifyStep verified={phoneVerified} onVerified={() => setPhoneVerifiedLocal(true)} />
+          <CompanionVerifyStep verified={phoneVerified} onVerified={() => setPhoneVerifiedLocal(true)} onBack={back} onNext={next} />
         )}
 
         {step === 'intro' && (
