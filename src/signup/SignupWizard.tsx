@@ -46,7 +46,7 @@ import { COUNTRIES } from '../domain/countries';
 import { clearDraft, demoData, loadDraft, markSignupSeen, saveDraft } from './storage';
 import { createAccountsFromSignup, type CreatedAccounts } from './complete';
 import { beginMembership } from '../repositories/membershipRepository';
-import { completeSupabaseSignup, saveSignupSource } from './completeSupabase';
+import { completeSupabaseSignup, saveSignupSource, recordSignupStep, clearSignupSession } from './completeSupabase';
 import { CompanionVerifyStep } from './CompanionVerifyStep';
 import { isSupabaseMode } from '../config/dataMode';
 import { useAuth } from '../auth/AuthProvider';
@@ -157,6 +157,15 @@ export default function SignupWizard() {
     (stepRef.current?.querySelector('h1') as HTMLElement | null)?.focus?.();
   }, [stepIndex]);
 
+  // Funnel telemetry: record each wizard step as it's reached (best-effort).
+  // Skip the terminal 'success' step — completion is captured via the profile row,
+  // and the session id is cleared on completion (logging it would mint a phantom).
+  useEffect(() => {
+    if (!supabase || step === 'success') return;
+    void recordSignupStep(step, data.role, stepIndex);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
+
   function patch(p: Partial<SignupData>) {
     setData((d) => ({ ...d, ...p }));
     setError(null);
@@ -258,6 +267,7 @@ export default function SignupWizard() {
             await auth.refreshProfiles();
             markSignupSeen();
             clearDraft(namespace);
+            clearSignupSession();
             setStepIndex((i) => Math.min(i + 1, steps.length - 1));
           } catch (e) {
             setError(e instanceof AuthAppError ? e.message : 'We couldn’t create your profile. Please try again.');

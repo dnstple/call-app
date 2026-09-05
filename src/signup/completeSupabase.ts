@@ -19,6 +19,44 @@ export function methodsToDb(_labels: string[]): string[] {
   return ['in_app'];
 }
 
+// ---------------------------------------------------------------------------
+// Signup funnel telemetry — stable per-attempt session id + best-effort logger.
+// ---------------------------------------------------------------------------
+const SIGNUP_SESSION_KEY = 'apricoti.signup.session';
+
+/** A stable id for this signup attempt, persisted so it survives step reloads. */
+export function signupSessionId(): string {
+  try {
+    let v = localStorage.getItem(SIGNUP_SESSION_KEY);
+    if (!v) {
+      v = crypto.randomUUID();
+      localStorage.setItem(SIGNUP_SESSION_KEY, v);
+    }
+    return v;
+  } catch {
+    return crypto.randomUUID();
+  }
+}
+
+/** Clear the session id once a signup completes so the next attempt is distinct. */
+export function clearSignupSession(): void {
+  try { localStorage.removeItem(SIGNUP_SESSION_KEY); } catch { /* ignore */ }
+}
+
+/** Record that a wizard step was reached. Never throws — telemetry is optional. */
+export async function recordSignupStep(step: string, role?: string, stepIndex?: number): Promise<void> {
+  try {
+    await getSupabaseClient().rpc('record_signup_step', {
+      p_session: signupSessionId(),
+      p_step: step,
+      p_role: role ?? null,
+      p_step_index: stepIndex ?? null,
+    });
+  } catch {
+    /* best-effort: do not surface telemetry failures to the user */
+  }
+}
+
 /** Interests persist through the controlled catalogue by slug. Custom
  * free-text interests are not in the catalogue and are deliberately not
  * stored in Stage 2C1 (documented limitation). */
