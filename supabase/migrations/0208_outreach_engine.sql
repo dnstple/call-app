@@ -219,7 +219,7 @@ language sql stable security definer set search_path = '' as $$
        and not exists (
          select 1 from public.email_suppressions s
           where s.account_id = pa.account_id and s.category = 'outreach')
-     order by pa.account_id, pr.created_at
+     order by pa.account_id, pa.created_at
   )
   select b.account_id, b.first_name, b.email, b.phone_e164, b.phone_verified, b.sms_opt_out, b.profile_id
     from base b
