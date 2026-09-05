@@ -83,7 +83,7 @@ export function buildMemberPayload(data: SignupData) {
     p_headline: data.headline.trim(),
     p_bio: data.bio.trim(),
     p_age_band: data.ageRange && data.ageRange !== 'Prefer not to say' ? data.ageRange : '',
-    p_date_of_birth: data.dob || null,
+    p_date_of_birth: null,  // Members give an age range only — no exact DOB collected.
     p_email: data.email.trim(),
     p_phone: data.phone.trim(),
     p_languages: data.languages.length > 0 ? data.languages : ['English'],
@@ -130,7 +130,7 @@ export function buildCoordinatorPayload(data: SignupData) {
     p_member_last_name: data.memberLastName.trim(),
     p_member_region: data.memberTown.trim(),
     p_member_age_band: data.memberAgeRange,
-    p_member_dob: data.memberDob || null,
+    p_member_dob: null,  // Managed members give an age range only — no exact DOB collected.
     p_member_languages: data.languages.length > 0 ? data.languages : ['English'],
     p_member_methods: methodsToDb(data.mediums),
     p_member_duration: data.durationMins,

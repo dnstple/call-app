@@ -197,8 +197,8 @@ export default function SignupWizard() {
           if (!data.dob) return 'Please add a date of birth.';
           if (!isAdult(data.dob)) return 'Companions must be at least 18 years old.';
           if (!data.photoDataUrl) return 'Please add a profile photo to continue.';
-        } else if (!data.dob && !data.ageRange) {
-          return 'Please add a date of birth or choose an age range.';
+        } else if (!data.ageRange) {
+          return 'Please choose an age range.';
         }
         return null;
       case 'about':
@@ -208,7 +208,7 @@ export default function SignupWizard() {
         return null;
       case 'memberDetails':
         if (!data.memberFirstName.trim()) return 'Please add their first name.';
-        if (!data.memberDob && !data.memberAgeRange) return 'Please add their date of birth or choose an age range.';
+        if (!data.memberAgeRange) return 'Please choose their age range.';
         return null;
       case 'permission':
         return data.permKnows && data.permAgreed && data.permManage
@@ -422,7 +422,7 @@ export default function SignupWizard() {
         {step === 'details' && data.role === 'member' && (
           <SignupStep
             title="Your details"
-            intro="This helps us recommend suitable Companions. Your exact date of birth will not appear publicly — only your first name is shown prominently."
+            intro="This helps us recommend suitable Companions. Only your first name is shown prominently."
             onBack={back}
             onNext={next}
             error={error}
@@ -431,10 +431,9 @@ export default function SignupWizard() {
               <FormField id="su-first" label="First name" value={data.firstName} onChange={(v) => patch({ firstName: v })} error={fieldError(!data.firstName.trim(), 'Needed')} />
               <FormField id="su-last" label="Last name" value={data.lastName} onChange={(v) => patch({ lastName: v })} />
             </div>
-            <FormField id="su-dob" label="Date of birth (optional)" type="date" value={data.dob} onChange={(v) => patch({ dob: v, ageRange: v ? '' : data.ageRange })} />
             <div className="field" style={{ marginBottom: 0 }}>
-              <label htmlFor="su-agerange">…or choose an age range</label>
-              <select id="su-agerange" value={data.ageRange} onChange={(e) => patch({ ageRange: e.target.value })} aria-invalid={attempted && !data.dob && !data.ageRange ? true : undefined}>
+              <label htmlFor="su-agerange">Age range</label>
+              <select id="su-agerange" value={data.ageRange} onChange={(e) => patch({ ageRange: e.target.value })} aria-invalid={attempted && !data.ageRange ? true : undefined}>
                 <option value="">Choose…</option>
                 {AGE_RANGE_OPTIONS.map((a) => <option key={a} value={a}>{a}</option>)}
               </select>
@@ -551,10 +550,9 @@ export default function SignupWizard() {
               <FormField id="su-mfirst" label="Their first name" value={data.memberFirstName} onChange={(v) => patch({ memberFirstName: v })} error={fieldError(!data.memberFirstName.trim(), 'Needed')} />
               <FormField id="su-mlast" label="Their last name" value={data.memberLastName} onChange={(v) => patch({ memberLastName: v })} />
             </div>
-            <FormField id="su-mdob" label="Date of birth (optional)" type="date" value={data.memberDob} onChange={(v) => patch({ memberDob: v })} />
             <div className="field" style={{ marginBottom: 0 }}>
-              <label htmlFor="su-magerange">…or choose an age range</label>
-              <select id="su-magerange" value={data.memberAgeRange} onChange={(e) => patch({ memberAgeRange: e.target.value })} aria-invalid={attempted && !data.memberDob && !data.memberAgeRange ? true : undefined}>
+              <label htmlFor="su-magerange">Their age range</label>
+              <select id="su-magerange" value={data.memberAgeRange} onChange={(e) => patch({ memberAgeRange: e.target.value })} aria-invalid={attempted && !data.memberAgeRange ? true : undefined}>
                 <option value="">Choose…</option>
                 {AGE_RANGE_OPTIONS.map((a) => <option key={a} value={a}>{a}</option>)}
               </select>
