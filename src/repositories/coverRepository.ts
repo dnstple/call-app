@@ -102,3 +102,25 @@ export async function cancelMyBooking(bookingId: string, reason: string): Promis
   const { error } = await db().rpc('cancel_booking', { p_booking: bookingId, p_reason: reason });
   return { ok: !error };
 }
+
+/**
+ * Reschedule a credit call in place — the same booking (and the credit already
+ * consumed for it) is reused; the companion re-confirms the new time. Allowed
+ * only 2+ hours before the current start (server-enforced).
+ */
+export async function rescheduleMyBooking(
+  bookingId: string,
+  startsAtIso: string,
+): Promise<{ ok: boolean; reason?: string }> {
+  const { error } = await db().rpc('reschedule_credit_booking', {
+    p_booking: bookingId,
+    p_starts_at: startsAtIso,
+  });
+  if (!error) return { ok: true };
+  const msg = String((error as any)?.message || '').toLowerCase();
+  if (msg.includes('reschedule_closed')) return { ok: false, reason: 'too_late' };
+  if (msg.includes('too_soon')) return { ok: false, reason: 'too_soon' };
+  if (msg.includes('slot_taken')) return { ok: false, reason: 'slot_taken' };
+  if (msg.includes('starts_in_past')) return { ok: false, reason: 'past' };
+  return { ok: false, reason: 'error' };
+}

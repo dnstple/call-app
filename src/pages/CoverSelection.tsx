@@ -8,7 +8,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { CalendarClock, Loader2, RotateCcw, XCircle } from 'lucide-react';
 import { PageHeader } from '../components/ui';
-import { getMyCoverOptions, selectCover, cancelMyBooking, type CoverInfo } from '../repositories/coverRepository';
+import { getMyCoverOptions, selectCover, cancelMyBooking, rescheduleMyBooking, type CoverInfo } from '../repositories/coverRepository';
 
 function whenLabel(iso: string, tz: string): string {
   try {
@@ -27,6 +27,8 @@ export default function CoverSelection() {
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [showReschedule, setShowReschedule] = useState(false);
+  const [newTime, setNewTime] = useState('');
 
   const load = useCallback(() => {
     if (!bookingId) return;
@@ -54,9 +56,27 @@ export default function CoverSelection() {
     }
   };
 
+  const reschedule = async () => {
+    if (!bookingId || !newTime) return;
+    setBusy('reschedule'); setErr(null); setMsg(null);
+    const r = await rescheduleMyBooking(bookingId, new Date(newTime).toISOString());
+    setBusy(null);
+    if (r.ok) {
+      setMsg('Your call has been moved. Your credit stays with the new time.');
+      setTimeout(() => navigate(`/conversations/${bookingId}`), 1400);
+    } else {
+      setErr(
+        r.reason === 'too_late' ? 'That’s too close to the start — calls can only be moved 2+ hours ahead.'
+        : r.reason === 'too_soon' ? 'Please choose a time a little further out.'
+        : r.reason === 'slot_taken' ? 'That time isn’t free — please pick another.'
+        : 'We couldn’t move the call. Please try another time.',
+      );
+    }
+  };
+
   const cancel = async () => {
     if (!bookingId) return;
-    if (!window.confirm('Cancel this call? Your credit will be handled as normal.')) return;
+    if (!window.confirm('Cancel this call? If it’s 2+ hours away your credit is refunded; inside 2 hours the credit is used.')) return;
     setBusy('cancel'); setErr(null);
     const r = await cancelMyBooking(bookingId, 'Cancelled from cover selection');
     setBusy(null);
@@ -117,13 +137,31 @@ export default function CoverSelection() {
 
           <div className="row wrap" style={{ gap: 8, marginTop: 20 }}>
             <button className="btn btn-secondary btn-small" disabled={busy !== null}
-                    onClick={() => navigate(`/conversations/${info.bookingId}`)}>
+                    onClick={() => setShowReschedule((s) => !s)}>
               <RotateCcw size={14} aria-hidden="true" /> Reschedule instead
             </button>
             <button className="btn btn-ghost btn-small" disabled={busy !== null} onClick={() => void cancel()}>
               <XCircle size={14} aria-hidden="true" /> Cancel this call
             </button>
           </div>
+
+          {showReschedule && (
+            <div className="col" style={{ gap: 8, marginTop: 12, maxWidth: 320 }}>
+              <label className="small muted" htmlFor="cover-new-time">Pick a new time (2+ hours from now)</label>
+              <input
+                id="cover-new-time"
+                type="datetime-local"
+                className="input"
+                value={newTime}
+                onChange={(e) => setNewTime(e.target.value)}
+              />
+              <p className="small muted" style={{ margin: 0 }}>Your credit stays with the call — no extra credit is used.</p>
+              <button className="btn btn-primary btn-small" disabled={busy !== null || !newTime}
+                      onClick={() => void reschedule()}>
+                Confirm new time
+              </button>
+            </div>
+          )}
         </>
       )}
 
