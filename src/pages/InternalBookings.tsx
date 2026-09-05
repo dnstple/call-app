@@ -63,7 +63,7 @@ export default function InternalBookings() {
   const load = useCallback(() => {
     setLoading(true);
     loadFallbacks();
-    adminListBookings(2000)
+    adminListBookings(300)
       .then((r) => { setRows(r.rows); setCurrency(r.currency); })
       .catch(() => setRows([]))
       .finally(() => setLoading(false));

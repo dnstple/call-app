@@ -101,8 +101,25 @@ export function createHandler(deps: { admin: Admin; provider: TransferProvider; 
   const { admin, provider } = deps;
   return async (req: Request): Promise<Response> => {
     if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
-    // Authorised scoped support flow ONLY: service secret + run credential.
-    if (req.headers.get('x-billing-secret') !== deps.billingSecret) return json({ error: 'forbidden' }, 403);
+    // Authorised scoped support flow: EITHER the internal service secret (server
+    // callers) OR a signed-in support admin (the internal Payouts panel). The run's
+    // single-use confirmation token is still validated downstream either way.
+    let authorised = deps.billingSecret.length > 0 && req.headers.get('x-billing-secret') === deps.billingSecret;
+    if (!authorised) {
+      const authz = req.headers.get('Authorization') ?? '';
+      const token = authz.startsWith('Bearer ') ? authz.slice(7) : '';
+      if (token) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const a = admin as any;
+        const { data: u } = await a.auth.getUser(token);
+        if (u?.user) {
+          const { data: adminRow } = await a.from('support_admins')
+            .select('account_id').eq('account_id', u.user.id).maybeSingle();
+          authorised = Boolean(adminRow);
+        }
+      }
+    }
+    if (!authorised) return json({ error: 'forbidden' }, 403);
     let body: { run_id?: string; confirmation_token?: string } = {};
     try { body = await req.json(); } catch { body = {}; }
     if (!body.run_id || !body.confirmation_token) return json({ error: 'run_credentials_required' }, 400);
@@ -113,9 +130,12 @@ export function createHandler(deps: { admin: Admin; provider: TransferProvider; 
 
     const env = String(begin.data.environment ?? 'hosted_test');
     const expectLivemode = env === 'production_live';
-    // TEST-MODE GUARD: never run a live key outside production_live.
+    // KEY/ENVIRONMENT GUARDS (kept symmetric so a mismatch can never move money):
+    //  - never run a LIVE key outside production_live;
+    //  - in production_live, never run a TEST key.
+    // Live execution is now enabled — real transfers proceed under production_live.
     if (!expectLivemode && !deps.keyIsTestMode) return json({ error: 'live_key_rejected_in_test_environment' }, 409);
-    if (expectLivemode) return json({ error: 'production_live_execution_not_yet_enabled' }, 409);
+    if (expectLivemode && deps.keyIsTestMode) return json({ error: 'test_key_rejected_in_live_environment' }, 409);
 
     const earningIds = (begin.data.earning_ids ?? []) as string[];
     if (earningIds.length === 0 || earningIds.length > 5) return json({ error: 'invalid_scope' }, 409);
