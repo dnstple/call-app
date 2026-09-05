@@ -46,7 +46,11 @@ export function clearSignupSession(): void {
 /** Record that a wizard step was reached. Never throws — telemetry is optional. */
 export async function recordSignupStep(step: string, role?: string, stepIndex?: number): Promise<void> {
   try {
-    await getSupabaseClient().rpc('record_signup_step', {
+    // Cast: this telemetry RPC isn't in the generated types.
+    const client = getSupabaseClient() as unknown as {
+      rpc: (fn: string, args: Record<string, unknown>) => Promise<unknown>;
+    };
+    await client.rpc('record_signup_step', {
       p_session: signupSessionId(),
       p_step: step,
       p_role: role ?? null,
