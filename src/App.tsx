@@ -47,6 +47,7 @@ const PilotHub = lazy(() => import('./pages/PilotHub'));
 const AccountStatus = lazy(() => import('./pages/AccountStatus'));
 const InternalAccess = lazy(() => import('./pages/InternalAccess'));
 const InternalBookings = lazy(() => import('./pages/InternalBookings'));
+const InternalOutreach = lazy(() => import('./pages/InternalOutreach'));
 const InternalProfilePreview = lazy(() => import('./pages/InternalProfilePreview'));
 const InternalVerification = lazy(() => import('./pages/InternalVerification'));
 const InternalContact = lazy(() => import('./pages/InternalContact'));
@@ -357,6 +358,7 @@ function AppRoutes() {
                 <Route path="/internal" element={<SupportOnly><InternalHome /></SupportOnly>} />
                 <Route path="/internal/access" element={<SupportOnly><InternalAccess /></SupportOnly>} />
                 <Route path="/internal/bookings" element={<SupportOnly><InternalBookings /></SupportOnly>} />
+                <Route path="/internal/outreach" element={<SupportOnly><InternalOutreach /></SupportOnly>} />
                 <Route path="/internal/access/preview/:accountId" element={<SupportOnly><InternalProfilePreview /></SupportOnly>} />
                 <Route path="/internal/verification" element={<SupportOnly><InternalVerification /></SupportOnly>} />
                 <Route path="/internal/contact" element={<SupportOnly><InternalContact /></SupportOnly>} />

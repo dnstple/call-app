@@ -170,101 +170,17 @@ export default function InternalAccess() {
       </header>
       {emailMsg ? <p role="status" style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--muted, #6b625c)' }}>{emailMsg}</p> : null}
 
-      <section className="card section-tight col" style={{ gap: 10, marginTop: 12 }} aria-label="Marketing campaign">
-        <div className="row between" style={{ alignItems: 'center' }}>
-          <h2 className="section-label" style={{ margin: 0 }}>Marketing campaign — invite coordinators/members</h2>
+      <section className="card section-tight col" style={{ gap: 8, marginTop: 12 }} aria-label="Reach out">
+        <div className="row between" style={{ alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <div>
+            <h2 className="section-label" style={{ margin: 0 }}>Reach out</h2>
+            <p className="muted small" style={{ margin: '4px 0 0', maxWidth: 560 }}>
+              All member &amp; companion outreach — book-first-call nudges, incomplete-setup chasers, verify-your-number,
+              finish-your-profile, and companion invite links — now live in one panel, with editable copy and send tracking.
+            </p>
+          </div>
+          <a className="btn btn-primary btn-small" href="#/internal/outreach">Open Reach out →</a>
         </div>
-        <label className="col" style={{ gap: 4, fontSize: 13 }}>
-          Subject line
-          <input
-            className="input"
-            value={mktSubject}
-            onChange={(e) => setMktSubject(e.target.value)}
-            style={{ maxWidth: 420 }}
-          />
-        </label>
-        <div className="row wrap" style={{ gap: 8 }}>
-          <button className="btn btn-ghost btn-small" disabled={mktBusy} onClick={onSyncAudience}>
-            {mktBusy ? <Loader2 size={16} className="spin" aria-hidden="true" /> : null} Sync audience
-          </button>
-          <button className="btn btn-secondary btn-small" disabled={mktBusy} onClick={onMktTest}>
-            Send test to me
-          </button>
-          <button className="btn btn-primary btn-small" disabled={mktBusy} onClick={onMktSend}>
-            Send to everyone…
-          </button>
-        </div>
-        <p className="muted small" style={{ margin: 0 }}>
-          Sync first, send yourself a test, then “Send to everyone” (type SEND to confirm). Recipients can unsubscribe; this uses your marketing audience in Resend.
-        </p>
-
-        <div style={{ borderTop: '1px solid var(--border, #FBE9DE)', margin: '6px 0', paddingTop: 10 }}>
-          <div className="row wrap" style={{ gap: 8, alignItems: 'center' }}>
-            <button className="btn btn-secondary btn-small" disabled={mktBusy} onClick={onNudgeIncomplete}>
-              Notify incomplete companions
-            </button>
-            <span className="muted small">Posts an in-app message (no email) to companions who haven’t finished their profile (photo, sections, consent). Once per companion per day.</span>
-          </div>
-          <div className="row wrap" style={{ gap: 8, alignItems: 'center', marginTop: 8 }}>
-            <button className="btn btn-secondary btn-small" disabled={mktBusy} onClick={onNudgeOnboarding}>
-              Send account-setup reminders
-            </button>
-            <span className="muted small">Emails everyone who started but didn’t finish signing up, asking them to complete their account. Runs automatically every day; this button triggers a run now. Weekly per person, with one-click unsubscribe.</span>
-          </div>
-          <div className="row wrap" style={{ gap: 8, alignItems: 'center', marginTop: 8 }}>
-            <button className="btn btn-secondary btn-small" disabled={mktBusy} onClick={onResendConfirmations}>
-              Resend email confirmations
-            </button>
-            <span className="muted small">For people who signed up but never confirmed their email (no account yet). Sends a magic link that confirms them and signs them in. Runs daily; same cadence &amp; cap.</span>
-          </div>
-          <div className="row wrap" style={{ gap: 8, alignItems: 'center', marginTop: 8 }}>
-            <button className="btn btn-ghost btn-small" disabled={mktBusy} onClick={onFirstCallPreview}>
-              Preview first-call nudge
-            </button>
-            <button className="btn btn-secondary btn-small" disabled={mktBusy} onClick={onFirstCallSend}>
-              Send first-call nudge
-            </button>
-            <span className="muted small">Prompts members with no active membership to book their first call — in-app, email, and text (verified mobiles only). Preview shows the audience first; Send is one-off (skips anyone already nudged, type SEND to confirm).</span>
-          </div>
-          <OnboardingCadencePanel />
-
-          <div style={{ borderTop: '1px solid var(--border, #FBE9DE)', margin: '6px 0', paddingTop: 10 }}>
-            <h2 className="section-label" style={{ margin: '0 0 6px' }}>Companion recruitment — invite members/coordinators</h2>
-            <div className="row wrap" style={{ gap: 8, alignItems: 'center' }}>
-              <button className="btn btn-secondary btn-small" disabled={mktBusy} onClick={onRecruitInApp}>
-                Post in-app message
-              </button>
-              <button className="btn btn-primary btn-small" disabled={mktBusy} onClick={onRecruitEmail}>
-                Email all companions…
-              </button>
-              <span className="muted small">Pushes the “invite people you know and earn from calls with them” prompt to every active companion. In-app is once per day; email (type SEND) is once per companion per day and includes unsubscribe.</span>
-            </div>
-          </div>
-
-          <div style={{ borderTop: '1px solid var(--border, #FBE9DE)', margin: '6px 0', paddingTop: 10 }}>
-            <h2 className="section-label" style={{ margin: '0 0 6px' }}>Verify your mobile — reminder to unverified users</h2>
-            <label className="col" style={{ gap: 4, fontSize: 13, marginBottom: 8 }}>
-              Subject line
-              <input
-                className="input"
-                value={vpSubject}
-                onChange={(e) => setVpSubject(e.target.value)}
-                style={{ maxWidth: 420 }}
-              />
-            </label>
-            <div className="row wrap" style={{ gap: 8, alignItems: 'center' }}>
-              <button className="btn btn-secondary btn-small" disabled={mktBusy} onClick={onVerifyPhoneTest}>
-                Send test to me
-              </button>
-              <button className="btn btn-primary btn-small" disabled={mktBusy} onClick={onVerifyPhoneSend}>
-                Email unverified users…
-              </button>
-              <span className="muted small">Sends a test to your configured test address first, then “Email unverified users” (type SEND) emails everyone whose mobile isn’t verified — members, coordinators and companions. Once per person per day, with one-click unsubscribe.</span>
-            </div>
-          </div>
-        </div>
-
-        {mktMsg ? <p role="status" style={{ margin: 0, fontSize: 13, color: 'var(--muted, #6b625c)' }}>{mktMsg}</p> : null}
       </section>
 
       {/* Dashboard */}

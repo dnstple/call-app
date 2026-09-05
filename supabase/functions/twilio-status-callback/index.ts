@@ -31,6 +31,19 @@ Deno.serve(async (req) => {
     { auth: { persistSession: false } },
   );
   await admin.rpc('record_twilio_status', { p_sid: sid, p_status: status });
+
+  // Mirror terminal delivery status onto the outreach ledger (if this SMS was an
+  // outreach send). Only terminal states, so a later callback never regresses.
+  const s = status.toLowerCase();
+  const mapped = s === 'delivered' ? 'delivered'
+    : s === 'undelivered' ? 'undelivered'
+    : s === 'failed' ? 'failed'
+    : null;
+  if (mapped) {
+    await admin.from('outreach_messages')
+      .update({ status: mapped, updated_at: new Date().toISOString() })
+      .eq('provider_message_id', sid);
+  }
   // Always 200 so Twilio doesn't retry indefinitely (idempotent update anyway).
   return new Response('ok', { status: 200 });
 });

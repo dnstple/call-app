@@ -57,5 +57,9 @@ Deno.serve(async (req) => {
   }
 
   await admin.from('email_notifications').update(patch).eq('provider_message_id', messageId);
+  // Mirror the delivery status onto the outreach ledger (if this email was an outreach send).
+  await admin.from('outreach_messages')
+    .update({ status: mapping.status, updated_at: new Date().toISOString(), ...(patch.last_error_code ? { error: eventType } : {}) })
+    .eq('provider_message_id', messageId);
   return json({ ok: true, status: mapping.status });
 });

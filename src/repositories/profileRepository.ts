@@ -69,32 +69,22 @@ export function validateAvatarFile(file: { size: number; type: string }): string
   return null;
 }
 
-const signedUrlCache = new Map<string, { url: string; expires: number }>();
-
+// Avatars live in a PUBLIC bucket and are served via stable, CDN-cacheable
+// public URLs (not per-render signed URLs). Same URL every time → browsers and
+// the CDN cache each photo, so repeat views cost effectively no egress.
 export async function avatarUrl(path: string | null): Promise<string | undefined> {
   if (!path) return undefined;
-  const cached = signedUrlCache.get(path);
-  if (cached && cached.expires > Date.now()) return cached.url;
-  const { data, error } = await getSupabaseClient()
-    .storage.from(AVATAR_BUCKET)
-    .createSignedUrl(path, 3600);
-  if (error || !data?.signedUrl) return undefined;
-  signedUrlCache.set(path, { url: data.signedUrl, expires: Date.now() + 55 * 60_000 });
-  return data.signedUrl;
+  const { data } = getSupabaseClient().storage.from(AVATAR_BUCKET).getPublicUrl(path);
+  return data?.publicUrl ?? undefined;
 }
 
 async function attachAvatarUrls<T extends { photoUrl?: string; avatarPath?: string | null }>(
   items: T[],
 ): Promise<T[]> {
-  const paths = items.map((i) => i.avatarPath).filter((p): p is string => Boolean(p));
-  if (paths.length === 0) return items;
-  const { data } = await getSupabaseClient()
-    .storage.from(AVATAR_BUCKET)
-    .createSignedUrls(paths, 3600);
-  const byPath = new Map((data ?? []).map((d) => [d.path, d.signedUrl]));
+  const client = getSupabaseClient();
   return items.map((i) =>
-    i.avatarPath && byPath.get(i.avatarPath)
-      ? { ...i, photoUrl: byPath.get(i.avatarPath) as string }
+    i.avatarPath
+      ? { ...i, photoUrl: client.storage.from(AVATAR_BUCKET).getPublicUrl(i.avatarPath).data.publicUrl }
       : i,
   );
 }
@@ -138,6 +128,7 @@ export async function uploadAvatar(profileId: string, file: File): Promise<strin
   const up = await client.storage.from(AVATAR_BUCKET).upload(newPath, payload, {
     contentType,
     upsert: false,
+    cacheControl: '31536000', // 1 year — avatars are immutable (new upload = new path)
   });
   if (up.error) throw mapError(up.error, 'We couldn’t upload that image.');
 
@@ -148,7 +139,6 @@ export async function uploadAvatar(profileId: string, file: File): Promise<strin
     throw mapError(db.error ?? { message: 'permission denied' }, 'We couldn’t save your photo.');
   }
   if (oldPath) await client.storage.from(AVATAR_BUCKET).remove([oldPath]);
-  signedUrlCache.delete(oldPath ?? '');
   return newPath;
 }
 
