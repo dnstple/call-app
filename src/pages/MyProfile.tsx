@@ -26,7 +26,6 @@ import { VerifiedBadge } from '../components/VerifiedBadge';
 import { PhoneVerifyPrompt } from '../components/PhoneVerifyPrompt';
 import { roleLabel } from '../components/Shell';
 import { CompanionCompletionChecklist } from '../components/CompletionChecklist';
-import { VideoVerification } from '../components/VideoVerification';
 import type { Medium, User } from '../types';
 
 const INTEREST_OPTIONS = [
@@ -226,12 +225,8 @@ export default function MyProfile() {
         </section>
       )}
 
-      {/* Video verification (allowlisted companions only; self-hides otherwise). */}
-      {supabase && editable && me.role === 'companion' && (
-        <section className="section-tight">
-          <VideoVerification profileId={me.id} />
-        </section>
-      )}
+      {/* Companion identity-video verification has been switched off entirely
+          (feature removed) — companions are no longer prompted or able to submit. */}
 
       {editing && (
         <EditDialog
