@@ -16,6 +16,7 @@ import { useUnreadTotal } from '../messaging/hooks';
 import { useUnreadNotifications } from '../messaging/NotificationsSupabase';
 import { useIsSupport } from '../state/support';
 import { ToastStack } from './ui';
+import { FeedbackWidget } from './FeedbackWidget';
 import { APP_NAME } from '../config/branding';
 
 /**
@@ -236,6 +237,7 @@ export function Shell({ children }: { children: ReactNode }) {
 
       <BottomNav items={waitlist ? [...waitlistNavForRole(role), SETTINGS] : mobileNavForRole(role)} badgeFor={navBadge} />
 
+      {supabase && <FeedbackWidget />}
       <ToastStack />
     </div>
   );

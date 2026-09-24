@@ -43,3 +43,23 @@ export async function submitCallFeedback(bookingId: string, stars: number, notes
   if (!d.ok) return { ok: false, error: String(d.error ?? 'error') };
   return { ok: true };
 }
+
+/**
+ * Companion platform feedback (rating + free-text + ideas + reach-out consent),
+ * from the permanent feedback widget. Stored via submit_companion_feedback, which
+ * also mirrors to the contact inbox and emails support.
+ */
+export async function submitCompanionFeedback(input: {
+  rating: number;
+  feedback: string;
+  ideas: string;
+  contactOk: boolean;
+}): Promise<{ ok: boolean }> {
+  const { error } = await client().rpc('submit_companion_feedback', {
+    p_rating: input.rating || null,
+    p_feedback: input.feedback.trim() || null,
+    p_ideas: input.ideas.trim() || null,
+    p_contact_ok: input.contactOk,
+  });
+  return { ok: !error };
+}

@@ -46,6 +46,7 @@ const CAMPAIGNS: Record<string, Policy> = {
   companion_verify_phone:       { email: true, sms: 'any',      in_app: true, link: '/#/verify-phone' },
   companion_incomplete_profile: { email: true, sms: 'verified', in_app: true, link: '/#/profile' },
   companion_invite_link:        { email: true, sms: 'verified', in_app: true, link: 'referral' },
+  companion_feedback:           { email: true, sms: 'verified', in_app: true, link: '/#/' },
 };
 
 // ---- inlined: signed one-click unsubscribe (HMAC-SHA256(secret, "acct:category")) ----

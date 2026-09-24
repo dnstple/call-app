@@ -75,6 +75,11 @@ export default function InternalContact() {
                   {new Date(m.created_at).toLocaleString()}
                 </span>
               </div>
+              {m.from_account_id && (
+                <div className="text-secondary" style={{ fontSize: '0.78rem', marginTop: 2 }}>
+                  User id: <code style={{ userSelect: 'all' }}>{m.from_account_id}</code>
+                </div>
+              )}
               <p style={{ margin: '8px 0 12px', whiteSpace: 'pre-wrap' }}>{m.message}</p>
               <div className="row wrap" style={{ gap: 8 }}>
                 {m.email && <ContactReply message={m} />}

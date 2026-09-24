@@ -29,6 +29,7 @@ const ORDER = [
   'companion_verify_phone',
   'companion_incomplete_profile',
   'companion_invite_link',
+  'companion_feedback',
 ];
 
 function when(iso: string | null): string {

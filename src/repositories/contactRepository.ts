@@ -16,6 +16,7 @@ export interface ContactMessage {
   handled: boolean;
   created_at: string;
   from_member: boolean;
+  from_account_id?: string | null;
 }
 export interface ContactList { total: number; limit: number; offset: number; rows: ContactMessage[]; }
 
