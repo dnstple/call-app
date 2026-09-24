@@ -108,6 +108,16 @@ function ContactReply({ message }: { message: ContactMessage }) {
   );
   const [copied, setCopied] = useState(false);
 
+  // Opens Outlook on the web, which composes from whichever account you're signed
+  // into there — sign into info@apricoti so replies send from that address.
+  const openInOutlookWeb = () => {
+    const url = 'https://outlook.office.com/mail/deeplink/compose'
+      + `?to=${encodeURIComponent(message.email ?? '')}`
+      + `&subject=${encodeURIComponent(subject)}`
+      + `&body=${encodeURIComponent(body)}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
+  // Fallback: the OS default mail app (sends from whatever account it defaults to).
   const openInMail = () => {
     const href = `mailto:${encodeURIComponent(message.email ?? '')}`
       + `?subject=${encodeURIComponent(subject)}`
@@ -144,14 +154,15 @@ function ContactReply({ message }: { message: ContactMessage }) {
         <textarea className="input" rows={7} value={body} onChange={(e) => setBody(e.target.value)} />
       </label>
       <div className="row wrap" style={{ gap: 8 }}>
-        <button className="btn btn-primary btn-small" onClick={openInMail}>
-          <Mail size={14} aria-hidden="true" /> Open in your email app
+        <button className="btn btn-primary btn-small" onClick={openInOutlookWeb}>
+          <Mail size={14} aria-hidden="true" /> Open in Outlook (info@)
         </button>
+        <button className="btn btn-ghost btn-small" onClick={openInMail}>Default mail app</button>
         <button className="btn btn-ghost btn-small" onClick={copyBody}>{copied ? 'Copied' : 'Copy message'}</button>
         <button className="btn btn-ghost btn-small" onClick={() => setOpen(false)}>Cancel</button>
       </div>
       <span className="muted small" style={{ margin: 0 }}>
-        Opens a draft in your default mail app (Outlook). Send it there and it’ll appear in your Outlook Sent items.
+        “Open in Outlook” composes on outlook.com — sign into <strong>info@apricoti</strong> there and the reply sends from that address (and appears in its Sent items). “Default mail app” uses your computer’s default account instead.
       </span>
     </div>
   );
