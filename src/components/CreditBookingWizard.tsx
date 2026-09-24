@@ -72,6 +72,15 @@ export function CreditBookingWizard({
           <button className="btn btn-ghost btn-small" onClick={onClose}>Close</button>
         </div>
 
+        <div className="row wrap" style={{ gap: 8, padding: '10px 20px', borderBottom: '1px solid #FBE9DE',
+          justifyContent: 'center', fontSize: 13, color: 'var(--muted, #6b625c)' }}>
+          <span><strong style={{ color: '#201C19' }}>£5</strong> per call</span>
+          <span aria-hidden="true">·</span>
+          <span>Cancel anytime</span>
+          <span aria-hidden="true">·</span>
+          <span>45-minute conversations</span>
+        </div>
+
         <div className="col" style={{ gap: 12, padding: 20, overflowY: 'auto' }}>
           {done ? (
             <div className="col" style={{ gap: 12, textAlign: 'center', padding: '20px 0' }}>
