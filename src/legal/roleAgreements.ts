@@ -25,8 +25,8 @@ const MEMBERSHIP_TERMS: AgreementSection = {
   title: 'Your membership, credits and billing',
   body: [
     'Apricoti membership is a subscription that provides call credits. One credit books a single 45-minute companionship call.',
-    'You begin with a starter week: £25 for your first 3 credits. Seven days later your monthly subscription begins and releases 3 credits each week.',
-    'The monthly price reflects the length of the billing period (for a standard 28-day period this is £100). You can also buy extra credits at £8.33 each.',
+    'You begin with a starter week: £15 for your first 3 credits. Seven days later your monthly subscription begins and releases 3 credits each week.',
+    'The monthly price reflects the length of the billing period (for a standard 28-day period this is £60). You can also buy extra credits at £5 each.',
     '• Credits expire 3 months after they are issued. Any credits not used within 3 months are lost.',
     '• You can cancel at any time. Cancelling stops future renewals; you keep the credits already issued until their own expiry, and your weekly credits continue until the end of the period you have already paid for.',
     '• If a payment fails, new credits pause while payment is retried; credits you already have remain usable.',
@@ -59,7 +59,7 @@ const COMPANION_TERMS: AgreementSection = {
   title: 'How you are paid as a Companion',
   body: [
     'Companions do not set their own prices. Every call is a 45-minute companionship conversation funded by one member credit.',
-    'For each completed call, Apricoti retains a 30% commission of the call fee (the £8.33 credit allocation). The payment processing fee is then deducted from the remainder, and you are paid whatever is left, paid out to your connected payout account in the usual way.',
+    'Every call is funded by one member credit (a £5 call allocation). Apricoti takes no commission: the payment processing fee is deducted from the £5 and you are paid the remainder, paid out to your connected payout account in the usual way.',
     'You are asked to confirm each booked call at least 20 minutes before it starts. If you do not confirm in time, or you confirm but do not attend, the call is passed to the Apricoti team and you are not paid for that call.',
     'You must attend confirmed calls reliably and treat every Member with warmth and respect.',
   ],
@@ -71,8 +71,8 @@ export const MEMBER_AGREEMENT: RoleAgreement = {
   key: 'apricoti_member_agreement',
   role: 'member',
   title: 'Apricoti Member Agreement',
-  version: 1,
-  effective: 'Version 1 — 2026',
+  version: 2,
+  effective: 'Version 2 — 2026',
   sections: [MEMBERSHIP_TERMS, BOOKING_TERMS, ...AGREEMENT_SECTIONS],
 };
 
@@ -80,8 +80,8 @@ export const COORDINATOR_AGREEMENT: RoleAgreement = {
   key: 'apricoti_coordinator_agreement',
   role: 'coordinator',
   title: 'Apricoti Coordinator Agreement',
-  version: 1,
-  effective: 'Version 1 — 2026',
+  version: 2,
+  effective: 'Version 2 — 2026',
   sections: [COORDINATOR_TERMS, MEMBERSHIP_TERMS, BOOKING_TERMS, ...AGREEMENT_SECTIONS],
 };
 
@@ -89,8 +89,8 @@ export const COMPANION_AGREEMENT: RoleAgreement = {
   key: 'apricoti_companion_agreement',
   role: 'companion',
   title: 'Apricoti Companion Agreement',
-  version: 2,
-  effective: 'Version 2 — 2026',
+  version: 3,
+  effective: 'Version 3 — 2026',
   sections: [COMPANION_TERMS, BOOKING_TERMS, ...AGREEMENT_SECTIONS],
 };
 

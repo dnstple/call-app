@@ -92,7 +92,7 @@ export const AGREEMENT_SECTIONS: AgreementSection[] = [
     id: 'payments',
     title: '7. Payments, prices, payouts and refunds',
     body: [
-      'Trial conversations are a fixed 30 minutes for £5. Standard conversation prices are set by the Companion and shown before you book. You pay the price shown; Apricoti deducts the payment processor’s fee and its commission, and the Companion receives the remainder.',
+      'Each call is a fixed 45-minute companionship conversation funded by one £5 member credit. Apricoti takes no commission: the payment processor’s fee is deducted from the £5 and the Companion receives the remainder.',
       'Payments are processed by Stripe. Companion payouts are made to the Companion’s connected Stripe account. Apricoti does not store your full card details.',
       'Refunds, cancellations and disputes are handled in line with our in-app processes. Trial, cancelled, refunded, disputed or unpaid conversations may not count towards any reward or milestone.',
       'You authorise Apricoti to take payment for conversations you book, and (for Companions) you authorise payouts of amounts genuinely earned, subject to holds where a concern, dispute or review is open.',

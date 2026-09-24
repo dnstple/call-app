@@ -90,7 +90,7 @@ export default function LandingPage() {
             <p className="landing-lede">{c.hero.lede}</p>
 
             <div className="landing-cta-row">
-              <Link to={memberTo} className="btn btn-primary btn-large">Start your first week — £25</Link>
+              <Link to={memberTo} className="btn btn-primary btn-large">Start your first week — £15</Link>
               <Link to={companionTo} className="btn btn-secondary btn-large">Become a Companion</Link>
             </div>
             <p className="landing-fineprint">{c.hero.fineprint}</p>
@@ -269,7 +269,7 @@ export default function LandingPage() {
           <h2>Start with one conversation.</h2>
           <p className="landing-center-lede">Explore Companions, choose who feels right, and arrange a friendly video conversation at a time that works. No pressure to continue — the first conversation is simply a chance to see how it feels.</p>
           <div className="landing-cta-row landing-cta-center">
-            <Link to={memberTo} className="btn btn-primary btn-large">Start your first week — £25</Link>
+            <Link to={memberTo} className="btn btn-primary btn-large">Start your first week — £15</Link>
             <Link to={companionTo} className="btn btn-secondary btn-large">Become a Companion</Link>
           </div>
         </div>

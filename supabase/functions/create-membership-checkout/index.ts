@@ -22,7 +22,7 @@ const CORS = {
 const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } });
 
-const STARTER_MINOR = 2500;   // £25.00 starter week (3 credits)
+const STARTER_MINOR = 1500;   // £15.00 starter week (3 credits at £5 each)
 
 function resolveOrigin(requested: string): string {
   const allowed = (Deno.env.get('APP_ORIGINS') ?? '').split(',').map((s) => s.trim()).filter(Boolean);

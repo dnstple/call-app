@@ -47,6 +47,7 @@ import { clearDraft, demoData, loadDraft, markSignupSeen, saveDraft } from './st
 import { createAccountsFromSignup, type CreatedAccounts } from './complete';
 import { beginMembership } from '../repositories/membershipRepository';
 import { completeSupabaseSignup, saveSignupSource, recordSignupStep, clearSignupSession } from './completeSupabase';
+import { SignupHelpCapture } from './SignupHelpCapture';
 import { CompanionVerifyStep } from './CompanionVerifyStep';
 import { isSupabaseMode } from '../config/dataMode';
 import { useAuth } from '../auth/AuthProvider';
@@ -91,6 +92,7 @@ export default function SignupWizard() {
   const [attempted, setAttempted] = useState(false);
   const [created, setCreated] = useState<CreatedAccounts | null>(null);
   const [phoneVerifiedLocal, setPhoneVerifiedLocal] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
   const [showCustomInterest, setShowCustomInterest] = useState(() => Boolean(loadDraft()?.data.customInterest));
   const [showSpecificTimes, setShowSpecificTimes] = useState(false);
   const [showCustomPackage, setShowCustomPackage] = useState(false);
@@ -427,6 +429,14 @@ export default function SignupWizard() {
             onNext={next}
             error={error}
           >
+            <button
+              type="button"
+              onClick={() => setShowHelp(true)}
+              style={{ alignSelf: 'flex-start', background: 'none', border: 'none', padding: 0, marginBottom: 8,
+                color: 'var(--muted, #6b625c)', textDecoration: 'underline', cursor: 'pointer', fontSize: 13 }}
+            >
+              Still have more questions?
+            </button>
             <div className="grid-2" style={{ gap: 14 }}>
               <FormField id="su-first" label="First name" value={data.firstName} onChange={(v) => patch({ firstName: v })} error={fieldError(!data.firstName.trim(), 'Needed')} />
               <FormField id="su-last" label="Last name" value={data.lastName} onChange={(v) => patch({ lastName: v })} />
@@ -890,6 +900,7 @@ export default function SignupWizard() {
 
         {step === 'success' && <SuccessStep data={data} created={created} />}
       </div>
+      {showHelp && <SignupHelpCapture onClose={() => setShowHelp(false)} />}
     </SignupLayout>
   );
 }
@@ -1320,10 +1331,10 @@ function StartMembershipButton({ created, role }: { created: CreatedAccounts | n
   return (
     <>
       <button className="btn btn-primary btn-block" disabled={busy} onClick={start}>
-        {busy ? 'Starting…' : 'Start your first week — £25'}
+        {busy ? 'Starting…' : 'Start your first week — £15'}
       </button>
       <p className="muted" style={{ margin: 0, fontSize: 12 }}>
-        £25 for your first 3 credits. Your monthly membership begins 7 days later. Each credit books one 45-minute call; credits expire 3 months after they’re issued.
+        £15 for your first 3 credits. Your monthly membership begins 7 days later. Each credit books one 45-minute call; credits expire 3 months after they’re issued.
       </p>
       {err && <p style={{ margin: 0, color: 'var(--deep-apricot, #C8643D)', fontSize: 13 }}>{err}</p>}
     </>

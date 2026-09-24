@@ -83,7 +83,7 @@ export function CreditBookingWizard({
             <div className="col" style={{ gap: 10, textAlign: 'center', padding: '10px 0' }}>
               <strong>No credits available</strong>
               <p className="muted" style={{ margin: 0 }}>You need a call credit to book. Your membership adds 3 credits each week — or start your membership now.</p>
-              <button className="btn btn-primary" disabled={busy} onClick={startMembership}>Start your first week — £25</button>
+              <button className="btn btn-primary" disabled={busy} onClick={startMembership}>Start your first week — £15</button>
             </div>
           ) : (
             <>

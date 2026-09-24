@@ -375,7 +375,7 @@ export default function AvailabilityRates() {
         <p className="muted">
           Members pay a monthly Apricoti membership, so you don’t set your own prices. Every call is a
           45-minute conversation funded by one member credit. For each completed call you’re paid the
-          credit allocation (£8.33) less the payment processing fee and Apricoti’s 15% commission, paid to
+          £5 credit allocation less the payment processing fee — Apricoti takes no commission — paid to
           your connected payout account in the usual way.
         </p>
       </section>

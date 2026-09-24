@@ -7,7 +7,7 @@
  */
 import { NavLink } from 'react-router-dom';
 import {
-  Users, Mail, ClipboardList, Scale, Calculator, SlidersHorizontal, ShieldCheck, Video, CalendarClock, Banknote, Megaphone,
+  Users, Mail, ClipboardList, Scale, Calculator, SlidersHorizontal, ShieldCheck, Video, CalendarClock, Banknote, Megaphone, Send,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -20,6 +20,8 @@ const TOOLS: Tool[] = [
     body: 'Every booking on the platform — kind, time and costs.' },
   { to: '/internal/outreach', title: 'Reach out', Icon: Megaphone,
     body: 'Email, text & in-app campaigns — nudges, invites, tracking.' },
+  { to: '/internal/broadcast', title: 'Broadcast', Icon: Send,
+    body: 'One-off email or text to member/companion/coordinator segments.' },
   { to: '/internal/verification', title: 'Video verification', Icon: Video,
     body: 'Review companion identity videos and approve or reject.' },
   { to: '/internal/contact', title: 'Contact messages', Icon: Mail,

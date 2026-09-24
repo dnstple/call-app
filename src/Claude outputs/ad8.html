@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root{
+    --bg:#FCFAF7; --surface:#FFFFFF;
+    --ink:#201C19; --ink-soft:#6F6A65; --ink-muted:#8C8680;
+    --brand:#F2A272; --brand-strong:#C8643D; --brand-soft:#FBE9DE; --brand-subtle:#FDF3EC;
+    --sage:#5F7D64; --sage-soft:#E7F1EB;
+    --border:#E5E0DA;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body{width:1080px;height:1350px;}
+  body{font-family:'Inter Variable','Inter',sans-serif;background:var(--bg);
+    color:var(--ink);-webkit-font-smoothing:antialiased;}
+  .canvas{position:relative;width:1080px;height:1350px;padding:64px 66px 54px;
+    display:flex;flex-direction:column;overflow:hidden;}
+
+  .blob{position:absolute;border-radius:50%;}
+  .blob-a{width:660px;height:660px;right:-270px;top:-260px;
+    background:radial-gradient(circle at 40% 45%, rgba(242,162,114,.30), rgba(242,162,114,0) 64%);}
+  .blob-b{width:900px;height:900px;left:-400px;bottom:-440px;
+    background:radial-gradient(circle at 55% 45%, rgba(95,125,100,.12), rgba(95,125,100,0) 62%);}
+
+  header{display:flex;align-items:center;justify-content:space-between;position:relative;z-index:2;}
+  .brand{display:flex;align-items:center;gap:13px;}
+  .brand svg{width:58px;height:58px;display:block;}
+  .wordmark{font-size:33px;font-weight:700;letter-spacing:-.02em;}
+  .pill{border:1.5px solid var(--border);border-radius:999px;padding:11px 22px;
+    font-size:19px;font-weight:600;color:var(--ink-soft);background:var(--surface);}
+
+  .head{margin-top:46px;position:relative;z-index:2;}
+  h1{font-size:116px;line-height:.97;font-weight:800;letter-spacing:-.035em;
+     text-transform:uppercase;}
+  h1 .accent{color:var(--brand-strong);
+    background-image:linear-gradient(rgba(242,162,114,.5),rgba(242,162,114,.5));
+    background-size:100% 16px;background-position:0 calc(100% - 9px);
+    background-repeat:no-repeat;-webkit-box-decoration-break:clone;
+    padding:0 6px;margin:0 -6px;}
+  .rule{width:112px;height:5px;border-radius:3px;background:var(--brand);margin-top:34px;}
+
+  .lead{margin-top:32px;font-size:38px;line-height:1.28;font-weight:600;
+    letter-spacing:-.02em;max-width:900px;}
+  .body{margin-top:18px;font-size:28px;line-height:1.5;color:var(--ink-soft);
+    max-width:905px;letter-spacing:-.005em;}
+
+  .art{position:relative;z-index:2;flex:1;display:flex;align-items:center;justify-content:center;}
+  .art svg{width:770px;height:auto;display:block;}
+
+  .price{position:relative;z-index:2;display:flex;align-items:center;gap:30px;
+    background:var(--brand-soft);border-radius:28px;padding:26px 38px;}
+  .price .amt{display:flex;align-items:baseline;gap:7px;flex:0 0 auto;white-space:nowrap;}
+  .price .num{font-size:78px;font-weight:800;letter-spacing:-.05em;color:var(--brand-strong);line-height:1;}
+  .price .per{font-size:27px;font-weight:700;color:var(--brand-strong);opacity:.85;}
+  .price .rule2{width:2px;align-self:stretch;background:rgba(200,100,61,.24);border-radius:2px;}
+  .price .what{font-size:33px;font-weight:700;letter-spacing:-.018em;line-height:1.25;}
+  .price .whatsub{margin-top:6px;font-size:23px;font-weight:500;color:var(--ink-soft);}
+
+  .chips{position:relative;z-index:2;margin-top:22px;display:flex;gap:13px;justify-content:center;}
+  .chip{background:var(--sage-soft);color:#3F5A45;border-radius:999px;
+    padding:15px 26px;font-size:24px;font-weight:700;letter-spacing:-.01em;white-space:nowrap;}
+
+  .cta{position:relative;z-index:2;margin-top:36px;display:flex;align-items:center;
+    justify-content:center;gap:16px;font-size:42px;font-weight:800;letter-spacing:-.025em;
+    color:var(--brand-strong);}
+  .cta svg{width:38px;height:38px;fill:none;stroke:var(--brand-strong);stroke-width:3;
+    stroke-linecap:round;stroke-linejoin:round;}
+
+  .small{position:relative;z-index:2;margin-top:26px;text-align:center;font-size:19px;
+    line-height:1.45;font-weight:500;color:var(--ink-muted);}
+</style>
+</head>
+<body>
+<div class="canvas">
+  <div class="blob blob-a"></div>
+  <div class="blob blob-b"></div>
+
+  <header>
+    <div class="brand">
+      <svg viewBox="56 45 400 445" xmlns="http://www.w3.org/2000/svg">
+        <path d="M296 148 c-6 -34 -2 -62 18 -84" fill="none" stroke="#8fb173" stroke-width="26" stroke-linecap="round"/>
+        <path d="M282 122 C230 60 140 52 62 96 c60 52 158 64 220 26 z" fill="#a2c173"/>
+        <ellipse cx="238" cy="316" rx="158" ry="168" fill="#f0975c"/>
+        <ellipse cx="330" cy="308" rx="120" ry="158" fill="#f0975c"/>
+        <path d="M330 172 c34 60 40 190 -10 262 c-12 -6 -16 -18 -10 -34 c30 -66 28 -160 6 -212 c-4 -10 6 -18 14 -16 z" fill="#FCFAF7"/>
+      </svg>
+      <div class="wordmark">apricoti</div>
+    </div>
+    <div class="pill">Real people · not AI</div>
+  </header>
+
+  <div class="head">
+    <h1>This is <span class="accent">not</span><br>therapy.</h1>
+    <div class="rule"></div>
+    <p class="lead">Sometimes you just want someone to talk to.</p>
+    <p class="body">Apricoti connects you with a real person for regular one-to-one conversations about whatever's on your mind — your week, work, relationships, ideas, problems, or just life.</p>
+  </div>
+
+  <div class="art">
+  <svg viewBox="0 0 760 244" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <clipPath id="cA"><circle cx="116" cy="112" r="104"/></clipPath>
+      <clipPath id="cB"><circle cx="644" cy="112" r="104"/></clipPath>
+      <clipPath id="fA"><circle cx="116" cy="106" r="40"/></clipPath>
+      <clipPath id="fB"><circle cx="644" cy="108" r="40"/></clipPath>
+    </defs>
+
+    <ellipse cx="116" cy="228" rx="88" ry="11" fill="#201C19" opacity=".07"/>
+    <ellipse cx="644" cy="228" rx="88" ry="11" fill="#201C19" opacity=".07"/>
+
+    <!-- left -->
+    <circle cx="116" cy="112" r="104" fill="#E7F1EB"/>
+    <g clip-path="url(#cA)">
+      <circle cx="116" cy="238" r="136" fill="#D3E5D8" opacity=".85"/>
+      <path d="M34 236 C34 178 70 156 116 156 C162 156 198 178 198 236 Z" fill="#5F7D64"/>
+      <rect x="104" y="134" width="24" height="30" rx="12" fill="#C98F65"/>
+      <circle cx="116" cy="86" r="45" fill="#2E2622"/>
+      <circle cx="116" cy="106" r="40" fill="#DFA97C"/>
+      <g clip-path="url(#fA)">
+        <path d="M74 82 C84 54 148 54 158 84 C156 94 134 82 116 82 C98 82 80 88 74 88 Z" fill="#2E2622"/>
+      </g>
+      <path d="M96 96 q9 -5 18 -1" fill="none" stroke="#2E2622" stroke-width="4" stroke-linecap="round"/>
+      <path d="M118 95 q9 -4 18 1" fill="none" stroke="#2E2622" stroke-width="4" stroke-linecap="round"/>
+      <path d="M97 110 q6 -8 12 0" fill="none" stroke="#201C19" stroke-width="4" stroke-linecap="round"/>
+      <path d="M123 110 q6 -8 12 0" fill="none" stroke="#201C19" stroke-width="4" stroke-linecap="round"/>
+      <path d="M103 127 q13 13 26 0" fill="none" stroke="#201C19" stroke-width="4" stroke-linecap="round"/>
+      <path d="M40 234 C30 180 46 146 72 130" fill="none" stroke="#4C6650" stroke-width="25" stroke-linecap="round"/>
+      <circle cx="76" cy="127" r="15" fill="#C98F65"/>
+      <g transform="rotate(-22 76 122)">
+        <rect x="63" y="94" width="25" height="54" rx="9" fill="#201C19"/>
+        <rect x="68" y="102" width="15" height="33" rx="5" fill="#4A423C"/>
+      </g>
+    </g>
+
+    <!-- right -->
+    <circle cx="644" cy="112" r="104" fill="#FBE9DE"/>
+    <g clip-path="url(#cB)">
+      <circle cx="644" cy="238" r="136" fill="#F3D6C4" opacity=".8"/>
+      <path d="M562 236 C562 178 598 156 644 156 C690 156 726 178 726 236 Z" fill="#F2A272"/>
+      <rect x="632" y="136" width="24" height="30" rx="12" fill="#D19A6E"/>
+      <circle cx="644" cy="88" r="48" fill="#3A2E28"/>
+      <circle cx="604" cy="124" r="22" fill="#3A2E28"/>
+      <circle cx="684" cy="124" r="22" fill="#3A2E28"/>
+      <circle cx="688" cy="66" r="17" fill="#3A2E28"/>
+      <circle cx="644" cy="108" r="40" fill="#E5B183"/>
+      <g clip-path="url(#fB)">
+        <path d="M602 84 C612 56 676 56 686 86 C684 96 662 84 642 85 C624 86 608 90 602 90 Z" fill="#3A2E28"/>
+      </g>
+      <path d="M625 112 q6 -8 12 0" fill="none" stroke="#201C19" stroke-width="4" stroke-linecap="round"/>
+      <path d="M651 112 q6 -8 12 0" fill="none" stroke="#201C19" stroke-width="4" stroke-linecap="round"/>
+      <path d="M631 129 q13 13 26 0" fill="none" stroke="#201C19" stroke-width="4" stroke-linecap="round"/>
+      <circle cx="618" cy="126" r="7" fill="#C8643D" opacity=".3"/>
+      <circle cx="670" cy="126" r="7" fill="#C8643D" opacity=".3"/>
+      <path d="M720 234 C730 180 714 148 688 132" fill="none" stroke="#DE8354" stroke-width="25" stroke-linecap="round"/>
+      <circle cx="684" cy="129" r="15" fill="#D19A6E"/>
+      <g transform="rotate(22 684 124)">
+        <rect x="672" y="96" width="25" height="54" rx="9" fill="#201C19"/>
+        <rect x="677" y="104" width="15" height="33" rx="5" fill="#4A423C"/>
+      </g>
+    </g>
+
+    <!-- centre: phone -->
+    <circle cx="380" cy="112" r="45" fill="#FCFAF7"/>
+    <circle cx="380" cy="112" r="45" fill="none" stroke="#5F7D64" stroke-width="3.5"/>
+    <g transform="translate(380 112) scale(1.75) translate(-12 -12)">
+      <path d="M6.2 3.5h3.1l1.6 4-2 1.3a11.5 11.5 0 0 0 5.4 5.4l1.3-2 4 1.6v3.1a2 2 0 0 1-2.2 2A17.5 17.5 0 0 1 4.2 5.7a2 2 0 0 1 2-2.2Z"
+            fill="none" stroke="#5F7D64" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+
+    <!-- soft waves -->
+    <g stroke="#5F7D64" stroke-width="4" fill="none" stroke-linecap="round" opacity=".45">
+      <path d="M256 66 q12 -12 24 0"/>
+      <path d="M244 52 q18 -18 36 0" opacity=".62"/>
+      <path d="M504 66 q-12 -12 -24 0"/>
+      <path d="M516 52 q-18 -18 -36 0" opacity=".62"/>
+    </g>
+  </svg>
+  </div>
+
+  <div class="price">
+    <div class="amt"><div class="num">£25</div><div class="per">/ week</div></div>
+    <div class="rule2"></div>
+    <div>
+      <div class="what">Three 45-minute conversations</div>
+      <div class="whatsub">Every week, with the same Companion</div>
+    </div>
+  </div>
+
+  <div class="chips">
+    <div class="chip">Real conversation</div>
+    <div class="chip">Warm and informal</div>
+    <div class="chip">Cancel anytime</div>
+  </div>
+
+  <div class="cta">
+    Find your companion
+    <svg viewBox="0 0 24 24"><path d="M4.5 12h15M13 5.5 19.5 12 13 18.5"/></svg>
+  </div>
+
+  <div class="small">Social companionship, not therapy, counselling or medical care. For over-18s.</div>
+</div>
+</body>
+</html>
