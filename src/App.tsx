@@ -49,6 +49,7 @@ const InternalAccess = lazy(() => import('./pages/InternalAccess'));
 const InternalBookings = lazy(() => import('./pages/InternalBookings'));
 const InternalOutreach = lazy(() => import('./pages/InternalOutreach'));
 const InternalBroadcast = lazy(() => import('./pages/InternalBroadcast'));
+const UgcLanding = lazy(() => import('./pages/UgcLanding'));
 const InternalProfilePreview = lazy(() => import('./pages/InternalProfilePreview'));
 const InternalVerification = lazy(() => import('./pages/InternalVerification'));
 const InternalContact = lazy(() => import('./pages/InternalContact'));
@@ -279,6 +280,9 @@ function AppRoutes() {
       <Route path="/privacy" element={<LegalPage docKey="privacy" />} />
       <Route path="/terms" element={<LegalPage docKey="terms" />} />
       <Route path="/referral-terms" element={<LegalPage docKey="referral-terms" />} />
+
+      {/* Public UGC creator recruitment landing (linked from broadcasts). */}
+      <Route path="/ugc" element={<UgcLanding />} />
 
       {/* Sign-up wizard renders outside the main shell */}
       <Route path="/signup" element={<SignupWizard />} />

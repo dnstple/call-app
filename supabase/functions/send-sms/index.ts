@@ -62,6 +62,7 @@ Deno.serve(async (req) => {
   );
 
   // Auth: cron secret OR support-admin bearer.
+  let callerId = '';
   const cronSecret = Deno.env.get('BILLING_CRON_SECRET') ?? '';
   const isInternal = cronSecret.length > 0 && (req.headers.get('x-billing-secret') ?? '') === cronSecret;
   if (!isInternal) {
@@ -76,9 +77,10 @@ Deno.serve(async (req) => {
     const { data: adminRow } = await admin.from('support_admins')
       .select('account_id').eq('account_id', userData.user.id).maybeSingle();
     if (!adminRow) return json({ error: 'forbidden' }, 403);
+    callerId = userData.user.id;
   }
 
-  let to = ''; let since = ''; let body = ''; let dryRun = false; let source = 'verified';
+  let to = ''; let since = ''; let body = ''; let dryRun = false; let source = 'verified'; let selfTest = false;
   let roles: string[] = [];
   try {
     const b = await req.json();
@@ -86,6 +88,7 @@ Deno.serve(async (req) => {
     since = String(b?.since ?? '');
     body = String(b?.body ?? '');
     dryRun = b?.dryRun === true;
+    selfTest = b?.selfTest === true;
     if (Array.isArray(b?.roles)) roles = b.roles.map((r: unknown) => String(r)).filter(Boolean);
     // 'verified' (default) = confirmed mobiles; 'unverified' = numbers typed at the
     // verify step but never confirmed; 'all' = both.
@@ -96,7 +99,13 @@ Deno.serve(async (req) => {
 
   // Build the recipient list.
   let recipients: string[] = [];
-  if (to) {
+  if (selfTest) {
+    if (!callerId) return json({ error: 'no_self', detail: 'Self-test requires a signed-in admin.' }, 400);
+    const { data: acct } = await admin.from('accounts').select('phone_e164').eq('id', callerId).maybeSingle();
+    const phone = (acct as { phone_e164?: string | null } | null)?.phone_e164 ?? '';
+    if (!phone) return json({ error: 'no_self_phone', detail: 'Your account has no verified mobile to test to.' }, 400);
+    recipients = [phone];
+  } else if (to) {
     recipients = [to];
   } else if (roles.length > 0) {
     const { data, error } = await admin.rpc('broadcast_recipients_sms', { p_roles: roles });

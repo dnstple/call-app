@@ -25,9 +25,13 @@ export async function broadcast(opts: {
   subject?: string;
   body: string;
   dryRun?: boolean;
+  selfTest?: boolean;
 }): Promise<BroadcastResult> {
   const fn = opts.channel === 'email' ? 'send-email' : 'send-sms';
-  const payload: Record<string, unknown> = { roles: opts.roles, body: opts.body, dryRun: opts.dryRun ?? false };
+  const payload: Record<string, unknown> = {
+    body: opts.body, dryRun: opts.dryRun ?? false, selfTest: opts.selfTest ?? false,
+    ...(opts.selfTest ? {} : { roles: opts.roles }),
+  };
   if (opts.channel === 'email') payload.subject = opts.subject ?? '';
 
   const { data, error } = await db().functions.invoke(fn, { body: payload });

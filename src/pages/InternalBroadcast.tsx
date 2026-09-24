@@ -31,7 +31,8 @@ export default function InternalBroadcast() {
     setRoles((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
 
   const roleList = () => Array.from(roles);
-  const canSend = roles.size > 0 && body.trim().length > 0 && (channel === 'text' || subject.trim().length > 0);
+  const hasContent = body.trim().length > 0 && (channel === 'text' || subject.trim().length > 0);
+  const canSend = roles.size > 0 && hasContent;
 
   const run = async (dryRun: boolean) => {
     if (!canSend) return;
@@ -42,6 +43,14 @@ export default function InternalBroadcast() {
     setBusy(true); setResult(null);
     try {
       setResult(await broadcast({ roles: roleList(), channel, subject, body, dryRun }));
+    } finally { setBusy(false); }
+  };
+
+  const runSelfTest = async () => {
+    if (!hasContent) return;
+    setBusy(true); setResult(null);
+    try {
+      setResult(await broadcast({ roles: [], channel, subject, body, selfTest: true }));
     } finally { setBusy(false); }
   };
 
@@ -115,6 +124,10 @@ export default function InternalBroadcast() {
         </div>
 
         <div className="row wrap" style={{ gap: 8 }}>
+          <button className="btn btn-ghost btn-small" disabled={busy || !hasContent} onClick={() => void runSelfTest()}
+            title="Send only to your own email/mobile">
+            Test to me
+          </button>
           <button className="btn btn-secondary btn-small" disabled={busy || !canSend} onClick={() => void run(true)}>
             <Eye size={14} aria-hidden="true" /> Preview count
           </button>

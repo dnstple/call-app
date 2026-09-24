@@ -86,6 +86,7 @@ Deno.serve(async (req) => {
     { auth: { persistSession: false } },
   );
 
+  let callerId = ''; let callerEmail = '';
   const cronSecret = Deno.env.get('BILLING_CRON_SECRET') ?? '';
   const isInternal = cronSecret.length > 0 && (req.headers.get('x-billing-secret') ?? '') === cronSecret;
   if (!isInternal) {
@@ -100,9 +101,11 @@ Deno.serve(async (req) => {
     const { data: adminRow } = await admin.from('support_admins')
       .select('account_id').eq('account_id', userData.user.id).maybeSingle();
     if (!adminRow) return json({ error: 'forbidden' }, 403);
+    callerId = userData.user.id;
+    callerEmail = userData.user.email ?? '';
   }
 
-  let to = ''; let since = ''; let subject = ''; let body = ''; let dryRun = false;
+  let to = ''; let since = ''; let subject = ''; let body = ''; let dryRun = false; let selfTest = false;
   let roles: string[] = [];
   try {
     const b = await req.json();
@@ -111,6 +114,7 @@ Deno.serve(async (req) => {
     subject = String(b?.subject ?? '');
     body = String(b?.body ?? '');
     dryRun = b?.dryRun === true;
+    selfTest = b?.selfTest === true;
     if (Array.isArray(b?.roles)) roles = b.roles.map((r: unknown) => String(r)).filter(Boolean);
   } catch { /* no body */ }
 
@@ -118,7 +122,10 @@ Deno.serve(async (req) => {
 
   // Recipients: [{ account_id, email }]
   let recipients: { account_id: string | null; email: string }[] = [];
-  if (to) {
+  if (selfTest) {
+    if (!callerEmail) return json({ error: 'no_self_email', detail: 'Your account has no email to test to.' }, 400);
+    recipients = [{ account_id: callerId || null, email: callerEmail }];
+  } else if (to) {
     recipients = [{ account_id: null, email: to }];
   } else if (roles.length > 0) {
     const { data, error } = await admin.rpc('broadcast_recipients_email', { p_roles: roles });
