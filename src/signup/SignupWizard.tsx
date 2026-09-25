@@ -51,6 +51,7 @@ import { SignupHelpCapture } from './SignupHelpCapture';
 import { CompanionVerifyStep } from './CompanionVerifyStep';
 import { isSupabaseMode } from '../config/dataMode';
 import { useAuth } from '../auth/AuthProvider';
+import { useAccess } from '../state/access';
 import { AuthAppError } from '../auth/authErrors';
 
 /** Self-arranging Members ARE part of the primary flow: someone can set up
@@ -72,6 +73,7 @@ export default function SignupWizard() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const auth = useAuth();
+  const access = useAccess();
   const supabase = isSupabaseMode();
   const namespace = supabase && auth.user ? auth.user.id : undefined;
 
@@ -267,6 +269,9 @@ export default function SignupWizard() {
             setCreated(result);
             await auth.markOnboardingComplete();
             await auth.refreshProfiles();
+            // Re-fetch the access snapshot now the profile exists, so the member
+            // is recognised as full-access immediately (no manual refresh needed).
+            access.reload();
             markSignupSeen();
             clearDraft(namespace);
             clearSignupSession();
