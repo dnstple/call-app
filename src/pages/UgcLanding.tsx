@@ -8,9 +8,14 @@ import { type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { Video, PoundSterling, TrendingUp, CheckCircle2 } from 'lucide-react';
 
-// TODO: replace with your video-collection form link (e.g. a Google Form with a
-// file-upload question, a Tally form, or a Dropbox File Request).
-const UGC_SUBMIT_URL = 'https://forms.gle/your-ugc-form';
+// Where companions upload their video. Set this to your Dropbox File Request
+// link (recommended — no account needed), a Tally form, or a Google Form.
+// Can also be set without a code change via the VITE_UGC_SUBMIT_URL env var.
+const UGC_SUBMIT_URL = (import.meta.env.VITE_UGC_SUBMIT_URL as string | undefined)?.trim()
+  || 'https://www.dropbox.com/request/REPLACE_ME';
+
+// True until a real destination is set, so we never show a broken link.
+const SUBMIT_READY = /^https?:\/\//.test(UGC_SUBMIT_URL) && !/REPLACE_ME|your-ugc-form/.test(UGC_SUBMIT_URL);
 
 export default function UgcLanding() {
   return (
@@ -24,10 +29,9 @@ export default function UgcLanding() {
         </p>
       </div>
 
-      <div className="row" style={{ justifyContent: 'center', marginBottom: 28 }}>
-        <a className="btn btn-primary btn-large" href={UGC_SUBMIT_URL} target="_blank" rel="noopener noreferrer">
-          <Video size={18} aria-hidden="true" /> Submit your video
-        </a>
+      <div className="row col" style={{ justifyContent: 'center', alignItems: 'center', marginBottom: 28, gap: 6 }}>
+        <SubmitCta className="btn btn-primary btn-large" label="Submit your video" withIcon />
+        {!SUBMIT_READY && <span className="muted small">Video uploads are opening very soon — check back shortly.</span>}
       </div>
 
       <section className="card col" style={{ gap: 16, marginBottom: 20 }}>
@@ -55,10 +59,25 @@ export default function UgcLanding() {
       </section>
 
       <div className="row" style={{ justifyContent: 'center', gap: 12 }}>
-        <a className="btn btn-primary" href={UGC_SUBMIT_URL} target="_blank" rel="noopener noreferrer">Submit your video</a>
+        <SubmitCta className="btn btn-primary" label="Submit your video" />
         <Link className="btn btn-ghost" to="/">Back to Apricoti</Link>
       </div>
     </div>
+  );
+}
+
+function SubmitCta({ className, label, withIcon }: { className: string; label: string; withIcon?: boolean }) {
+  if (!SUBMIT_READY) {
+    return (
+      <button type="button" className={className} disabled title="Video uploads are opening soon">
+        {withIcon && <Video size={18} aria-hidden="true" />} {label}
+      </button>
+    );
+  }
+  return (
+    <a className={className} href={UGC_SUBMIT_URL} target="_blank" rel="noopener noreferrer">
+      {withIcon && <Video size={18} aria-hidden="true" />} {label}
+    </a>
   );
 }
 
