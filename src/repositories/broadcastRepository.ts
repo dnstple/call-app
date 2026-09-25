@@ -35,7 +35,16 @@ export async function broadcast(opts: {
   if (opts.channel === 'email') payload.subject = opts.subject ?? '';
 
   const { data, error } = await db().functions.invoke(fn, { body: payload });
-  if (error) return { ok: false, message: 'The send could not be started. Please try again.' };
+  if (error) {
+    // Surface the function's real error body (e.g. no_self_phone, need_to_since_or_roles).
+    let detail = '';
+    try {
+      const ctx = (error as { context?: { json?: () => Promise<Record<string, unknown>> } }).context;
+      const b = ctx?.json ? await ctx.json() : undefined;
+      detail = String(b?.error ?? b?.detail ?? '');
+    } catch { /* ignore */ }
+    return { ok: false, message: detail ? `Couldn’t send: ${detail}` : 'The send could not be started. Please try again.' };
+  }
   const r = (data ?? {}) as { ok?: boolean; dryRun?: boolean; audience?: number; sent?: number; failed?: number; errors?: string[]; error?: string };
   if (!r.ok) return { ok: false, message: r.error ? `Error: ${r.error}` : 'The send did not run.' };
   if (r.dryRun) return { ok: true, audience: r.audience, message: `${r.audience ?? 0} recipient(s) would be contacted. Nothing sent.` };
