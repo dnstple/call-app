@@ -12,7 +12,7 @@ import { Video, PoundSterling, TrendingUp, CheckCircle2 } from 'lucide-react';
 // link (recommended — no account needed), a Tally form, or a Google Form.
 // Can also be set without a code change via the VITE_UGC_SUBMIT_URL env var.
 const UGC_SUBMIT_URL = (import.meta.env.VITE_UGC_SUBMIT_URL as string | undefined)?.trim()
-  || 'https://www.dropbox.com/request/REPLACE_ME';
+  || 'https://www.dropbox.com/request/h0fpvwqcp3o7oiz5ltcm';
 
 // True until a real destination is set, so we never show a broken link.
 const SUBMIT_READY = /^https?:\/\//.test(UGC_SUBMIT_URL) && !/REPLACE_ME|your-ugc-form/.test(UGC_SUBMIT_URL);
