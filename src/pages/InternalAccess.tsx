@@ -158,7 +158,7 @@ export default function InternalAccess() {
       <header className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
           <span className="section-label">Support</span>
-          <h1 style={{ margin: 0 }}>Pilot access</h1>
+          <h1 style={{ margin: 0 }}>Access &amp; accounts</h1>
         </div>
         <div className="row" style={{ gap: 8, alignItems: 'center' }}>
           <a className="btn btn-ghost btn-small" href="#/internal/bookings">Bookings</a>

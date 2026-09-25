@@ -122,7 +122,7 @@ export const REFERRAL_TERMS: LegalDoc = {
       title: '1. Overview',
       body: [
         'Apricoti’s introduction (referral) programme rewards existing members of the Apricoti community for introducing a genuinely new person or household to the service. These terms govern participation and sit alongside our Terms of Service and Privacy Policy.',
-        'This is a limited pilot. Apricoti may review, pause, change or end the programme at any time, while honouring rewards already validly earned.',
+        'Apricoti may review, pause, change or end this programme at any time, while honouring rewards already validly earned.',
       ],
     },
     {

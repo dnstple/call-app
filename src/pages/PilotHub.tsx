@@ -30,8 +30,8 @@ function RoleWaitingHub({ role, navigate, onRedeemed }: { role: string; navigate
   const isCoordinator = role === 'coordinator';
   const label = roleLabel(role);
   const intro = isCoordinator
-    ? 'You’ll be able to arrange conversations for the people you care about once your pilot access is ready. You can get set up here in the meantime.'
-    : 'You’ll be able to explore Companions and arrange conversations once your pilot access is ready. You can get set up here in the meantime.';
+    ? 'You’ll be able to arrange conversations for the people you care about once your account is ready. You can get set up here in the meantime.'
+    : 'You’ll be able to explore Companions and arrange conversations once your account is ready. You can get set up here in the meantime.';
   const nextThen = isCoordinator
     ? 'then you can set up conversations for the people you care about.'
     : 'then you can explore Companions and book a conversation.';
@@ -39,8 +39,8 @@ function RoleWaitingHub({ role, navigate, onRedeemed }: { role: string; navigate
   return (
     <div className="col" style={{ gap: 20, maxWidth: 760 }}>
       <header className="col" style={{ gap: 6 }}>
-        <span className="section-label">{label} · pilot</span>
-        <h1 style={{ margin: 0 }}>Your Pilot Hub</h1>
+        <span className="section-label">{label}</span>
+        <h1 style={{ margin: 0 }}>Getting set up</h1>
         <p className="text-secondary" style={{ margin: 0 }}>{intro}</p>
       </header>
 
@@ -50,8 +50,8 @@ function RoleWaitingHub({ role, navigate, onRedeemed }: { role: string; navigate
           <h2 style={{ margin: 0, fontSize: '1.05rem' }}>You’re on the waitlist</h2>
         </div>
         <p className="text-secondary" style={{ margin: '8px 0 0' }}>
-          You’re on the waitlist for the Apricoti pilot. We’ll let you know as soon as your access
-          is ready — there’s nothing you need to submit.
+          Your account is being set up. We’ll let you know as soon as it’s ready —
+          there’s nothing you need to submit.
         </p>
       </section>
 
@@ -76,7 +76,7 @@ function RoleWaitingHub({ role, navigate, onRedeemed }: { role: string; navigate
         <h2 style={{ margin: 0, fontSize: '1.05rem' }}>What happens next</h2>
         <ol className="access-next" style={{ marginTop: 10 }}>
           <li>Set up your profile and preferences.</li>
-          <li>We enable pilot access for your account.</li>
+          <li>We enable access for your account.</li>
           <li>You’ll get a notification the moment your access is ready — {nextThen}</li>
         </ol>
       </section>
@@ -97,11 +97,11 @@ function statusCopy(status: ApplicationStatus): { title: string; body: string; t
     case 'under_review':
       return { title: 'Your application is under review', body: 'Our team is looking at your application now. There’s nothing more you need to do.', tone: 'info' };
     case 'approved':
-      return { title: 'Approved — waiting for a pilot place', body: 'You’ve been approved. We’ll be in touch as soon as a pilot place opens up for you.', tone: 'good' };
+      return { title: 'Approved — finishing your setup', body: 'You’ve been approved. We’ll be in touch as soon as your account is ready.', tone: 'good' };
     case 'rejected':
       return { title: 'Not moving forward right now', body: 'We’re not able to take your application further at the moment. You can keep your profile ready in case that changes.', tone: 'warn' };
     default:
-      return { title: 'Finish setting up your profile', body: 'Complete the steps below, then submit your application to join the Companion pilot.', tone: 'info' };
+      return { title: 'Finish setting up your profile', body: 'Complete the steps below, then submit your application to become an Apricoti companion.', tone: 'info' };
   }
 }
 
@@ -164,8 +164,8 @@ export default function PilotHub() {
   return (
     <div className="col" style={{ gap: 20, maxWidth: 760 }}>
       <header className="col" style={{ gap: 6 }}>
-        <span className="section-label">Companion · pilot</span>
-        <h1 style={{ margin: 0 }}>Your Pilot Hub</h1>
+        <span className="section-label">Companion</span>
+        <h1 style={{ margin: 0 }}>Getting set up</h1>
         <p className="text-secondary" style={{ margin: 0 }}>
           Welcome. Get your Companion profile ready here and submit it for review — we’ll let you
           know when your pilot place is available.
@@ -245,8 +245,8 @@ export default function PilotHub() {
         <ol className="access-next" style={{ marginTop: 10 }}>
           <li>Finish the required steps and submit your application.</li>
           <li>Our team reviews it and may follow up if we need anything.</li>
-          <li>Once approved, we’ll add you to a pilot cohort when a place opens.</li>
-          <li>You’ll get a notification the moment your pilot access is ready.</li>
+          <li>Once approved, we’ll finish setting up your account.</li>
+          <li>You’ll get a notification the moment your access is ready.</li>
         </ol>
       </section>
 

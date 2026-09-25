@@ -52,7 +52,7 @@ export function RedeemInviteCard({ onRedeemed }: { onRedeemed?: () => void }) {
           <h2 style={{ margin: 0, fontSize: '1.05rem' }}>You’re in</h2>
         </div>
         <p className="text-secondary" style={{ margin: '8px 0 0' }}>
-          Your invite worked and your pilot access is ready. Refreshing your Pilot Hub…
+          Your invite worked and your access is ready. Refreshing…
         </p>
       </section>
     );
@@ -65,7 +65,7 @@ export function RedeemInviteCard({ onRedeemed }: { onRedeemed?: () => void }) {
         <h2 style={{ margin: 0, fontSize: '1.05rem' }}>Have an invite code?</h2>
       </div>
       <p className="text-secondary" style={{ margin: '8px 0 12px' }}>
-        If someone on Apricoti invited you, enter their code to join the pilot now.
+        If someone on Apricoti invited you, enter their code to join now.
       </p>
       <div className="row" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'flex-start' }}>
         <input
@@ -113,7 +113,7 @@ export function InviteOthersCard() {
         <h2 style={{ margin: 0, fontSize: '1.05rem' }}>Invite someone you know</h2>
       </div>
       <p className="text-secondary" style={{ margin: '8px 0 12px' }}>
-        Know someone who’d value good conversation? Share your code and they can join the pilot
+        Know someone who’d value good conversation? Share your code and they can join
         straight away. There’s never any obligation.
       </p>
 

@@ -39,8 +39,8 @@ export function referralErrorMessage(e: unknown): string {
   if (key.includes('referral_exhausted')) return 'That invite has already been fully used.';
   if (key.includes('referral_self')) return 'You can’t use your own invite code.';
   if (key.includes('referral_already_used')) return 'You’ve already used an invite code.';
-  if (key.includes('referral_not_needed')) return 'You already have pilot access — no code needed.';
+  if (key.includes('referral_not_needed')) return 'You already have access — no code needed.';
   if (key.includes('referral_unavailable')) return 'This code can’t be applied to your account.';
-  if (key.includes('referral_not_eligible')) return 'Only pilot members can invite others yet.';
+  if (key.includes('referral_not_eligible')) return 'Only members can invite others yet.';
   return 'We couldn’t apply that code just now. Please try again.';
 }

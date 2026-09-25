@@ -11,10 +11,12 @@ import { Link } from 'react-router-dom';
 import { Loader2, Mail, MessageSquare, Send, Eye } from 'lucide-react';
 import { broadcast, type BroadcastResult } from '../repositories/broadcastRepository';
 
+const SELF = '__self';
 const SEGMENTS: { key: string; label: string }[] = [
   { key: 'member', label: 'Members' },
   { key: 'companion', label: 'Companions' },
   { key: 'coordinator', label: 'Coordinators' },
+  { key: SELF, label: 'Just me (test)' },
 ];
 
 const SMS_LIMIT = 480; // ~3 segments; keep texts short
@@ -27,30 +29,32 @@ export default function InternalBroadcast() {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<BroadcastResult | null>(null);
 
+  // Selecting "Just me (test)" is exclusive — it clears the real segments, and
+  // picking a real segment clears the test option.
   const toggleRole = (k: string) =>
-    setRoles((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+    setRoles((s) => {
+      const n = new Set(s);
+      if (n.has(k)) { n.delete(k); return n; }
+      if (k === SELF) return new Set([SELF]);
+      n.delete(SELF);
+      n.add(k);
+      return n;
+    });
 
-  const roleList = () => Array.from(roles);
+  const isSelf = roles.has(SELF);
+  const roleList = () => Array.from(roles).filter((r) => r !== SELF);
   const hasContent = body.trim().length > 0 && (channel === 'text' || subject.trim().length > 0);
-  const canSend = roles.size > 0 && hasContent;
+  const canSend = (isSelf || roleList().length > 0) && hasContent;
 
   const run = async (dryRun: boolean) => {
     if (!canSend) return;
     if (!dryRun) {
-      const who = SEGMENTS.filter((s) => roles.has(s.key)).map((s) => s.label).join(', ');
-      if (!window.confirm(`Send this ${channel === 'email' ? 'email' : 'text'} to: ${who}?\nOpted-out people are excluded.`)) return;
+      const who = isSelf ? 'just you (test)' : SEGMENTS.filter((s) => roles.has(s.key)).map((s) => s.label).join(', ');
+      if (!window.confirm(`Send this ${channel === 'email' ? 'email' : 'text'} to: ${who}?${isSelf ? '' : '\nOpted-out people are excluded.'}`)) return;
     }
     setBusy(true); setResult(null);
     try {
-      setResult(await broadcast({ roles: roleList(), channel, subject, body, dryRun }));
-    } finally { setBusy(false); }
-  };
-
-  const runSelfTest = async () => {
-    if (!hasContent) return;
-    setBusy(true); setResult(null);
-    try {
-      setResult(await broadcast({ roles: [], channel, subject, body, selfTest: true }));
+      setResult(await broadcast({ roles: roleList(), channel, subject, body, dryRun, selfTest: isSelf }));
     } finally { setBusy(false); }
   };
 
@@ -124,10 +128,6 @@ export default function InternalBroadcast() {
         </div>
 
         <div className="row wrap" style={{ gap: 8 }}>
-          <button className="btn btn-ghost btn-small" disabled={busy || !hasContent} onClick={() => void runSelfTest()}
-            title="Send only to your own email/mobile">
-            Test to me
-          </button>
           <button className="btn btn-secondary btn-small" disabled={busy || !canSend} onClick={() => void run(true)}>
             <Eye size={14} aria-hidden="true" /> Preview count
           </button>

@@ -14,7 +14,7 @@ import {
 type Tool = { to: string; title: string; body: string; Icon: LucideIcon };
 
 const TOOLS: Tool[] = [
-  { to: '/internal/access', title: 'Pilot access', Icon: Users,
+  { to: '/internal/access', title: 'Accounts & access', Icon: Users,
     body: 'Registrations, applications, cohorts and access grants.' },
   { to: '/internal/bookings', title: 'Bookings', Icon: CalendarClock,
     body: 'Every booking on the platform — kind, time and costs.' },

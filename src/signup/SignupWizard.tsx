@@ -1390,12 +1390,15 @@ function SuccessStep({ data, created }: { data: SignupData; created: CreatedAcco
         {isSupabaseMode() ? (
           <>
             {(role === 'member' || role === 'coordinator') && <StartMembershipButton created={created} role={role} />}
-            <button className="btn btn-secondary btn-block" onClick={() => navigate('/verify-phone')}>
-              Verify your mobile
-            </button>
-            <button className="btn btn-primary btn-block" onClick={() => navigate('/', { replace: true })}>
-              Go to my dashboard
-            </button>
+            {(role === 'member' || role === 'coordinator') ? (
+              <button className="btn btn-primary btn-block" onClick={() => navigate('/explore', { replace: true })}>
+                Explore Companions
+              </button>
+            ) : (
+              <button className="btn btn-primary btn-block" onClick={() => navigate('/', { replace: true })}>
+                Go to my dashboard
+              </button>
+            )}
           </>
         ) : null}
         {!isSupabaseMode() && role === 'member' && (

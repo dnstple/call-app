@@ -109,8 +109,8 @@ Deno.serve(async (req) => {
       monthly_price: monthlyPrice,
     },
     payment_intent_data: { metadata: { kind: 'membership_starter', member_profile_id: memberProfile } },
-    success_url: `${origin}/#/?membership=started`,
-    cancel_url: `${origin}/#/?membership=cancelled`,
+    success_url: `${origin}/#/explore?membership=started`,
+    cancel_url: `${origin}/#/explore?membership=cancelled`,
     // Per-attempt idempotency key: a stable key collides once a session exists,
     // so each checkout attempt gets a fresh one (creating a new session is safe).
   }, { idempotencyKey: `membership-starter-${memberProfile}-${Date.now()}` });

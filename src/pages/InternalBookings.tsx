@@ -109,7 +109,7 @@ export default function InternalBookings() {
           <h1 style={{ margin: 0 }}>Bookings</h1>
         </div>
         <div className="row" style={{ gap: 8, alignItems: 'center' }}>
-          <Link className="btn btn-ghost btn-small" to="/internal/access">Pilot access</Link>
+          <Link className="btn btn-ghost btn-small" to="/internal/access">Accounts</Link>
           <button className="btn btn-ghost btn-small" onClick={load}><RefreshCw size={16} aria-hidden="true" /> Refresh</button>
         </div>
       </header>
