@@ -194,6 +194,9 @@ export default function SignupWizard() {
       case 'role':
         return data.role ? null : 'Choose the option that fits you best.';
       case 'verify':
+        if (data.role === 'companion') {
+          return phoneVerified ? null : 'Please verify your UK mobile number to continue.';
+        }
         return (phoneVerified || phoneSkipped) ? null : 'Please verify your UK mobile number, or choose “Skip for now”.';
       case 'details':
         if (!data.firstName.trim()) return 'Please add a first name.';
@@ -625,7 +628,8 @@ export default function SignupWizard() {
 
         {step === 'verify' && (
           <CompanionVerifyStep verified={phoneVerified} onVerified={() => setPhoneVerifiedLocal(true)} onBack={back} onNext={next}
-            onSkip={() => {
+            onSkip={data.role === 'companion' ? undefined : () => {
+              // Companions must verify (safety); members/coordinators may verify later.
               setPhoneSkipped(true); setError(null); setAttempted(false);
               setStepIndex((i) => Math.min(i + 1, steps.length - 1));
             }} />
