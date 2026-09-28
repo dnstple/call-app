@@ -9,8 +9,8 @@ import { Loader2, Check } from 'lucide-react';
 import { toUkE164, sendPhoneOtp, verifyPhoneOtp } from '../repositories/phoneRepository';
 import { useAuth } from '../auth/AuthProvider';
 
-export function CompanionVerifyStep({ verified, onVerified, onBack, onNext }: {
-  verified: boolean; onVerified: () => void; onBack?: () => void; onNext?: () => void;
+export function CompanionVerifyStep({ verified, onVerified, onBack, onNext, onSkip }: {
+  verified: boolean; onVerified: () => void; onBack?: () => void; onNext?: () => void; onSkip?: () => void;
 }) {
   const { refreshAccount } = useAuth();
   const [input, setInput] = useState('');
@@ -102,10 +102,19 @@ export function CompanionVerifyStep({ verified, onVerified, onBack, onNext }: {
         )}
       </div>
 
-      {onBack && (
-        <div className="row" style={{ gap: 8, marginTop: 16 }}>
-          <button type="button" className="btn btn-ghost" disabled={busy} onClick={onBack}>Back</button>
-        </div>
+      <div className="row" style={{ gap: 8, marginTop: 16, justifyContent: 'space-between', alignItems: 'center' }}>
+        {onBack ? <button type="button" className="btn btn-ghost" disabled={busy} onClick={onBack}>Back</button> : <span />}
+        {onSkip && (
+          <button type="button" className="btn btn-ghost" disabled={busy} onClick={onSkip}
+            style={{ textDecoration: 'underline' }}>
+            Skip for now — verify later
+          </button>
+        )}
+      </div>
+      {onSkip && (
+        <p className="muted" style={{ marginTop: 6, fontSize: 12 }}>
+          You can finish setting up now and verify your mobile later from your account.
+        </p>
       )}
     </div>
   );

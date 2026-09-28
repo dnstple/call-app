@@ -94,6 +94,7 @@ export default function SignupWizard() {
   const [attempted, setAttempted] = useState(false);
   const [created, setCreated] = useState<CreatedAccounts | null>(null);
   const [phoneVerifiedLocal, setPhoneVerifiedLocal] = useState(false);
+  const [phoneSkipped, setPhoneSkipped] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [showCustomInterest, setShowCustomInterest] = useState(() => Boolean(loadDraft()?.data.customInterest));
   const [showSpecificTimes, setShowSpecificTimes] = useState(false);
@@ -193,7 +194,7 @@ export default function SignupWizard() {
       case 'role':
         return data.role ? null : 'Choose the option that fits you best.';
       case 'verify':
-        return phoneVerified ? null : 'Please verify your UK mobile number to continue.';
+        return (phoneVerified || phoneSkipped) ? null : 'Please verify your UK mobile number, or choose “Skip for now”.';
       case 'details':
         if (!data.firstName.trim()) return 'Please add a first name.';
         if (data.role === 'companion') {
@@ -623,7 +624,11 @@ export default function SignupWizard() {
         )}
 
         {step === 'verify' && (
-          <CompanionVerifyStep verified={phoneVerified} onVerified={() => setPhoneVerifiedLocal(true)} onBack={back} onNext={next} />
+          <CompanionVerifyStep verified={phoneVerified} onVerified={() => setPhoneVerifiedLocal(true)} onBack={back} onNext={next}
+            onSkip={() => {
+              setPhoneSkipped(true); setError(null); setAttempted(false);
+              setStepIndex((i) => Math.min(i + 1, steps.length - 1));
+            }} />
         )}
 
         {step === 'intro' && (
