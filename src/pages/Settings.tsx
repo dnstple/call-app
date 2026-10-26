@@ -252,12 +252,6 @@ export default function Settings() {
               onClick={() => navigate('/signup?role=member&fresh=1')}
             />
             <SettingsRow
-              icon={<HeartHandshake size={20} aria-hidden="true" />}
-              label="Start Companion sign-up"
-              description="Launch the Companion path directly"
-              onClick={() => navigate('/signup?role=companion&fresh=1')}
-            />
-            <SettingsRow
               icon={<Users size={20} aria-hidden="true" />}
               label="Start Coordinator sign-up"
               description="Launch the Coordinator path directly"

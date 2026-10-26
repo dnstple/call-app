@@ -91,7 +91,6 @@ export default function LandingPage() {
 
             <div className="landing-cta-row">
               <Link to={memberTo} className="btn btn-primary btn-large">Start your first week — £5 per call</Link>
-              <Link to={companionTo} className="btn btn-secondary btn-large">Become a Companion</Link>
             </div>
             <p className="landing-fineprint">{c.hero.fineprint}</p>
           </div>
@@ -212,24 +211,6 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Become a Companion — centred split, image left on desktop / above on mobile */}
-      <section className="landing-section">
-        <div className="landing-container landing-split">
-          <img src="/landing-companion.png" alt="A Companion smiling on the phone" loading="lazy" className="landing-illus" />
-          <div className="landing-split-text">
-            <span className="section-label">{c.companion.label}</span>
-            <h2>{c.companion.title}</h2>
-            <p>{c.companion.body}</p>
-            <ul className="landing-ticks">
-              {c.companion.ticks.map((t) => (
-                <li key={t}><CheckCircle2 size={18} aria-hidden="true" /> {t}</li>
-              ))}
-            </ul>
-            <Link to={companionTo} className="btn btn-primary btn-large">{c.companion.cta}</Link>
-          </div>
-        </div>
-      </section>
-
       {/* FAQ */}
       <section className="landing-section landing-section-muted">
         <div className="landing-container landing-faq">
@@ -270,7 +251,6 @@ export default function LandingPage() {
           <p className="landing-center-lede">Explore Companions, choose who feels right, and arrange a friendly video conversation at a time that works. No pressure to continue — the first conversation is simply a chance to see how it feels.</p>
           <div className="landing-cta-row landing-cta-center">
             <Link to={memberTo} className="btn btn-primary btn-large">Start your first week — £5 per call</Link>
-            <Link to={companionTo} className="btn btn-secondary btn-large">Become a Companion</Link>
           </div>
         </div>
       </section>
@@ -302,7 +282,6 @@ export default function LandingPage() {
             </Link>
             <nav className="landing-footer-links" aria-label="Footer">
               <Link to={memberTo}>Start membership</Link>
-              <Link to={companionTo}>Become a Companion</Link>
               <a href="#contact">Contact</a>
               <Link to="/login">Sign in</Link>
               <Link to="/terms">Terms</Link>

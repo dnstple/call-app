@@ -80,14 +80,15 @@ export default function SignupWizard() {
   // Launch handling: ?role=…&fresh=1 starts that role path fresh; otherwise resume any draft.
   const [data, setData] = useState<SignupData>(() => {
     const roleParam = params.get('role') as Role | null;
-    if (roleParam && ['member', 'companion', 'coordinator'].includes(roleParam)) {
+    // Companion sign-up is closed — only members and coordinators can register.
+    if (roleParam && ['member', 'coordinator'].includes(roleParam)) {
       return { ...EMPTY_SIGNUP, role: roleParam };
     }
     return loadDraft()?.data ?? EMPTY_SIGNUP;
   });
   const [stepIndex, setStepIndex] = useState<number>(() => {
     const roleParam = params.get('role');
-    if (roleParam) return 1;
+    if (roleParam && roleParam !== 'companion') return 1;
     return loadDraft()?.stepIndex ?? 0;
   });
   const [error, setError] = useState<string | null>(null);
@@ -145,7 +146,7 @@ export default function SignupWizard() {
     }
     try {
       const intended = sessionStorage.getItem('companionship-intended-role') as Role | null;
-      if (intended && ['member', 'companion', 'coordinator'].includes(intended)) {
+      if (intended && ['member', 'coordinator'].includes(intended)) {
         sessionStorage.removeItem('companionship-intended-role');
         setData({ ...EMPTY_SIGNUP, role: intended });
         setStepIndex(1);
@@ -377,12 +378,7 @@ export default function SignupWizard() {
                 title: 'I am arranging conversations for someone else',
                 text: 'Help a family member or someone you care for find regular companionship. They won’t need their own account.',
               },
-              {
-                role: 'companion' as Role,
-                Icon: HeartHandshake,
-                title: 'I would like to be a Companion',
-                text: 'Offer friendly, regular conversations through the app.',
-              },
+              // Companion sign-up is closed — new companions can't register.
               ...(MEMBER_SELF_SIGNUP_ENABLED ? [{
                 role: 'member' as Role,
                 Icon: MessagesSquare,
