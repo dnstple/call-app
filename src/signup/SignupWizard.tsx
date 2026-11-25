@@ -378,14 +378,14 @@ export default function SignupWizard() {
                 role: 'coordinator' as Role,
                 Icon: Users,
                 title: 'I am arranging conversations for someone else',
-                text: 'Help a family member or someone you care for find regular companionship. They won’t need their own account.',
+                text: 'Help a family member or someone you care for find regular companionship calls (£5 a call). They won’t need their own account.',
               },
               // Companion sign-up is closed — new companions can't register.
               ...(MEMBER_SELF_SIGNUP_ENABLED ? [{
                 role: 'member' as Role,
                 Icon: MessagesSquare,
                 title: 'I would like to arrange conversations for myself',
-                text: 'Set up your own regular companionship — you manage your own account and bookings.',
+                text: 'Set up your own regular companionship calls (£5 a call) — you manage your own account and bookings.',
               }] : []),
             ]).map(({ role, Icon, title, text }) => (
               <button
@@ -404,6 +404,11 @@ export default function SignupWizard() {
                 </span>
               </button>
             ))}
+            <p className="small muted" style={{ margin: '4px 0 0' }}>
+              Looking for paid work as a companion? This sign-up is for people who receive calls.
+              Companion sign-up is closed while we run our pilot. Email{' '}
+              <a href="mailto:info@apricoti.co.uk?subject=Companion%20waitlist">info@apricoti.co.uk</a> to join the waitlist.
+            </p>
           </SignupStep>
         )}
 

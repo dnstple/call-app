@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   Accessibility,
@@ -35,6 +36,7 @@ import { clearDraft, completedSignups, hasDraft, resetSignupDemo } from '../sign
 import { DataModePanel } from '../components/DataModePanel';
 import { AuthStatusPanel } from '../components/AuthStatusPanel';
 import { getDataMode, isSupabaseMode } from '../config/dataMode';
+import { submitContactMessage } from '../repositories/contactRepository';
 import { BillingPanel } from '../components/BillingPanel';
 import { ConnectPanel } from '../components/ConnectPanel';
 import { EarningsPanel } from '../components/EarningsPanel';
@@ -318,7 +320,7 @@ export default function Settings() {
             <div className="field">
               <label htmlFor="acc-name">Name</label>
               <input id="acc-name" type="text" defaultValue={`${me.firstName} ${me.lastName}`} readOnly />
-              <span className="hint">Fictional demo identity — switch people with the demo control in the top bar.</span>
+              {!isSupabaseMode() && <span className="hint">Fictional demo identity — switch people with the demo control in the top bar.</span>}
             </div>
             <div className="field">
               <label htmlFor="acc-email">Email</label>
@@ -328,17 +330,29 @@ export default function Settings() {
               <label htmlFor="acc-phone">Phone</label>
               <input id="acc-phone" type="tel" defaultValue={me.phone} readOnly />
             </div>
-            <div className="field">
-              <label htmlFor="acc-password">Password</label>
-              <input id="acc-password" type="text" value="Real sign-in arrives in Stage 2" readOnly />
-            </div>
-            <button
-              className="btn btn-danger"
-              style={{ alignSelf: 'flex-start' }}
-              onClick={() => pushToast('Account deactivation is simulated in the prototype', 'warn')}
-            >
-              Deactivate account
-            </button>
+            {!isSupabaseMode() && (
+              <div className="field">
+                <label htmlFor="acc-password">Password</label>
+                <input id="acc-password" type="text" value="Real sign-in arrives in Stage 2" readOnly />
+              </div>
+            )}
+            {isSupabaseMode() ? (
+              <DeleteAccountRequest
+                name={`${me.firstName} ${me.lastName}`.trim()}
+                email={auth.user?.email ?? me.email ?? ''}
+                onDone={(ok) => pushToast(ok
+                  ? 'Request received. We’ll email you to confirm, then delete your account and data.'
+                  : 'Sorry, that didn’t go through. Please email info@apricoti.co.uk and we’ll delete your account.', ok ? 'ok' : 'warn')}
+              />
+            ) : (
+              <button
+                className="btn btn-danger"
+                style={{ alignSelf: 'flex-start' }}
+                onClick={() => pushToast('Account deactivation is simulated in the prototype', 'warn')}
+              >
+                Deactivate account
+              </button>
+            )}
           </div>
         </Modal>
       )}
@@ -696,5 +710,55 @@ function PackagesDetail({ meId, onClose }: { meId: string; onClose: () => void }
         Simulated earnings so far: <strong>{formatPence(earnings)}</strong> after the {state.config.standardCommissionPct}% platform fee.
       </div>
     </Modal>
+  );
+}
+
+/**
+ * Real account deletion request (contact inbox bug #3, 25 Nov 2026). Replaces the
+ * prototype "Deactivate account" stub, which did nothing. The request lands in
+ * the contact inbox linked to the account (submit_contact_message uses auth.uid()),
+ * where triage proposes it and the erasure flow emails the person, then erases.
+ */
+function DeleteAccountRequest({ name, email, onDone }: { name: string; email: string; onDone: (ok: boolean) => void }) {
+  const [confirming, setConfirming] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+  if (sent) {
+    return <p className="small" role="status" style={{ margin: 0 }}>Your deletion request has been sent. We’ll email you to confirm, then delete your account and data.</p>;
+  }
+  if (!confirming) {
+    return (
+      <button className="btn btn-danger" style={{ alignSelf: 'flex-start' }} onClick={() => setConfirming(true)}>
+        Delete my account
+      </button>
+    );
+  }
+  return (
+    <div className="col" style={{ gap: 8 }} role="group" aria-label="Confirm account deletion">
+      <p className="small" style={{ margin: 0 }}>
+        This permanently deletes your profile, contact details, login and everything you’ve written in Apricoti. It can’t be undone.
+      </p>
+      <div className="row" style={{ gap: 8 }}>
+        <button
+          className="btn btn-danger"
+          disabled={sending}
+          onClick={async () => {
+            setSending(true);
+            try {
+              await submitContactMessage(name, email, 'ACCOUNT DELETION REQUEST (sent from Settings): Please delete my Apricoti account and all of my data.');
+              setSent(true);
+              onDone(true);
+            } catch {
+              onDone(false);
+            } finally {
+              setSending(false);
+            }
+          }}
+        >
+          {sending ? 'Sending…' : 'Yes, delete my account'}
+        </button>
+        <button className="btn btn-ghost" disabled={sending} onClick={() => setConfirming(false)}>Cancel</button>
+      </div>
+    </div>
   );
 }

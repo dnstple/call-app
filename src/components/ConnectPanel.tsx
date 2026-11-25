@@ -13,6 +13,7 @@ import {
   getConnectStatus,
   type ConnectStatus,
 } from '../repositories/billingRepository';
+import { useAccess } from '../state/access';
 
 type Headline = 'loading' | 'not_started' | 'incomplete' | 'in_review' | 'ready' | 'restricted';
 
@@ -59,6 +60,11 @@ export function ConnectPanel() {
   const [confirming, setConfirming] = useState(false);
   const [failed, setFailed] = useState(false);
   const [params, setParams] = useSearchParams();
+  // Payouts (the `payments` feature) unlock only once a companion is approved.
+  // Before that the server refuses onboarding, so explain instead of failing
+  // with a generic error (contact inbox bug #1, 25 Nov 2026).
+  const { access } = useAccess();
+  const awaitingApproval = access !== null && !access.isSupportAdmin && access.applicationStatus !== 'approved';
 
   const load = useCallback((refresh: boolean) => {
     getConnectStatus(refresh).then(setStatus);
@@ -135,11 +141,17 @@ export function ConnectPanel() {
 
       {failed && (
         <p className="small" role="alert" style={{ margin: 0, color: 'var(--color-danger-text)' }}>
-          We couldn’t open Stripe’s setup just now. Please try again.
+          We couldn’t open Stripe’s setup just now. Please try again in a few minutes. If it keeps happening, email info@apricoti.co.uk.
         </p>
       )}
 
-      {headline !== 'loading' && COPY[headline].action && (
+      {awaitingApproval && headline === 'not_started' && (
+        <p className="small" role="status" style={{ margin: 0 }}>
+          Payment setup opens once your companion profile is approved. You’ll then connect your own UK bank account through Stripe.
+        </p>
+      )}
+
+      {headline !== 'loading' && COPY[headline].action && !(awaitingApproval && headline === 'not_started') && (
         <button
           className="btn btn-primary btn-small"
           style={{ alignSelf: 'flex-start' }}
