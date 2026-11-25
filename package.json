@@ -13,7 +13,10 @@
     "scan:bundle": "node scripts/scan-bundle-secrets.mjs",
     "build:verify": "npm run build && npm run scan:bundle",
     "types:generate": "supabase gen types typescript --linked > src/supabase/database.types.ts",
-    "test:rls": "vitest run rls.integration"
+    "test:rls": "vitest run rls.integration",
+    "contact": "node scripts/automation/contact.ts",
+    "outreach": "node scripts/automation/outreach.ts",
+    "graph:selftest": "node scripts/automation/graph-selftest.ts"
   },
   "dependencies": {
     "@livekit/components-react": "^2.9.23",
@@ -37,6 +40,7 @@
     "livekit-server-sdk": "^2.17.0",
     "typescript": "^5.5.4",
     "vite": "^8.1.5",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "zod": "^4.6.7"
   }
 }

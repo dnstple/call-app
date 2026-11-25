@@ -1,0 +1,6 @@
+name,contact_email,charity_number,website,contact_name,category,region,notes
+Test Charity One,REPLACE-WITH-YOUR-ADDRESS+c1@example.com,,,,older_people,London,test seed - replace email before ingesting
+Test Charity Two,REPLACE-WITH-YOUR-ADDRESS+c2@example.com,,,Sam,loneliness,North West,test seed
+Test Charity Three,REPLACE-WITH-YOUR-ADDRESS+c3@example.com,,,,carers,Scotland,test seed
+Test Charity Four,REPLACE-WITH-YOUR-ADDRESS+c4@example.com,,,,older_people,Wales,test seed
+Test Charity Five,REPLACE-WITH-YOUR-ADDRESS+c5@example.com,,,Priya,disability,Midlands,test seed

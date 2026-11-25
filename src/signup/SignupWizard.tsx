@@ -42,7 +42,7 @@ import {
   type PackageDraft,
   type SignupData,
 } from './types';
-import { COUNTRIES } from '../domain/countries';
+import { UK_NATIONS, OUTSIDE_UK, UK_ONLY_MESSAGE, residenceError } from '../domain/ukResidence';
 import { clearDraft, demoData, loadDraft, markSignupSeen, saveDraft } from './storage';
 import { createAccountsFromSignup, type CreatedAccounts } from './complete';
 import { beginMembership } from '../repositories/membershipRepository';
@@ -201,6 +201,7 @@ export default function SignupWizard() {
         return (phoneVerified || phoneSkipped) ? null : 'Please verify your UK mobile number, or choose “Skip for now”.';
       case 'details':
         if (!data.firstName.trim()) return 'Please add a first name.';
+        { const r = residenceError(data.countryOfResidence); if (r) return r; }
         if (data.role === 'companion') {
           if (!data.lastName.trim()) return 'Please add a last name — only your last initial is shown publicly.';
           if (!data.dob) return 'Please add a date of birth.';
@@ -214,6 +215,7 @@ export default function SignupWizard() {
         if (!data.firstName.trim()) return 'Please add your first name.';
         if (!data.relationship) return 'Please choose your relationship to them.';
         if (!data.email.trim() || !data.email.includes('@')) return 'Please add an email that looks like an email.';
+        { const r = residenceError(data.countryOfResidence); if (r) return r; }
         return null;
       case 'memberDetails':
         if (!data.memberFirstName.trim()) return 'Please add their first name.';
@@ -455,10 +457,7 @@ export default function SignupWizard() {
             </div>
             <FormField id="su-preferred" label="Preferred name (optional)" value={data.preferredName} onChange={(v) => patch({ preferredName: v })} hint="What you’d like to be called, if different from your first name." />
             <FormField id="su-town" label="Town or city" value={data.town} onChange={(v) => patch({ town: v })} placeholder="e.g. Harrogate" hint="Your approximate location helps people connect over local knowledge. Your exact address is never shown." />
-            <FormField id="su-country" label="Country of residence" value={data.countryOfResidence} onChange={(v) => patch({ countryOfResidence: v })} placeholder="Start typing a country…" hint="Helps with time zones, payment and eligibility. Not shown publicly." listId="country-list" />
-            <datalist id="country-list">
-              {COUNTRIES.map((ctry) => <option key={ctry} value={ctry} />)}
-            </datalist>
+            <UkResidenceField value={data.countryOfResidence} onChange={(v) => patch({ countryOfResidence: v })} invalid={attempted && residenceError(data.countryOfResidence) !== null} />
             <div className="field" style={{ marginBottom: 0 }}>
               <label htmlFor="su-places">Places and cultures you feel connected to (optional)</label>
               <input id="su-places" value={data.connectedPlaces} onChange={(e) => patch({ connectedPlaces: e.target.value })} placeholder="e.g. Jamaica, Yorkshire, Italy" />
@@ -490,10 +489,7 @@ export default function SignupWizard() {
             />
             <FormField id="su-preferred" label="Preferred name (optional)" value={data.preferredName} onChange={(v) => patch({ preferredName: v })} hint="What you’d like to be called, if different from your first name." />
             <FormField id="su-town" label="Town or city" value={data.town} onChange={(v) => patch({ town: v })} hint="Your approximate location helps people connect over local knowledge. Your exact address is never shown." />
-            <FormField id="su-country" label="Country of residence" value={data.countryOfResidence} onChange={(v) => patch({ countryOfResidence: v })} placeholder="Start typing a country…" hint="Helps with time zones, payment and eligibility. Not shown publicly." listId="country-list" />
-            <datalist id="country-list">
-              {COUNTRIES.map((ctry) => <option key={ctry} value={ctry} />)}
-            </datalist>
+            <UkResidenceField value={data.countryOfResidence} onChange={(v) => patch({ countryOfResidence: v })} invalid={attempted && residenceError(data.countryOfResidence) !== null} />
             <div className="field">
               <label htmlFor="su-places">Places and cultures you feel connected to (optional)</label>
               <input id="su-places" value={data.connectedPlaces} onChange={(e) => patch({ connectedPlaces: e.target.value })} placeholder="e.g. Jamaica, Yorkshire, Italy" />
@@ -550,6 +546,7 @@ export default function SignupWizard() {
             </div>
             <FormField id="su-email" label="Email" type="email" value={data.email} onChange={(v) => patch({ email: v })} hint="Fictional is fine, e.g. name@example.test" error={fieldError(!data.email.includes('@'), 'Please add an email that looks like an email')} />
             <FormField id="su-phone" label="Phone number" type="tel" value={data.phone} onChange={(v) => patch({ phone: v })} />
+            <UkResidenceField value={data.countryOfResidence} onChange={(v) => patch({ countryOfResidence: v })} invalid={attempted && residenceError(data.countryOfResidence) !== null} />
           </SignupStep>
         )}
 
@@ -1432,6 +1429,24 @@ function SuccessStep({ data, created }: { data: SignupData; created: CreatedAcco
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+/** UK-only residence question (Apricoti is UK-only for now). */
+function UkResidenceField({ value, onChange, invalid }: { value: string; onChange: (v: string) => void; invalid: boolean }) {
+  const outside = value === OUTSIDE_UK;
+  return (
+    <div className="field" style={{ marginBottom: 0 }}>
+      <label htmlFor="su-country">Where do you live?</label>
+      <select id="su-country" value={value} onChange={(e) => onChange(e.target.value)} aria-invalid={invalid || outside ? true : undefined} aria-describedby="su-country-hint">
+        <option value="">Choose…</option>
+        {UK_NATIONS.map((n) => <option key={n} value={n}>{n}</option>)}
+        <option value={OUTSIDE_UK}>{OUTSIDE_UK}</option>
+      </select>
+      <span id="su-country-hint" className="hint" role={outside ? 'alert' : undefined}>
+        {outside ? UK_ONLY_MESSAGE : 'Apricoti is currently available in the UK only. Not shown publicly.'}
+      </span>
     </div>
   );
 }

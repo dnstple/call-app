@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "lib": ["ES2022", "DOM"], "types": ["node"], "target": "ES2022", "module": "ESNext" },
+  "include": [
+    "scripts/automation/**/*.ts",
+    "supabase/functions/_shared/graph/*.ts",
+    "supabase/functions/_shared/charity/render.ts",
+    "supabase/functions/_shared/charity/plan.ts"
+  ]
+}
