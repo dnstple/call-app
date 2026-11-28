@@ -2,6 +2,8 @@
  * Authentication screens — consumer-styled, part of the app, not admin forms.
  * All copy is plain language; no Supabase terminology or raw errors surface.
  */
+import { InvitedBanner } from '../referrals/InvitedBanner';
+import { InviteCodeField } from '../referrals/InviteCodeField';
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Eye, EyeOff, Loader2, MailCheck } from 'lucide-react';
@@ -194,6 +196,7 @@ export function RegisterPage() {
     >
       <form onSubmit={submit} className="col" style={{ gap: 16 }}>
         <ErrorBanner message={error} />
+        <InvitedBanner compact />
         <div className="field" style={{ marginBottom: 0 }}>
           <label htmlFor="reg-email">Email</label>
           <input id="reg-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" required />
@@ -207,6 +210,7 @@ export function RegisterPage() {
             companionship, not professional care.
           </span>
         </label>
+        <InviteCodeField />
         <button className="btn btn-primary btn-block" disabled={busy}>
           {busy ? <Loader2 size={18} aria-hidden="true" /> : null} Create account
         </button>
