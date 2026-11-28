@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { InvitedBanner } from '../referrals/InvitedBanner';
 import { Link } from 'react-router-dom';
 import { CheckCircle2, Mail, Shield, Sparkles, Tag, UserRound, Video } from 'lucide-react';
 import { APP_NAME } from '../config/branding';
@@ -81,6 +82,8 @@ export default function LandingPage() {
           </nav>
         </div>
       </header>
+
+      <div className="landing-container"><InvitedBanner /></div>
 
       {/* Hero — text + image, larger type and CTAs */}
       <section className="landing-hero">

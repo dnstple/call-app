@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { ReferredByCard } from '../referrals/ReferredByCard';
 import { Link, useNavigate } from 'react-router-dom';
 import { Compass, Phone, UserRound } from 'lucide-react';
 import { isSupabaseMode } from '../config/dataMode';
@@ -348,6 +349,9 @@ export default function Home() {
         {isSupabaseConfigured() && accountRole === 'companion' && ownedCompanionProfileId && (
           <CompanionHomeSuggestions companionProfileId={ownedCompanionProfileId} />
         )}
+
+        {/* Invited by a companion: book the free first call with them (0226). */}
+        {isSupabaseConfigured() && accountRole !== 'companion' && <ReferredByCard />}
 
         {/* Growth: invite prompt (eligible referrers only). Companion-focused. */}
         <ReferralProgrammeCard role={accountRole} />

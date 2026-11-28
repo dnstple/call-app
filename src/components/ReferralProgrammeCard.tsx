@@ -10,6 +10,8 @@ import { useEffect, useState } from 'react';
 import { UserPlus, Check } from 'lucide-react';
 import { appUrl } from '../auth/redirects';
 import { myReferral } from '../repositories/referralRepository';
+import { inviteLink } from '../referrals/refCapture';
+import { Link } from 'react-router-dom';
 
 export function ReferralProgrammeCard({ role }: { role?: string }) {
   const [code, setCode] = useState<string | null>(null);
@@ -27,7 +29,7 @@ export function ReferralProgrammeCard({ role }: { role?: string }) {
   if (dismissed || !code) return null;
 
   const isCompanion = role === 'companion';
-  const link = `${appUrl()}/join?ref=${encodeURIComponent(code)}`;
+  const link = inviteLink(appUrl(), code);
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(link);
@@ -48,14 +50,14 @@ export function ReferralProgrammeCard({ role }: { role?: string }) {
       </div>
       {isCompanion ? (
         <p className="muted" style={{ margin: 0 }}>
-          Know a member or coordinator who'd love a regular chat? Invite them with your personal link. When
-          they join and book calls with you, <strong>you earn from every conversation you have together</strong> —
-          it's the easiest way to fill your calendar with people you'll enjoy talking to.
+          Know an older person who'd enjoy a regular chat, or someone who'd set it up for a parent? Share your
+          personal link. Their first call is free and they can book it with you. When they carry on,{' '}
+          <strong>you earn from every paid conversation you have together</strong>.
         </p>
       ) : (
         <p className="muted" style={{ margin: 0 }}>
           Know someone who'd love friendly companionship on Apricoti? Share your personal link and help them get
-          started — they begin with a free 30-minute trial call.
+          started. Their first call is free.
         </p>
       )}
       <p className="small" style={{ margin: 0 }}>
@@ -66,7 +68,7 @@ export function ReferralProgrammeCard({ role }: { role?: string }) {
           {copied ? <Check size={16} aria-hidden="true" /> : <UserPlus size={16} aria-hidden="true" />}
           {copied ? ' Link copied' : ' Copy my invite link'}
         </button>
-        <a className="btn btn-secondary btn-small" href="/referrals">View my invites</a>
+        <Link className="btn btn-secondary btn-small" to="/invite">Messages, flyer and my invites</Link>
       </div>
       <p className="faint small" style={{ margin: 0 }}>
         Share your link with people you know — please don't send us anyone's personal details; they choose to

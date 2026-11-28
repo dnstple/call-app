@@ -130,7 +130,8 @@ export const REFERRAL_TERMS: LegalDoc = {
       title: '2. How it works',
       body: [
         '• Share your personal Apricoti invite link or code. Please do not send us anyone’s personal details — the person must choose to register themselves, or give appropriate consent.',
-        '• The person you introduce creates their own account and can book a free 30-minute trial call.',
+        '• The person you introduce creates their own account (or a family member does it with their agreement), and their first call is free.',
+        '• Share only with people you know personally or groups you belong to. No bulk messaging, cold emails or bought contact lists, and never describe Apricoti or companions as vetted, verified, background-checked or DBS-checked.',
         '• If you are a Companion, you then earn in the ordinary way from any paid conversations you go on to have with the people you introduced.',
       ],
     },

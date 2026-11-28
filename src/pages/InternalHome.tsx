@@ -7,7 +7,7 @@
  */
 import { NavLink } from 'react-router-dom';
 import {
-  Users, Mail, ClipboardList, Scale, Calculator, SlidersHorizontal, ShieldCheck, Video, CalendarClock, Banknote, Megaphone, Send,
+  Users, Mail, ClipboardList, Scale, Calculator, SlidersHorizontal, ShieldCheck, Video, CalendarClock, Banknote, Megaphone, Send, UserPlus,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -26,6 +26,8 @@ const TOOLS: Tool[] = [
     body: 'Review companion identity videos and approve or reject.' },
   { to: '/internal/contact', title: 'Contact messages', Icon: Mail,
     body: 'Enquiries sent from the landing contact form.' },
+  { to: '/internal/referrals', title: 'Referrals', Icon: UserPlus,
+    body: 'Who is inviting people, and whether they book and pay.' },
   { to: '/internal/issues', title: 'Issue queue', Icon: ClipboardList,
     body: 'Reported conversation issues awaiting review.' },
   { to: '/internal/disputes', title: 'Disputes', Icon: Scale,

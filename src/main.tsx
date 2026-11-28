@@ -1,8 +1,12 @@
 import React from 'react';
+import { captureRefFromUrl } from './referrals/refCapture';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import './index.css';
 import { assertProductionEnv } from './config/validateEnv';
+
+// Remember an invite code from ?ref=CODE before the router takes over.
+captureRefFromUrl();
 
 const rootEl = document.getElementById('root')!;
 

@@ -44,3 +44,35 @@ export function referralErrorMessage(e: unknown): string {
   if (key.includes('referral_not_eligible')) return 'Only members can invite others yet.';
   return 'We couldn’t apply that code just now. Please try again.';
 }
+
+// ---------------------------------------------------------------------------
+// 0226 — invite links that work for any new account (attribution only).
+// ---------------------------------------------------------------------------
+export interface ReferralPreview {
+  valid: boolean;
+  first_name?: string | null;
+  referrer_role?: string | null;
+  companion_profile_id?: string | null;
+}
+export interface MyReferrer { first_name: string | null; companion_profile_id: string | null }
+export interface ReferralStats { joined: number; booked: number; paying: number }
+export interface ReferralOverviewRow {
+  referrer_account_id: string; referrer_name: string | null; referrer_role: string | null; code: string;
+  joined: number; booked: number; paying: number; paid_calls: number; last_joined_at: string | null;
+}
+
+export function previewReferral(code: string): Promise<ReferralPreview> {
+  return rpc<ReferralPreview>('referral_preview', { p_code: code });
+}
+export function attachReferral(code: string): Promise<{ ok: boolean; reason?: string }> {
+  return rpc<{ ok: boolean; reason?: string }>('attach_referral', { p_code: code });
+}
+export function myReferrer(): Promise<MyReferrer | null> {
+  return rpc<MyReferrer | null>('my_referrer');
+}
+export function myReferralStats(): Promise<ReferralStats> {
+  return rpc<ReferralStats>('my_referral_stats');
+}
+export function supportReferralOverview(): Promise<ReferralOverviewRow[]> {
+  return rpc<ReferralOverviewRow[]>('support_referral_overview');
+}

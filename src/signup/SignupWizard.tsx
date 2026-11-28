@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { InvitedBanner } from '../referrals/InvitedBanner';
+import { InviteCodeField } from '../referrals/InviteCodeField';
 import { isPhoneVerificationEnabled } from '../config/phoneVerification';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
@@ -374,6 +376,7 @@ export default function SignupWizard() {
             error={error}
             nextDisabled={!data.role}
           >
+            <InvitedBanner compact />
             {/* Redesign: the Member signup path is removed from the primary
                 chooser — managed Members need no login. The schema keeps
                 member-account linking possible behind this flag for later. */}
@@ -413,6 +416,7 @@ export default function SignupWizard() {
               Companion sign-up is closed while we run our pilot. Email{' '}
               <a href="mailto:info@apricoti.co.uk?subject=Companion%20waitlist">info@apricoti.co.uk</a> to join the waitlist.
             </p>
+            {supabase && <InviteCodeField />}
           </SignupStep>
         )}
 

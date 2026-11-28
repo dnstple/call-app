@@ -1,4 +1,5 @@
 import { HashRouter, Link, Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
+import { ReferralAttacher } from './referrals/ReferralAttacher';
 import { useAccountRole } from './state/managedMember';
 import { useIsSupport } from './state/support';
 import { Suspense, useEffect, type ReactNode } from 'react';
@@ -13,6 +14,8 @@ import MyProfile from './pages/MyProfile';
 import Conversations from './pages/Conversations';
 import BookingDetail from './pages/BookingDetail';
 const CallPage = lazy(() => import('./pages/CallPage'));
+const InvitePage = lazy(() => import('./pages/InvitePage'));
+const InternalReferrals = lazy(() => import('./pages/InternalReferrals'));
 const PaymentReturn = lazy(() => import('./pages/PaymentReturn'));
 const PlanMemberProfile = lazy(() => import('./pages/PlanMemberProfile'));
 const MessagesPage = lazy(() => import('./pages/MessagesPage'));
@@ -344,6 +347,8 @@ function AppRoutes() {
                 <Route path="/plans/:planId/member" element={<PlanMemberRedirect />} />
                 <Route path="/notifications" element={<Notifications />} />
                 <Route path="/verify-phone" element={<VerifyPhone />} />
+                <Route path="/invite" element={<Gated><InvitePage /></Gated>} />
+                <Route path="/referrals" element={<Navigate to="/invite" replace />} />
                 <Route path="/feedback/:bookingId" element={<FeedbackPage />} />
                 {/* Internal support queue — DB-role protected, not in normal nav. */}
                 <Route path="/internal/issues" element={<SupportOnly><InternalIssues /></SupportOnly>} />
@@ -368,6 +373,7 @@ function AppRoutes() {
                 <Route path="/internal/access/preview/:accountId" element={<SupportOnly><InternalProfilePreview /></SupportOnly>} />
                 <Route path="/internal/verification" element={<SupportOnly><InternalVerification /></SupportOnly>} />
                 <Route path="/internal/contact" element={<SupportOnly><InternalContact /></SupportOnly>} />
+                <Route path="/internal/referrals" element={<SupportOnly><InternalReferrals /></SupportOnly>} />
                 <Route path="/internal/operations" element={<Navigate to="/support/operations" replace />} />
                 <Route path="/settings" element={<Settings />} />
                 {/* Stage 3D-C — durable payment authentication return/resume.
@@ -401,6 +407,7 @@ export default function App() {
       <ScrollToTop />
       <AuthProvider>
         <AccessProvider>
+          <ReferralAttacher />
           <AppRoutes />
         </AccessProvider>
       </AuthProvider>
