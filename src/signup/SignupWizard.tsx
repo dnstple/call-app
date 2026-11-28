@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { isPhoneVerificationEnabled } from '../config/phoneVerification';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   BadgeCheck,
@@ -111,6 +112,9 @@ export default function SignupWizard() {
       : baseSteps;
   // Phone verification needs a real (authenticated) account — only in Supabase mode.
   if (!supabase) steps = steps.filter((s) => s !== 'verify');
+  // SMS is paused: members and coordinators skip the verify step entirely.
+  // Companions keep it (their sign-up is closed anyway, migration 0218).
+  if (!isPhoneVerificationEnabled() && data.role !== 'companion') steps = steps.filter((s) => s !== 'verify');
   const phoneVerified = Boolean(auth.account?.phone_verified) || phoneVerifiedLocal;
   const step = steps[Math.min(stepIndex, steps.length - 1)];
   const progressTotal = Math.max(steps.length - 1, 1); // exclude success, never 0
@@ -549,7 +553,7 @@ export default function SignupWizard() {
                 {RELATIONSHIP_OPTIONS.map((r) => <option key={r} value={r}>{r}</option>)}
               </select>
             </div>
-            <FormField id="su-email" label="Email" type="email" value={data.email} onChange={(v) => patch({ email: v })} hint="Fictional is fine, e.g. name@example.test" error={fieldError(!data.email.includes('@'), 'Please add an email that looks like an email')} />
+            <FormField id="su-email" label="Email" type="email" value={data.email} onChange={(v) => patch({ email: v })} hint={supabase ? undefined : 'Fictional is fine, e.g. name@example.test'} error={fieldError(!data.email.includes('@'), 'Please add an email that looks like an email')} />
             <FormField id="su-phone" label="Phone number" type="tel" value={data.phone} onChange={(v) => patch({ phone: v })} />
             <UkResidenceField value={data.countryOfResidence} onChange={(v) => patch({ countryOfResidence: v })} invalid={attempted && residenceError(data.countryOfResidence) !== null} />
           </SignupStep>

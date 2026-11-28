@@ -8,6 +8,7 @@
  * loaded (account.phone_verified), so this prompt makes NO network request of
  * its own.
  */
+import { isPhoneVerificationEnabled } from '../config/phoneVerification';
 import { Link } from 'react-router-dom';
 import { ShieldCheck } from 'lucide-react';
 import { useAuth } from '../auth/AuthProvider';
@@ -16,6 +17,7 @@ export function PhoneVerifyPrompt() {
   const { account, status } = useAuth();
 
   // Only for a fully signed-in account whose number isn't verified yet.
+  if (!isPhoneVerificationEnabled()) return null; // SMS paused
   if (status !== 'authenticated' || !account || account.phone_verified) return null;
 
   return (
